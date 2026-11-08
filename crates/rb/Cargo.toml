@@ -1,0 +1,14 @@
+[package]
+name = "rb"
+description = "Fetch pinned FreeBSD and NetBSD trees, build them with rucc and with a reference GCC, and record what happened"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+
+[lints]
+workspace = true
