@@ -10,8 +10,8 @@
 #
 # The steps:
 # 1. installworld, installkernel and distribution into RB_DESTDIR, from the objects of build.sh.
-# 2. The image changes, made after the build and never in the tree: fstab, the lines of
-#    conf/freebsd/image, rb-rc and the suites, the test packages, and a local package repository.
+# 2. The image changes, made after the build and never in the tree: fstab, boot.config, the lines
+#    of conf/freebsd/image, rb-rc, the test packages, and a local package repository.
 # 3. makefs for the root file system, an ESP with loader.efi, and mkimg with pmbr, gptboot, the ESP,
 #    swap and root. These are the tools and the layout of release/tools/vmimage.subr. A vm-image
 #    target on main needs a pkgbase repository, so rb uses the tools directly (plan 12.3).
@@ -58,10 +58,10 @@ cat "$conf/sysctl.conf" >> "$d/etc/sysctl.conf"
 mkdir -p "$d/etc/kyua"
 [ -s "$d/etc/kyua/kyua.conf" ] || echo 'syntax(2)' > "$d/etc/kyua/kyua.conf"
 cat "$conf/kyua.conf" >> "$d/etc/kyua/kyua.conf"
+# rb-rc is in the image. The suites and the kyua exclusions come on the rb disk of each boot.
 install -m 555 "$guest/rb" "$d/etc/rc.d/rb"
-mkdir -p "$d/usr/local/libexec/rb" "$d/usr/local/etc/rb"
-install -m 555 "$guest/smoke.sh" "$guest/kyua.sh" "$d/usr/local/libexec/rb/"
-install -m 444 "$conf/kyua-exclude" "$d/usr/local/etc/rb/kyua-exclude"
+# boot2 and the BIOS loader use the serial console too, so a BIOS boot that stops early shows why.
+echo '-S115200 -Dh' > "$d/boot.config"
 dd if=/dev/random of="$d/boot/entropy" bs=4k count=1 2>/dev/null
 
 # The test packages, installed with the image's own pkg in a chroot, as freebsd-ci does.

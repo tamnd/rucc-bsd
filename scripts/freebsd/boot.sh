@@ -8,9 +8,9 @@
 # for the tests that take disks, and one 128 MB AHCI disk for the cam(4) tests. A seventh virtio
 # disk is for the smoke suite. The network is QEMU's user network with no route out.
 #
-# The rb disk is a tar archive with rb.conf, which names the suites. rb-rc in the image reads it,
-# runs the suites, and writes its results back to the same disk. This script then unpacks them to
-# OUTDIR/results.
+# The rb disk is a tar archive with rb.conf, which names the suites, the suite scripts and the kyua
+# exclusions. rb-rc in the image reads it, runs the suites, and writes its results back to the same
+# disk. This script then unpacks them to OUTDIR/results.
 #
 # Console markers and limits:
 #   RB-READY   rb-rc started; within RB_BOOT_LIMIT seconds (default 600)
@@ -18,6 +18,7 @@
 # On a timeout QEMU is killed. OUTDIR/boot.json says what happened.
 set -euo pipefail
 
+here="$(cd "$(dirname "$0")" && pwd)"
 image=$1
 firmware=$2
 suites=$3
@@ -44,6 +45,7 @@ RB_SMOKE_DISK=vtbd7
 RB_KYUA_FILTERS="$RB_KYUA_FILTERS"
 RB_KYUA_LIMIT=$((RB_RUN_LIMIT - RB_BOOT_LIMIT - 300))
 EOF
+cp "$here/guest/smoke.sh" "$here/guest/kyua.sh" "$here/../../conf/freebsd/image/kyua-exclude" "$out/rb-in/"
 tar -cf "$out/rb.tar" -C "$out/rb-in" .
 truncate -s 1G "$out/rb.tar"
 for i in 1 2 3 4 5 smoke cam; do
@@ -65,7 +67,7 @@ done
 start=$(date +%s)
 qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" \
 	"${fw[@]}" -no-reboot -display none -serial file:"$console" \
-	-drive if=none,id=root,file="$out/disk.qcow2",format=qcow2 -device virtio-blk-pci,drive=root \
+	-drive if=none,id=root,file="$out/disk.qcow2",format=qcow2 -device virtio-blk-pci,drive=root,bootindex=0 \
 	-drive if=none,id=rb,file="$out/rb.tar",format=raw -device virtio-blk-pci,drive=rb \
 	"${disks[@]}" \
 	-drive if=none,id=smoke,file="$out/disk-smoke",format=raw -device virtio-blk-pci,drive=smoke \
@@ -113,13 +115,25 @@ else
 	result=no-ready
 fi
 
+if [ "$result" = panic ]; then
+	# The trap, the panic and the backtrace, and the last kyua lines before them.
+	{
+		grep -a -m1 -B2 -A12 '^Fatal trap' "$console" || true
+		grep -a -m1 -A20 '^panic:' "$console" || true
+		echo
+		echo "The last kyua results before the panic:"
+		grep -a -E '^[^ ]+:[^ ]+ +-> ' "$console" | tail -10 || true
+	} > "$out/panic.txt"
+	cat "$out/panic.txt"
+fi
+
 rm -rf "$out/results"
 mkdir -p "$out/results"
 tar -xf "$out/rb.tar" -C "$out/results" 2>/dev/null || true
 rm -f "$out/disk.qcow2" "$out/rb.tar" "$out"/disk-* "$out/vars.fd"
 
 cat > "$out/boot.json" <<EOF
-{"firmware": "$firmware", "suites": "$suites", "result": "$result", "ready_seconds": ${ready:-null}, "seconds": $seconds, "done": "${done_line#RB-DONE }"}
+{"firmware": "$firmware", "suites": "$suites", "result": "$result", "ready_seconds": ${ready:-null}, "seconds": $seconds, "done": "${done_line#RB-DONE }", "panic": "$(grep -a -m1 '^panic:' "$console" | tr -d '"\\\r' || true)"}
 EOF
 cat "$out/boot.json"
 [ "$result" = "done" ]

@@ -51,8 +51,9 @@ rb_start()
 	. "${work}/rb.conf"
 	export RB_SMOKE_DISK RB_KYUA_FILTERS RB_KYUA_LIMIT
 
-	# A panic prints a backtrace on the console and resets, so QEMU exits instead of waiting.
-	ddb script kdb.enter.panic="bt; show pcpu; reset" || true
+	# A kernel with DDB prints a backtrace on a panic and resets, so QEMU exits instead of waiting.
+	# A kernel without DDB, like GENERIC of a release, prints the backtrace and reboots anyway.
+	ddb script kdb.enter.panic="bt; show pcpu; reset" > /dev/null 2>&1 || true
 
 	uname -a > ${out}/uname.txt
 	cp /var/run/dmesg.boot ${out}/dmesg.boot 2>/dev/null || dmesg -a > ${out}/dmesg.boot
@@ -66,11 +67,11 @@ rb_start()
 			;;
 		smoke)
 			rb_say "RB-SUITE smoke"
-			/usr/local/libexec/rb/smoke.sh ${out}/smoke
+			sh ${work}/smoke.sh ${out}/smoke
 			;;
 		kyua)
 			rb_say "RB-SUITE kyua"
-			/usr/local/libexec/rb/kyua.sh ${out}/kyua
+			sh ${work}/kyua.sh ${out}/kyua
 			;;
 		*)
 			echo "unknown suite ${s}" >> ${out}/errors.txt

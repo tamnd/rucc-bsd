@@ -58,6 +58,9 @@ def build_record(d):
                 "size_kb": int(size_kb),
                 "disk_used_kb": int(used_kb),
             }
+    run = read(os.path.join(d, "run.txt"))
+    if run:
+        rec["build_run"] = run.strip()
     image = read(os.path.join(d, "image.txt"))
     if image:
         rec["image"] = {}
@@ -176,6 +179,8 @@ def main():
     for name, b in s["boots"].items():
         line = f"Boot {name}: {b.get('result')}, RB-READY after {b.get('ready_seconds')} s, {b.get('seconds')} s in all."
         md.append(line)
+        if b.get("panic"):
+            md.append(f"The kernel panicked: `{b['panic']}`. The trap and the backtrace are in panic.txt.")
         if "smoke" in b:
             passed = sum(1 for r in b["smoke"].values() if r == "pass")
             md.append(
@@ -189,6 +194,8 @@ def main():
                 f"kyua: {c['total']} cases, {c['passed']} passed, {c['failed']} failed, {c['broken']} broken, "
                 f"{c['skipped']} skipped, {c['expected_failure']} expected failures, in {b['kyua']['seconds'] / 60:.0f} minutes."
             )
+            if b["kyua"]["excluded"]:
+                md.append("Left out: " + ", ".join(f"`{e}`" for e in b["kyua"]["excluded"]) + ".")
         md.append("")
     if "published" in s:
         p = s["published"]
