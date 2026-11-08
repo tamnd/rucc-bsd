@@ -1,0 +1,200 @@
+# R for the NetBSD trunk amd64 kernel (milestone B3): the GENERIC kernel of the pinned tree built
+# by build.sh with rucc in the C compiler slot of TOOLDIR. The world, the image and the tests come
+# later. The pin, the tools and the paths are those of netbsd-g.yml.
+#
+# scripts/netbsd/overlay.sh copies the G TOOLDIR and replaces bin/x86_64--netbsd-gcc and
+# bin/x86_64--netbsd-cpp with the shims in conf/netbsd/toolchain. Every other tool, the C++ slot
+# among them, stays the reference. The kernel job runs twice:
+#   ref    the control. The shims run the renamed reference GCC with the arguments unchanged. This
+#          build must succeed, or the overlay is broken and the rucc result means nothing.
+#   rucc   the shims run rucc with --target, -fgnuc-version and --sysroot. This build may fail
+#          until B3 is done. When it fails, "make -k" goes on with the units that do not depend on
+#          the failure, and scripts/netbsd/r-report.sh puts the first failed file, its error and
+#          the counts in the step summary.
+#
+# The rucc binary is the pinned release, checked against the hash written here, as in the kernel
+# workflow of rucc-kernel. A manual run can name a branch or commit of tamnd/rucc instead, which
+# is built from source and named by its commit in the step summary. A manual run can also name
+# another --target, to see how far rucc gets before it knows the NetBSD triple (tamnd/rucc#4088).
+
+name: netbsd-r
+
+# The paths leave out the files that only the image, the boot and the tests use.
+on:
+  pull_request:
+    paths:
+      - scripts/netbsd/**
+      - conf/netbsd/**
+      - .github/workflows/netbsd-r.yml
+      - "!scripts/netbsd/guest/**"
+      - "!scripts/netbsd/boot.py"
+      - "!scripts/netbsd/atf-counts.py"
+      - "!scripts/netbsd/prepare-image.sh"
+      - "!scripts/netbsd/kernset.sh"
+  workflow_dispatch:
+    inputs:
+      rucc:
+        description: A branch or commit of tamnd/rucc to build instead of the pinned release
+        required: false
+        default: ""
+      target:
+        description: The --target the shims give rucc, or empty for x86_64--netbsd
+        required: false
+        default: ""
+
+# A manual run is its own group, so that a push to the branch does not cancel it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NB_ROOT: /mnt/nb
+  RUCC_VERSION: v0.30.15
+  RUCC_SHA256: 32e1cab992940f0563cb9e49bfc3c3ed23192e519ee277fdcf9edfefb8503ddb
+
+jobs:
+  tools:
+    name: build.sh tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache@v6.1.0
+        id: tools
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          lookup-only: true
+      - name: host packages
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+      - name: fetch the pinned tree
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: build.sh tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: scripts/netbsd/phase.sh tools tools
+
+  kernel:
+    name: GENERIC kernel with ${{ matrix.cc }}
+    needs: tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    continue-on-error: ${{ matrix.cc == 'rucc' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [ref, rucc]
+    env:
+      CC_NAME: ${{ matrix.cc }}
+      RB_RUCC_TARGET: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: host packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rucc ${{ inputs.rucc }} from source
+        if: matrix.cc == 'rucc' && inputs.rucc != ''
+        run: |
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$REF"
+          cargo build --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "$RUNNER_TEMP/rucc-src/target/release" >> "$GITHUB_PATH"
+          echo "rucc built from $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.rucc }}
+      - name: rucc ${{ env.RUCC_VERSION }}
+        if: matrix.cc == 'rucc' && inputs.rucc == ''
+        run: |
+          name="rucc-$RUCC_VERSION-x86_64-unknown-linux-gnu"
+          gh release download "$RUCC_VERSION" -R tamnd/rucc -p "$name.tar.gz" -D "$RUNNER_TEMP"
+          echo "$RUCC_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+          echo "rucc $RUCC_VERSION, the release tarball" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: the R TOOLDIR
+        run: |
+          scripts/netbsd/overlay.sh "$CC_NAME"
+          gcc="$NB_ROOT/tools-r/bin/x86_64--netbsd-gcc"
+          {
+            echo "### The C compiler slot"
+            echo
+            echo '```'
+            RB_SHIM_LOG="" "$gcc" --version 2>&1 | head -5 || true
+            echo 'int main(void) { return __NetBSD__ + __GNUC__; }' > "$RUNNER_TEMP/probe.c"
+            RB_SHIM_LOG="" "$gcc" -c -o "$RUNNER_TEMP/probe.o" "$RUNNER_TEMP/probe.c" 2>&1 | head -10 \
+              && echo "probe: a NetBSD object compiled" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: build.sh kernel=GENERIC
+        id: kernel
+        run: NB_TOOLDIR="$NB_ROOT/tools-r" NB_NOISE=2 scripts/netbsd/phase.sh "kernel-$CC_NAME" -u kernel=GENERIC
+      - name: make -k in the kernel's object directory
+        if: failure() && steps.kernel.outcome == 'failure'
+        run: |
+          dir="$NB_ROOT/obj/sys/arch/amd64/compile/GENERIC"
+          if [ -f "$dir/Makefile" ]; then
+            NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh "kernel-$CC_NAME-k" -- \
+              "$NB_ROOT/tools-r/bin/nbmake-amd64" -k -j "$(nproc)" -C "$dir" || true
+          fi
+      - name: summary
+        if: always()
+        run: |
+          kernel="$NB_ROOT/obj/sys/arch/amd64/compile/GENERIC/netbsd"
+          {
+            echo "### GENERIC kernel with $CC_NAME"
+            echo
+            if [ -f "$NB_ROOT/logs/phases.tsv" ]; then scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"; fi
+            echo
+            if [ -f "$kernel" ]; then
+              echo "The kernel linked: \`netbsd\`, $(stat -c %s "$kernel") bytes."
+              echo
+              echo '```'
+              "$NB_ROOT/tools/bin/x86_64--netbsd-size" "$kernel"
+              echo '```'
+            else
+              echo "No kernel linked."
+            fi
+            echo
+            scripts/netbsd/r-report.sh "$NB_ROOT/logs/kernel-$CC_NAME.log" "$NB_ROOT/logs/kernel-$CC_NAME-k.log"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: compress the logs
+        if: always()
+        run: xz -T0 "$NB_ROOT"/logs/*.log "$NB_ROOT"/logs/shim.tsv 2>/dev/null || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-logs-kernel-${{ matrix.cc }}
+          path: /mnt/nb/logs
+          retention-days: 14
