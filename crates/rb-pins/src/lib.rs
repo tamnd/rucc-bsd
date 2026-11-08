@@ -5,6 +5,7 @@
 //! pins of `pins.toml`, each a commit or a tarball with the digest the project publishes.
 
 pub mod expand;
+pub mod fetch;
 pub mod pins;
 pub mod places;
 pub mod publish;
