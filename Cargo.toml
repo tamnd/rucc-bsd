@@ -18,6 +18,7 @@ harness-shim = { git = "https://github.com/tamnd/rucc-harness", tag = "v0.1.0" }
 harness-stats = { git = "https://github.com/tamnd/rucc-harness", tag = "v0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 toml = "0.9"
 
 [workspace.lints.rust]

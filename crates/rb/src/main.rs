@@ -23,6 +23,17 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
+        "fetch" => {
+            let repo = rb::repo::Repo::find()?;
+            let report = rb::fetch::run(
+                &repo,
+                args.target.as_deref(),
+                args.get("set"),
+                args.has("tarball"),
+            )?;
+            print!("{report}");
+            Ok(ExitCode::SUCCESS)
+        }
         "personas" => {
             let repo = rb::repo::Repo::find()?;
             let (report, review) = rb::personas::run(&repo, args.get("arch").unwrap_or("x86_64"))?;

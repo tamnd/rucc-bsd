@@ -45,6 +45,11 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "fetch" => Accepts {
+            positional: true,
+            values: &["set"],
+            switches: &["tarball"],
+        },
         "personas" => Accepts {
             positional: false,
             values: &["arch"],
@@ -64,6 +69,12 @@ pub const USAGE: &str = "\
 rb: build pinned FreeBSD and NetBSD trees with rucc and with a reference GCC
 
 usage:
+  rb fetch PIN [--tarball]
+  rb fetch --set current|releases [--tarball]
+      Fetch a pinned tree into RB_CACHE/trees and verify it. A pin with a commit is fetched one
+      commit deep with git, and HEAD must be the pinned commit. A release with --tarball, or a pin
+      with no commit, is downloaded and checked against the digest the project publishes. The
+      tree's newvers.sh or param.h must give the pin's version. Prints where the tree is.
   rb personas [--arch ARCH]
       Print the persona, the reference toolchain and rucc's --target for every pin, from
       pins.toml, personas.toml and toolchains.toml. ARCH is rucc's architecture, x86_64 by
