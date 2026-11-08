@@ -23,6 +23,16 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
+        "personas" => {
+            let repo = rb::repo::Repo::find()?;
+            let (report, review) = rb::personas::run(&repo, args.get("arch").unwrap_or("x86_64"))?;
+            print!("{report}");
+            Ok(if review {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
         "sets" => {
             let repo = rb::repo::Repo::find()?;
             let web = rb_pins::web::Curl::from_env();

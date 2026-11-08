@@ -1,0 +1,72 @@
+# Where builds run (plan 04.4 and 14.6).
+
+# The FreeBSD builder: a VM of the latest FreeBSD release, the same release as FreeBSD's own CI
+# build jail. sha256 is the line for the image in checksum_url, read on 8 November 2026.
+[builder."freebsd-15.1"]
+system = "freebsd"
+kind = "vm"
+release = "15.1-RELEASE"
+image = "FreeBSD-15.1-RELEASE-amd64-BASIC-CI-ufs.raw.xz"
+url = "https://download.freebsd.org/releases/CI-IMAGES/15.1-RELEASE/amd64/Latest/FreeBSD-15.1-RELEASE-amd64-BASIC-CI-ufs.raw.xz"
+checksum_url = "https://download.freebsd.org/releases/CI-IMAGES/15.1-RELEASE/amd64/Latest/CHECKSUM.SHA256"
+sha256 = "908e735f18ba192eaf48c2703b549225c9b96e74e3784bd9278c7120b4139962"
+toolchains = ["amd64-gcc15", "amd64-binutils"]
+qemu = "qemu-system-x86_64"
+machine = "q35"
+accel = "kvm"
+
+[[builder."freebsd-15.1".host]]
+on = "gpc"
+cpus = 24
+
+# Until gpc is set up, the B0 builds run in this VM on a GitHub runner.
+[[builder."freebsd-15.1".host]]
+on = "github-ubuntu-24.04"
+cpus = "all"
+memory_gb = 12
+build_disk_gb = 100
+
+# The NetBSD host: build.sh cross-builds from any POSIX host and builds its own reference GCC.
+# The digest is the index digest of debian:13 on Docker Hub, read on 8 November 2026.
+[builder.netbsd-host]
+system = "netbsd"
+kind = "container"
+image = "debian:13"
+digest = "sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6"
+
+[[builder.netbsd-host.host]]
+on = "gpc"
+
+[[builder.netbsd-host.host]]
+on = "server3"
+
+# Until the container runs on gpc, the B0 builds run on the GitHub runner itself.
+[[builder.netbsd-host.host]]
+on = "github-ubuntu-24.04"
+cpus = "all"
+
+[machine.gpc]
+cores = 32
+arch = "x86_64"
+role = "the sweep worker: FreeBSD builder VMs at 24 vCPUs, NetBSD build.sh containers, KVM boots of every amd64 and i386 image"
+
+[machine.server3]
+cores = 8
+arch = "x86_64"
+role = "the benchmark box (13.2), and nightly amd64 tests when it is not benchmarking"
+
+[machine.server2]
+arch = "x86_64"
+role = "TCG boots of aarch64 and riscv64 images, and nightly kyua and ATF runs on them"
+
+[machine.server1]
+arch = "x86_64"
+role = "TCG boots of aarch64 and riscv64 images, and nightly kyua and ATF runs on them"
+
+[machine."github-ubuntu-24.04"]
+arch = "x86_64"
+role = "pr.yml, and a NetBSD build.sh kernel build as a canary, since it needs no VM"
+
+[machine."github-ubuntu-24.04-arm"]
+arch = "aarch64"
+role = "aarch64 boots under KVM if the runners expose it"

@@ -1,0 +1,86 @@
+# The reference toolchains (plan 04.3 and 04.4).
+#
+# FreeBSD: packages from the FreeBSD:15:amd64 quarterly repository, installed on the builder
+# (builders.toml). sha256 is the digest of the .pkg file at repopath. pkg_sum is the sum the
+# repository's packagesite.yaml gives. All three were read on 8 November 2026.
+#
+# NetBSD: the tools that `build.sh tools` builds from the tree under test. Their versions are set
+# by the tree. rb personas checks gcc against each pin's BASE-VER. The hashes of the built tools
+# are recorded by each G build, not here.
+
+[toolchain.amd64-gcc15]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "amd64-gcc15"
+version = "15.2.0_1"
+origin = "devel/freebsd-gcc15"
+repopath = "All/Hashed/amd64-gcc15-15.2.0_1~2$h98x778p.pkg"
+size = 49862549
+sha256 = "94668e66165cd190ea55bdf286e5189f54e8564dd06c735193d67d4bdec641b9"
+pkg_sum = "2$h98x778pyyfcw4isx41n7wh99ep7yi48ojey54ipxndsmwdhzju8zdsqysh4n7z3t39wnkzthtot176rcu8q8pgz818ruxhsn56gk5b"
+needs = ["amd64-binutils"]
+gcc = "15.2.0"
+cc = "/usr/local/bin/x86_64-unknown-freebsd15.1-gcc15"
+cxx = "/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
+cpp = "/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15"
+cross_toolchain = "amd64-gcc15"
+
+[toolchain.amd64-gcc14]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "amd64-gcc14"
+version = "14.2.0_1"
+origin = "devel/freebsd-gcc14"
+repopath = "All/Hashed/amd64-gcc14-14.2.0_1~2$a8bmuw8w.pkg"
+size = 46229536
+sha256 = "54eecf3eef0b26959de5dab7f428f52f1dc3149627bcf455ef813f9b7b858b8e"
+pkg_sum = "2$a8bmuw8wuk9y497sxgocfddtahkzp6bdd57pkjncunejkdtcpqkxhcpuf578go9o9td7f77g7nrnte8et98os9d5cfmg5514skxik7n"
+needs = ["amd64-binutils"]
+gcc = "14.2.0"
+cc = "/usr/local/bin/x86_64-unknown-freebsd15.1-gcc14"
+cxx = "/usr/local/bin/x86_64-unknown-freebsd15.1-g++14"
+cpp = "/usr/local/bin/x86_64-unknown-freebsd15.1-cpp14"
+cross_toolchain = "amd64-gcc14"
+
+# The plan (04.3) names the `binutils` package. The cross prefix that CROSS_TOOLCHAIN=amd64-gcc15
+# uses, /usr/local/x86_64-unknown-freebsd15.1/bin/, comes from amd64-binutils, the amd64 flavor
+# of the same port, devel/binutils. amd64-gcc15 and amd64-gcc14 depend on it.
+[toolchain.amd64-binutils]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "amd64-binutils"
+version = "2.44,1"
+origin = "devel/binutils"
+repopath = "All/Hashed/amd64-binutils-2.44,1~2$89zgb5og.pkg"
+size = 2611570
+sha256 = "651185ce0a4b75c51c17e5fbeb071008b637f5742f13a6ac1f3bb3e14a23af75"
+pkg_sum = "2$89zgb5ogtnz9fs7ime1cgaad449cm1kd5f5c6yuei7t8p3wjn4pyarjrkt9pffc6iqm3xoj868kgb64zktyb17bjc8tgr3o5hp5gm9y"
+binutils = "2.44"
+cross_prefix = "/usr/local/x86_64-unknown-freebsd15.1/bin/"
+
+[toolchain.netbsd-current-tools]
+system = "netbsd"
+kind = "build.sh tools"
+gcc = "14.4.0"
+binutils = "2.46"
+tooldir_cc = "bin/x86_64--netbsd-gcc"
+tooldir_cpp = "bin/x86_64--netbsd-cpp"
+
+[toolchain.netbsd-11-tools]
+system = "netbsd"
+kind = "build.sh tools"
+gcc = "12.5.0"
+binutils = "2.42"
+tooldir_cc = "bin/x86_64--netbsd-gcc"
+tooldir_cpp = "bin/x86_64--netbsd-cpp"
+
+[toolchain.netbsd-10-tools]
+system = "netbsd"
+kind = "build.sh tools"
+gcc = "10.5.0"
+binutils = "2.34"
+tooldir_cc = "bin/x86_64--netbsd-gcc"
+tooldir_cpp = "bin/x86_64--netbsd-cpp"

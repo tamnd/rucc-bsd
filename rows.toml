@@ -1,0 +1,82 @@
+# The architecture rows (plan 11.1): what each system calls the architecture, how its images boot
+# under QEMU, and the limits of a test run (12.2 and 12.3).
+#
+# from names the milestone that adds the row for each system. A row with no B0 entry is written
+# down now so that its names are decided once.
+
+[row.amd64]
+from = { netbsd = "B3", freebsd = "B5" }
+rucc_arch = "x86_64"
+freebsd = { target = "amd64", target_arch = "amd64" }
+netbsd = { machine = "amd64", machine_arch = "x86_64" }
+qemu = "qemu-system-x86_64"
+machine = "q35"
+accel = "kvm"
+# amd64 boots twice per run. The tests run on the UEFI boot. The BIOS boot runs the boot suite
+# only, because its point is the boot code.
+firmware = ["ovmf", "seabios"]
+test_firmware = "ovmf"
+cpus = 2
+memory_gb = 8
+console = "serial"
+run_limit_hours = 4
+test_on = ["gpc"]
+
+# The 32-bit compatibility libraries, built by the world compiler with -m32, tested in the amd64
+# images (11.1).
+[row.amd64-lib32]
+from = { netbsd = "B4", freebsd = "B6" }
+rucc_arch = "i686"
+in_row = "amd64"
+freebsd = { knob = "MK_LIB32" }
+netbsd = { knob = "MKCOMPAT" }
+
+[row.aarch64]
+from = { netbsd = "B7", freebsd = "B7" }
+rucc_arch = "aarch64"
+freebsd = { target = "arm64", target_arch = "aarch64" }
+netbsd = { machine = "evbarm", machine_arch = "aarch64" }
+qemu = "qemu-system-aarch64"
+machine = "virt"
+# KVM on arm64 hardware if there is any, otherwise TCG (open question 7).
+accel = "tcg"
+firmware = ["edk2"]
+test_firmware = "edk2"
+# More than one vCPU, so that the locking tests exercise rucc's memory ordering (11.2).
+cpus = 4
+memory_gb = 8
+console = "serial"
+test_on = ["server1", "server2"]
+
+[row.riscv64]
+from = { netbsd = "B7", freebsd = "B7" }
+rucc_arch = "riscv64"
+freebsd = { target = "riscv", target_arch = "riscv64" }
+netbsd = { machine = "riscv", machine_arch = "riscv64" }
+qemu = "qemu-system-riscv64"
+machine = "virt"
+accel = "tcg"
+# OpenSBI, then U-Boot or EDK2, whichever the system's own documentation names (12.3).
+firmware = ["opensbi"]
+test_firmware = "opensbi"
+cpus = 4
+memory_gb = 8
+console = "serial"
+test_on = ["server1", "server2"]
+
+# FreeBSD stable/14 only, since 15.0 retired the i386 kernel.
+[row.i386]
+from = { netbsd = "B12", freebsd = "B12" }
+rucc_arch = "i686"
+freebsd = { target = "i386", target_arch = "i386", series = ["14"] }
+netbsd = { machine = "i386", machine_arch = "i386" }
+qemu = "qemu-system-i386"
+machine = "q35"
+accel = "kvm"
+firmware = ["seabios"]
+test_firmware = "seabios"
+cpus = 2
+# The plan gives no size for i386. 4 GB is what a 32-bit kernel sees without PAE.
+memory_gb = 4
+console = "serial"
+test_on = ["gpc"]
