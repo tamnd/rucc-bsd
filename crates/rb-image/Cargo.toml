@@ -1,0 +1,15 @@
+[package]
+name = "rb-image"
+description = "Disk images for rucc-bsd: rb-rc, the smoke suite, and the tar archives of the results disk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+harness-agent.workspace = true
+
+[lints]
+workspace = true
