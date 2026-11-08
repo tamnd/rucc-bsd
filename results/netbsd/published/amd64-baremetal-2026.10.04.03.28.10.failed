@@ -1,0 +1,12 @@
+lib/libarchive/t_libarchive	libarchive
+lib/libc/sys/t_ptrace_wait3	access_regs_set_unaligned_pc_0x7
+lib/libc/sys/t_ptrace_wait4	access_regs_set_unaligned_pc_0x7
+lib/libc/sys/t_ptrace_wait6	access_regs_set_unaligned_pc_0x7
+lib/libc/sys/t_ptrace_waitid	access_regs_set_unaligned_pc_0x7
+lib/libc/sys/t_ptrace_waitpid	access_regs_set_unaligned_pc_0x7
+lib/libpthread/t_resolv	resolv
+net/altq/t_cbq	altq_cbq_basic_ipv4
+net/altq/t_cbq	altq_cbq_multi_ifaces_ipv4
+net/altq/t_cbq	altq_cbq_options_ipv4
+net/carp/t_basic	carp_handover_ipv6_halt_nocarpdevip
+net/carp/t_basic	carp_handover_ipv6_ifdown_nocarpdevip
