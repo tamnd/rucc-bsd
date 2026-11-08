@@ -1,0 +1,23 @@
+[package]
+name = "rb-shim"
+description = "rb-cc, rb-c++, rb-cpp and rb-as: record every compiler call of a BSD build"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# One binary. rb-c++, rb-cpp, rb-as and the toolchain names of plan 05.4 are hard links to it,
+# and it reads the name it was called by.
+[[bin]]
+name = "rb-cc"
+path = "src/main.rs"
+
+[dependencies]
+harness-shim.workspace = true
+serde.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
