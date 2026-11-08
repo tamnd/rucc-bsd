@@ -142,6 +142,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rb-image"
+version = "0.0.1"
+dependencies = [
+ "harness-agent",
+]
+
+[[package]]
 name = "rb-pins"
 version = "0.0.1"
 dependencies = [

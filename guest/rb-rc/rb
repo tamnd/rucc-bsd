@@ -1,0 +1,28 @@
+#!/bin/sh
+#
+# rb-rc (plan 12.4): the last rc script at boot. It runs the suites that /etc/rb.conf names,
+# saves the results to the results disk and powers off. The work is in /usr/libexec/rb/run.
+# The same file is /etc/rc.d/rb on FreeBSD and on NetBSD. rb image installs it and sets
+# rb_enable=YES in rc.conf.
+#
+# PROVIDE: rb
+# REQUIRE: LOGIN
+# KEYWORD: nojail
+
+# rc.subr reads the variables below.
+# shellcheck disable=SC1091,SC2034
+
+. /etc/rc.subr
+
+name=rb
+rcvar=rb_enable
+start_cmd=rb_start
+stop_cmd=:
+
+rb_start()
+{
+	/usr/libexec/rb/run
+}
+
+load_rc_config $name
+run_rc_command "$1"
