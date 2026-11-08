@@ -13,7 +13,8 @@ tooldir=${NB_TOOLDIR:-$NB_TOOLS}
 make="$tooldir/bin/nbmake-$NB_MACHINE"
 conf=${1:-GENERIC}
 
-v() { "$make" -C "$NB_SRC/etc" -V "$1" 2>/dev/null; }
+# -v expands the value; -V prints it as written.
+v() { "$make" -C "$NB_SRC/etc" -v "$1" 2>/dev/null; }
 kernobjdir=$(v KERNOBJDIR)
 suffix=$(v TAR_SUFF)
 compress=$(v COMPRESS_PROGRAM)
