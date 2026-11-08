@@ -9,8 +9,11 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+harness-agent.workspace = true
 harness-shim.workspace = true
 rb-pins = { path = "../rb-pins" }
+serde.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

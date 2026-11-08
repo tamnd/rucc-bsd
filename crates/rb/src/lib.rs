@@ -6,7 +6,9 @@
 
 pub mod census;
 pub mod cli;
+pub mod demands;
 pub mod fetch;
 pub mod personas;
 pub mod repo;
+pub mod scan;
 pub mod sets;

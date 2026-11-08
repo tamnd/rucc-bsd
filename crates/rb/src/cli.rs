@@ -50,6 +50,11 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["objdir", "skip", "objects", "limit"],
             switches: &[],
         },
+        "demands" => Accepts {
+            positional: true,
+            values: &["pin", "row", "conf", "jobs", "limit"],
+            switches: &["write", "flags-only"],
+        },
         "fetch" => Accepts {
             positional: true,
             values: &["set"],
@@ -80,6 +85,14 @@ usage:
       object no call wrote as other; --skip leaves out paths under DIR, such as the host tools.
       --objects writes every object, its origin and its slot as tab-separated values. Lists in
       the report stop after N lines, 50 by default.
+  rb demands LOG [--pin PIN --row ROW --conf CONF [--write]] [--flags-only] [--jobs N] [--limit N]
+      Count the compiler features one build uses, from its compile.jsonl. Every C and assembly
+      unit of the C compiler slot is run again with -E in place of -c, in its own directory, and
+      its text is scanned for attributes, builtins, keywords, inline and file-scope asm, assembler
+      directives, mnemonics and pragmas; its -f, -m, -W, --param and -std= flags are counted too.
+      Run it where the build ran. --flags-only reads the command lines and runs nothing. --write
+      puts the result in demands.toml under the pin, row and configuration. N units run at once,
+      one per CPU by default, and each list of the report stops after 30 lines by default.
   rb fetch PIN [--tarball]
   rb fetch --set current|releases [--tarball]
       Fetch a pinned tree into RB_CACHE/trees and verify it. A pin with a commit is fetched one

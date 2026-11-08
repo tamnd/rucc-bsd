@@ -63,6 +63,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "harness-agent"
+version = "0.1.0"
+source = "git+https://github.com/tamnd/rucc-harness?tag=v0.1.0#63c5a6dbe9c35097a799dfffdc5b215eab347422"
+
+[[package]]
 name = "harness-shim"
 version = "0.1.0"
 source = "git+https://github.com/tamnd/rucc-harness?tag=v0.1.0#63c5a6dbe9c35097a799dfffdc5b215eab347422"
@@ -129,8 +134,11 @@ dependencies = [
 name = "rb"
 version = "0.0.1"
 dependencies = [
+ "harness-agent",
  "harness-shim",
  "rb-pins",
+ "serde",
+ "toml",
 ]
 
 [[package]]
