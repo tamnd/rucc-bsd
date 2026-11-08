@@ -45,6 +45,11 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "sets" => Accepts {
+            positional: false,
+            values: &["as-of"],
+            switches: &["write"],
+        },
         _ => return None,
     })
 }
@@ -54,6 +59,10 @@ pub const USAGE: &str = "\
 rb: build pinned FreeBSD and NetBSD trees with rucc and with a reference GCC
 
 usage:
+  rb sets [--as-of TIME] [--write]
+      Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
+      pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME,
+      such as 2026-11-08T06:00:00Z. Exits 1 when pins.toml is out of date and --write is not given.
   rb version
 
 The repository is found by walking up to sets.toml, or from RB_ROOT. Downloads and fetched

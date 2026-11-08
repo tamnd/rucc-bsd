@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+rb-pins = { path = "../rb-pins" }
 
 [lints]
 workspace = true

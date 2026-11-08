@@ -128,6 +128,18 @@ dependencies = [
 [[package]]
 name = "rb"
 version = "0.0.1"
+dependencies = [
+ "rb-pins",
+]
+
+[[package]]
+name = "rb-pins"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "rb-shim"

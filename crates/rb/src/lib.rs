@@ -5,3 +5,5 @@
 //! own module, and the binary only parses the command line and calls it.
 
 pub mod cli;
+pub mod repo;
+pub mod sets;

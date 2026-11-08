@@ -1,0 +1,25 @@
+# The rules for which trees are pinned (plan 04.5). `rb sets --write` reads what FreeBSD and
+# NetBSD publish and expands these rules into pins.toml. Edit this file, never pins.toml.
+
+[freebsd.current]
+branches = ["main", "stable/15", "stable/14"]
+releng_in_progress = true           # releng/X.Y while ALPHA, BETA or RC
+nightly = true
+
+[freebsd.releases]
+supported_only = true               # from the security page's table
+# The 04.5 table pins one release per major: 15.1 and 14.5. The security page also lists 14.4
+# until 31 December 2026 (04.7). This key keeps the newest release of each major only.
+latest_per_major = true
+weekly = true
+
+[netbsd.current]
+branches = ["trunk", "netbsd-11", "netbsd-10"]
+nightly = true
+
+[netbsd.releases]
+supported_only = true               # from www.netbsd.org/releases/
+weekly = true
+
+[pin_policy]
+head = "last-g-good"                # see 04.6

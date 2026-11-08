@@ -23,6 +23,17 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
+        "sets" => {
+            let repo = rb::repo::Repo::find()?;
+            let web = rb_pins::web::Curl::from_env();
+            let outcome = rb::sets::run(&repo, &web, args.get("as-of"), args.has("write"))?;
+            print!("{}", outcome.report);
+            Ok(if outcome.up_to_date || args.has("write") {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
+        }
         "version" => {
             println!("rb {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
