@@ -45,6 +45,11 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "personas" => Accepts {
+            positional: false,
+            values: &["arch"],
+            switches: &[],
+        },
         "sets" => Accepts {
             positional: false,
             values: &["as-of"],
@@ -59,6 +64,10 @@ pub const USAGE: &str = "\
 rb: build pinned FreeBSD and NetBSD trees with rucc and with a reference GCC
 
 usage:
+  rb personas [--arch ARCH]
+      Print the persona, the reference toolchain and rucc's --target for every pin, from
+      pins.toml, personas.toml and toolchains.toml. ARCH is rucc's architecture, x86_64 by
+      default. Exits 1 when a persona needs review, such as a NetBSD BASE-VER that moved.
   rb sets [--as-of TIME] [--write]
       Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
       pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME,

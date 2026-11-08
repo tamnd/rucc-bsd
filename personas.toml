@@ -1,0 +1,49 @@
+# rucc's persona for each tree: the -fgnuc-version= it is given, the reference that grades it,
+# and why (plan 04.3). `rb personas` prints one line per pin of pins.toml and checks each
+# persona against toolchains.toml and, for NetBSD, against the tree's own BASE-VER.
+#
+# series matches the pin's series in pins.toml. target_os is the OS part of rucc's --target. For
+# FreeBSD it is the reference package's target, which is the builder's release. For NetBSD,
+# {version} is the pin's version to two places, such as 11.99 or 11.1.
+
+[[persona]]
+system = "freebsd"
+series = ["16", "15"]
+reference = "amd64-gcc15"
+gnuc = "15.2.0"
+target_os = "freebsd15.1"
+why = "make universe defaults to gcc15. GCC 14 rejects a C++ flexible array member in usr.sbin/pmc/headers.hh (FreeBSD bug 297758), so it makes no G. GCC 15 is also the nearest version to rucc's own dialect. There is no freebsd-gcc16 port."
+
+[[persona]]
+system = "freebsd"
+series = ["14"]
+reference = "amd64-gcc15"
+gnuc = "15.2.0"
+fallback = "amd64-gcc14"
+fallback_gnuc = "14.2.0"
+target_os = "freebsd15.1"
+why = "the same reference as 15, falling back to amd64-gcc14 where 15 fails and 14 does not. The persona is the version of the reference that built G."
+
+[[persona]]
+system = "netbsd"
+series = ["current"]
+reference = "netbsd-current-tools"
+gnuc = "14.4.0"
+target_os = "netbsd{version}"
+why = "the in-tree GCC that build.sh tools builds, so G is what NetBSD ships."
+
+[[persona]]
+system = "netbsd"
+series = ["11"]
+reference = "netbsd-11-tools"
+gnuc = "12.5.0"
+target_os = "netbsd{version}"
+why = "the in-tree GCC of netbsd-11 and the 11.x releases."
+
+[[persona]]
+system = "netbsd"
+series = ["10"]
+reference = "netbsd-10-tools"
+gnuc = "10.5.0"
+target_os = "netbsd{version}"
+why = "the in-tree GCC of netbsd-10 and the 10.x releases."

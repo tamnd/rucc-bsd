@@ -6,6 +6,8 @@
 
 pub mod expand;
 pub mod pins;
+pub mod places;
 pub mod publish;
 pub mod sets;
+pub mod toolchains;
 pub mod web;
