@@ -1,0 +1,27 @@
+# The first full G run. The pin breaks the rump kernel: lwproc_newproc does not copy p_pgrp after 36eddebcc, and NetBSD fixed it in e89b13157d. 1086 of the failed cases run rump_server or a rump client, and 5 more are rump file system tests that crashed. Do not use these counts as the baseline.
+label=G
+system=netbsd
+pin=trunk
+commit=36eddebcc36cb0775aa2962005b9c05419a6ff01
+row=amd64
+cc=gcc-in-tree
+gcc=14.4.0
+kernel=GENERIC
+image=live-image
+host=github-ubuntu-24.04-kvm
+vm=2-vcpu-8g
+run=https://github.com/tamnd/rucc-bsd/actions/runs/42508006832
+date=2026-11-08
+dirs=atf bin compat crypto dev fs games include ipf kernel lib libexec modules net rump sbin share sys usr.bin usr.sbin 
+programs=1039
+broken_programs=0
+cases=11623
+passed=9847
+failed=1094
+skipped=550
+expected_failures=132
+expected_failure=109
+expected_death=0
+expected_exit=0
+expected_signal=23
+expected_timeout=0
