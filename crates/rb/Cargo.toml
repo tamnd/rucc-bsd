@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+harness-shim.workspace = true
 rb-pins = { path = "../rb-pins" }
 
 [lints]

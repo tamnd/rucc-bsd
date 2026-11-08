@@ -129,6 +129,7 @@ dependencies = [
 name = "rb"
 version = "0.0.1"
 dependencies = [
+ "harness-shim",
  "rb-pins",
 ]
 
