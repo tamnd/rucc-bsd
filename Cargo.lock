@@ -136,6 +136,7 @@ version = "0.0.1"
 dependencies = [
  "harness-agent",
  "harness-shim",
+ "rb-image",
  "rb-pins",
  "serde",
  "toml",

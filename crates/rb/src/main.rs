@@ -36,6 +36,10 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             print!("{report}");
             Ok(ExitCode::SUCCESS)
         }
+        "image" => {
+            print!("{}", rb::image::run(args)?);
+            Ok(ExitCode::SUCCESS)
+        }
         "personas" => {
             let repo = rb::repo::Repo::find()?;
             let (report, review) = rb::personas::run(&repo, args.get("arch").unwrap_or("x86_64"))?;
