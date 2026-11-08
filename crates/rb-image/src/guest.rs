@@ -49,13 +49,20 @@ pub fn files(conf: &RbConf) -> Vec<GuestFile> {
     ]
 }
 
-/// Write the overlay under `root`, a staging tree or a scratch directory.
+/// Write the overlay under `root`, a staging tree or a scratch directory. A file that is already
+/// there is removed first, because rb's scripts are read-only and a second run must replace them.
 pub fn write_tree(root: &Path, files: &[GuestFile]) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt as _;
     for f in files {
         let path = root.join(f.path);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(format!("{}: {e}", path.display()));
+            }
+            _ => {}
         }
         std::fs::write(&path, &f.data).map_err(|e| format!("{}: {e}", path.display()))?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(f.mode))

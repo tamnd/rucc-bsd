@@ -60,6 +60,13 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["set"],
             switches: &["tarball"],
         },
+        "image" => Accepts {
+            positional: true,
+            values: &[
+                "build", "out", "system", "suites", "packages", "size", "tools", "work",
+            ],
+            switches: &["dry-run"],
+        },
         "personas" => Accepts {
             positional: false,
             values: &["arch"],
@@ -99,6 +106,15 @@ usage:
       commit deep with git, and HEAD must be the pinned commit. A release with --tarball, or a pin
       with no commit, is downloaded and checked against the digest the project publishes. The
       tree's newvers.sh or param.h must give the pin's version. Prints where the tree is.
+  rb image DIR|--build DIR --out IMG [--system freebsd|netbsd] [--suites boot,smoke,tests] [--packages DIR]
+           [--size SIZE] [--tools DIR] [--work DIR] [--dry-run]
+      Make a raw disk image from a build, with rb-rc and the smoke suite in it. For FreeBSD, DIR
+      is the staging tree of installworld, installkernel and distribution; rb writes its files
+      into it and runs makefs and mkimg, from --tools or PATH. SIZE is the root file system, 10g
+      by default. For NetBSD, DIR is the TOOLDIR of build.sh or its nbmake wrapper; rb runs the
+      live-image target with its files added, and grows the image to SIZE. The suites go in
+      /etc/rb.conf, boot only by default. --packages copies a local package repository to
+      /var/db/rb-pkg. The logs go to --work, IMG.work by default. --dry-run prints the commands.
   rb personas [--arch ARCH]
       Print the persona, the reference toolchain and rucc's --target for every pin, from
       pins.toml, personas.toml and toolchains.toml. ARCH is rucc's architecture, x86_64 by
