@@ -23,6 +23,37 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
+        "census" => {
+            let log = args
+                .target
+                .as_deref()
+                .ok_or("name the compile.jsonl of the build")?;
+            let skip: Vec<String> = args
+                .get("skip")
+                .map(|s| {
+                    s.split(',')
+                        .filter(|p| !p.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let limit = match args.get("limit") {
+                Some(n) => n
+                    .parse()
+                    .map_err(|_| format!("--limit {n} is not a number"))?,
+                None => 50,
+            };
+            let census = rb::census::run(
+                std::path::Path::new(log),
+                args.get("objdir").map(std::path::Path::new),
+                &skip,
+            )?;
+            if let Some(file) = args.get("objects") {
+                std::fs::write(file, census.objects_tsv()).map_err(|e| format!("{file}: {e}"))?;
+            }
+            print!("{}", census.report(log, limit));
+            Ok(ExitCode::SUCCESS)
+        }
         "fetch" => {
             let repo = rb::repo::Repo::find()?;
             let report = rb::fetch::run(

@@ -45,6 +45,11 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "census" => Accepts {
+            positional: true,
+            values: &["objdir", "skip", "objects", "limit"],
+            switches: &[],
+        },
         "fetch" => Accepts {
             positional: true,
             values: &["set"],
@@ -69,6 +74,12 @@ pub const USAGE: &str = "\
 rb: build pinned FreeBSD and NetBSD trees with rucc and with a reference GCC
 
 usage:
+  rb census LOG [--objdir DIR] [--skip PATH,...] [--objects FILE] [--limit N]
+      Say which compiler made each object of one build, from the compile.jsonl that rb-cc,
+      rb-c++, rb-cpp and rb-as wrote. With --objdir, also walk the object tree, and count every
+      object no call wrote as other; --skip leaves out paths under DIR, such as the host tools.
+      --objects writes every object, its origin and its slot as tab-separated values. Lists in
+      the report stop after N lines, 50 by default.
   rb fetch PIN [--tarball]
   rb fetch --set current|releases [--tarball]
       Fetch a pinned tree into RB_CACHE/trees and verify it. A pin with a commit is fetched one
