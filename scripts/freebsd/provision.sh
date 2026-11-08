@@ -37,9 +37,10 @@ xld=$(make -f "$tc" -V CROSS_BINUTILS_PREFIX)ld
 	echo
 	echo "# package files: sha256"
 	for p in $RB_TOOLCHAIN_PKGS; do
-		for f in /var/cache/pkg/"$p"-"$(pkg query %v "$p")".pkg /var/cache/pkg/"$p"-"$(pkg query %v "$p")"~*.pkg; do
-			[ -f "$f" ] && echo "$(sha256 -q "$f") $(basename "$f")"
-		done
+		f=/var/cache/pkg/"$p"-"$(pkg query %v "$p")".pkg
+		if [ -f "$f" ]; then
+			echo "$(sha256 -q "$f") $(basename "$f")"
+		fi
 	done
 	echo
 	echo "# repository"

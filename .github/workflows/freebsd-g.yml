@@ -57,7 +57,7 @@ permissions:
 env:
   RB_PIN: ${{ inputs.pin || '15.1-release' }}
   RB_CONF: ${{ inputs.conf || 'graded' }}
-  RB_STOP: ${{ inputs.stop || 'provision' }}
+  RB_STOP: ${{ inputs.stop || 'all' }}
   RB_CACHE: /mnt/rb-cache
   RB_VM_DIR: /mnt/rb-builder
   # The command environment of the scripts in the builder VM.
@@ -171,7 +171,7 @@ jobs:
     name: boot and test
     needs: build
     if: >-
-      always() && (inputs.stop || 'provision') == 'all'
+      always() && (inputs.stop || 'all') == 'all'
       && (needs.build.result == 'success' || inputs.image-run)
     runs-on: ubuntu-24.04
     timeout-minutes: 300
