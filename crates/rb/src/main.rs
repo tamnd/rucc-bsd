@@ -23,37 +23,8 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
-        "census" => {
-            let log = args
-                .target
-                .as_deref()
-                .ok_or("name the compile.jsonl of the build")?;
-            let skip: Vec<String> = args
-                .get("skip")
-                .map(|s| {
-                    s.split(',')
-                        .filter(|p| !p.is_empty())
-                        .map(String::from)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let limit = match args.get("limit") {
-                Some(n) => n
-                    .parse()
-                    .map_err(|_| format!("--limit {n} is not a number"))?,
-                None => 50,
-            };
-            let census = rb::census::run(
-                std::path::Path::new(log),
-                args.get("objdir").map(std::path::Path::new),
-                &skip,
-            )?;
-            if let Some(file) = args.get("objects") {
-                std::fs::write(file, census.objects_tsv()).map_err(|e| format!("{file}: {e}"))?;
-            }
-            print!("{}", census.report(log, limit));
-            Ok(ExitCode::SUCCESS)
-        }
+        "census" => census(args),
+        "demands" => demands(args),
         "fetch" => {
             let repo = rb::repo::Repo::find()?;
             let report = rb::fetch::run(
@@ -92,4 +63,66 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         }
         other => Err(format!("unknown command {other}; see rb help")),
     }
+}
+
+/// `rb census`.
+fn census(args: &Args) -> Result<ExitCode, String> {
+    let log = args
+        .target
+        .as_deref()
+        .ok_or("name the compile.jsonl of the build")?;
+    let skip: Vec<String> = args
+        .get("skip")
+        .map(|s| {
+            s.split(',')
+                .filter(|p| !p.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    let limit = match args.get("limit") {
+        Some(n) => n
+            .parse()
+            .map_err(|_| format!("--limit {n} is not a number"))?,
+        None => 50,
+    };
+    let census = rb::census::run(
+        std::path::Path::new(log),
+        args.get("objdir").map(std::path::Path::new),
+        &skip,
+    )?;
+    if let Some(file) = args.get("objects") {
+        std::fs::write(file, census.objects_tsv()).map_err(|e| format!("{file}: {e}"))?;
+    }
+    print!("{}", census.report(log, limit));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `rb demands`.
+fn demands(args: &Args) -> Result<ExitCode, String> {
+    let log = args
+        .target
+        .as_deref()
+        .ok_or("name the compile.jsonl of the build")?;
+    let number = |key: &str, default: usize| -> Result<usize, String> {
+        args.get(key).map_or(Ok(default), |n| {
+            n.parse()
+                .map_err(|_| format!("--{key} {n} is not a number"))
+        })
+    };
+    let names = match (args.get("pin"), args.get("row"), args.get("conf")) {
+        (Some(p), Some(r), Some(c)) => Some((p, r, c)),
+        (None, None, None) => None,
+        _ => return Err("give --pin, --row and --conf together".into()),
+    };
+    let report = rb::demands::run(&rb::demands::Ask {
+        log,
+        names,
+        write: args.has("write"),
+        flags_only: args.has("flags-only"),
+        jobs: number("jobs", harness_agent::pool::default_jobs(1))?,
+        limit: number("limit", 30)?,
+    })?;
+    print!("{report}");
+    Ok(ExitCode::SUCCESS)
 }
