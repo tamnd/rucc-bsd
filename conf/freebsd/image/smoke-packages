@@ -1,0 +1,2 @@
+# Packages put in the local repository of the test image, for the smoke suite's pkg check (plan 12.2).
+tree	# a small C program with no dependencies

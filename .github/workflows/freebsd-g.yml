@@ -1,0 +1,235 @@
+# FreeBSD amd64 built by the reference GCC (G), then imaged, booted and tested (plan 12 and 14.6).
+#
+# The build job boots the official FreeBSD 15.1-RELEASE BASIC-CI image under QEMU with KVM on the
+# runner, with all the runner's vCPUs, 12 GB and a sparse 100 GB build disk on /mnt. In that VM it
+# installs amd64-gcc15 and amd64-binutils from the FreeBSD package repository, and builds the pinned,
+# unmodified tree with
+#
+#   make -j4 buildworld buildkernel CROSS_TOOLCHAIN=amd64-gcc15 SRCCONF=conf/freebsd/<conf>.conf
+#
+# which is the command line of FreeBSD's own GCC CI jobs with our SRCCONF. Then it installs world,
+# kernel and distribution into a staging tree, adds the image changes of conf/freebsd/image and rb-rc,
+# and makes a GPT image with makefs and mkimg. The image and the build record are the artifacts.
+#
+# The boot job boots the image twice, with 2 vCPUs and 8 GB as FreeBSD's CI test VM has: by BIOS for
+# the boot suite only, and by UEFI for the boot suite, the smoke suite and kyua over /usr/tests. It
+# compares the kyua counts with the last completed build of FreeBSD's own test job for the branch.
+#
+# A manual run can stop after a stage, and can boot the image of an earlier run instead of building.
+
+name: freebsd-g
+
+on:
+  pull_request:
+    paths:
+      - conf/freebsd/**
+      - scripts/freebsd/**
+      - .github/workflows/freebsd-g.yml
+  schedule:
+    - cron: "41 4 * * 6"
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: A pin of conf/freebsd/pins.conf
+        required: false
+        default: 15.1-release
+      conf:
+        description: A SRCCONF of conf/freebsd
+        required: false
+        default: graded
+      stop:
+        description: Stop after provision, build or image, or run all stages
+        required: false
+        default: all
+      image-run:
+        description: Boot the image of this earlier run, and do not build
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RB_PIN: ${{ inputs.pin || '15.1-release' }}
+  RB_CONF: ${{ inputs.conf || 'graded' }}
+  RB_STOP: ${{ inputs.stop || 'provision' }}
+  RB_CACHE: /mnt/rb-cache
+  RB_VM_DIR: /mnt/rb-builder
+  # The command environment of the scripts in the builder VM.
+  VM_ENV: >-
+    RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
+    RB_SRCCONF=/root/harness/conf/freebsd/${{ inputs.conf || 'graded' }}.conf RB_TOOLCHAIN=amd64-gcc15
+    RB_HARNESS=/root/harness RB_DESTDIR=/build/destdir RB_IMAGE=/build/image/freebsd.img
+
+jobs:
+  build:
+    name: build ${{ inputs.pin || '15.1-release' }} ${{ inputs.conf || 'graded' }}
+    if: ${{ !inputs.image-run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: free disk
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p "$RB_CACHE" "$RB_VM_DIR"
+          sudo chown "$USER" "$RB_CACHE" "$RB_VM_DIR"
+          df -h / /mnt
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils sshpass zstd
+      - name: cache the builder image
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/FreeBSD-*.raw.xz
+          key: freebsd-builder-${{ hashFiles('conf/freebsd/builder.conf') }}
+      - name: cache the source
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/freebsd-src-*
+          key: freebsd-src-${{ env.RB_PIN }}-${{ hashFiles('conf/freebsd/pins.conf') }}
+      - name: boot the builder VM
+        run: |
+          scripts/freebsd/builder.sh up
+          tar -cf - conf scripts | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
+      - name: provision
+        run: scripts/freebsd/builder.sh ssh 'sh /root/harness/scripts/freebsd/provision.sh /root/out'
+      - name: fetch the source of ${{ env.RB_PIN }}
+        if: env.RB_STOP != 'provision'
+        run: |
+          mkdir -p record
+          read -r archive strip < <(RB_OUT=record scripts/freebsd/fetch.sh "$RB_PIN")
+          ls -l "$archive"
+          scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
+          scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
+          scripts/freebsd/builder.sh ssh 'du -sh /build/src; df -h /build'
+      - name: buildworld
+        if: env.RB_STOP != 'provision'
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/build.sh world"
+      - name: buildkernel
+        if: env.RB_STOP != 'provision'
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/build.sh kernel"
+      - name: image
+        if: env.RB_STOP != 'provision' && env.RB_STOP != 'build'
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/image.sh"
+          mkdir -p image
+          scripts/freebsd/builder.sh get /build/image/freebsd.img.zst image/freebsd.img.zst
+          ls -l image
+      - name: copy the build record out
+        if: always()
+        run: |
+          mkdir -p record
+          scripts/freebsd/builder.sh ssh 'df -k /build / | tail -n +2 > /root/out/df.txt; tar -cf - -C /root/out .' | tar -xf - -C record || true
+          scripts/freebsd/builder.sh down || true
+          cp "$RB_VM_DIR/console.log" record/builder-console.log || true
+          df -h /mnt > record/host-df.txt
+          du -sh "$RB_VM_DIR"/* >> record/host-df.txt || true
+          cat record/host-df.txt
+          ls -l record
+      - name: summary
+        if: always()
+        run: |
+          python3 -I scripts/freebsd/summarize.py --build record --conf "$RB_CONF" --out summary
+          cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -f record/toolchain.txt ]; then
+            { echo; echo '```'; sed -n '/^# packages/,/^$/p;/--version/,+1p' record/toolchain.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for f in record/*-error.txt; do
+            [ -f "$f" ] || continue
+            { echo; echo "First error in $(basename "$f" -error.txt):"; echo; echo '```'; tail -40 "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: upload the build record
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: freebsd-build-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: record
+          if-no-files-found: ignore
+      - name: upload the image
+        if: env.RB_STOP != 'provision' && env.RB_STOP != 'build'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: freebsd-image-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: image/freebsd.img.zst
+          compression-level: 0
+
+  boot:
+    name: boot and test
+    needs: build
+    if: >-
+      always() && (inputs.stop || 'provision') == 'all'
+      && (needs.build.result == 'success' || inputs.image-run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils ovmf zstd
+      - name: download the image and the build record
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: freebsd-*-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: artifacts
+          run-id: ${{ inputs.image-run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: unpack the image
+        run: |
+          sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
+          zstd -d -q artifacts/freebsd-image-*/freebsd.img.zst -o /mnt/rb/freebsd.img
+          ls -ls /mnt/rb/freebsd.img
+      - name: boot by BIOS, boot suite
+        run: scripts/freebsd/boot.sh /mnt/rb/freebsd.img bios boot boots/bios
+        env:
+          RB_RUN_LIMIT: 900
+      - name: boot by UEFI, boot, smoke and kyua
+        if: always()
+        run: scripts/freebsd/boot.sh /mnt/rb/freebsd.img uefi "boot smoke kyua" boots/uefi
+        env:
+          RB_RUN_LIMIT: 14400
+      - name: summary
+        if: always()
+        run: |
+          case $RB_PIN in
+          main) job=FreeBSD-main-amd64-test ;;
+          *) job=FreeBSD-stable-15-amd64-test ;;
+          esac
+          python3 -I scripts/freebsd/published.py "$job" published.json || true
+          python3 -I scripts/freebsd/summarize.py --build artifacts/freebsd-build-"$RB_PIN-$RB_CONF" \
+            --boot bios=boots/bios --boot uefi=boots/uefi --published published.json \
+            --conf "$RB_CONF" --out summary
+          cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
+          for b in bios uefi; do
+            { echo; echo "Console of the $b boot, last 30 lines:"; echo; echo '```'; tail -30 "boots/$b/console.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          done
+      - name: upload the results
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: freebsd-results-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: |
+            boots
+            summary
+            published.json
+          if-no-files-found: ignore

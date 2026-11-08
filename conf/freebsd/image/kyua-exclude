@@ -1,0 +1,7 @@
+# Tests left out of the kyua run, the ones freebsd-ci's FreeBSD-*-amd64-test jobs leave out.
+# A line is a directory under /usr/tests, or a directory and a test program as DIR:PROGRAM.
+# R and G leave out the same tests. A test program left out here is never graded.
+cddl/usr.sbin/dtrace	# ci runs it in the dtrace_test job, and so does the plan's dtrace suite (12.2)
+sys/cddl/zfs	# ci runs it in the test_zfs job. It takes hours
+lib/libcasper/services/cap_dns:dns_test	# needs DNS on the internet. The test VM has no route out
+lib/libcasper/services/cap_net:net_test	# the same
