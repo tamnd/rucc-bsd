@@ -143,9 +143,15 @@ fi
 echo "RB-DONE$done_line archive=$archive"
 sync
 
+# NetBSD's shutdown forks, and the child waits some seconds before it powers off. In that time
+# /etc/rc continues and prints a login prompt, which rb boot reads as no power off. -D keeps
+# shutdown in the foreground, so /etc/rc stops here until the VM powers off.
 case $rb_poweroff in
 [Yy][Ee][Ss])
-	shutdown -p now
+	case $(uname -s) in
+	NetBSD) shutdown -D -p now ;;
+	*) shutdown -p now ;;
+	esac
 	;;
 esac
 exit 0
