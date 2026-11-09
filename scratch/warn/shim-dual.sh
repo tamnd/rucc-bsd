@@ -44,6 +44,7 @@ for a in "$@"; do
 	-o) rargs+=(-o); drop=1 drop_o=1 has_o=1 ;;
 	-o?*) rargs+=("-o$out"); has_o=1 ;;
 	-MF | -MT | -MQ) drop=1 ;;
+	-MF?* | -MT?* | -MQ?*) ;;
 	-MD | -MMD | -MP | -Wp,-M* | -Werror) ;;
 	--sysroot | --sysroot=*) sysroot= ; rargs+=("$a") ;;
 	*) rargs+=("$a") ;;
