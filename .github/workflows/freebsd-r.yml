@@ -1,23 +1,26 @@
 # R for the FreeBSD 15.1 amd64 kernel (milestone B5): the GENERIC kernel and its modules of the
-# pinned tree, built by make buildkernel with rucc in the C compiler slot through rb-cc. The world,
-# the image and the tests come later. The pin, the builder VM and the paths are those of
-# freebsd-g.yml.
+# pinned tree, compiled with rucc in the C compiler slot through rb-cc. The world, the image and the
+# tests come later. The pin, the builder VM and the paths are those of freebsd-g.yml.
 #
-# The builder VM builds rb and rb-cc with rustup's Rust, and rb toolchain writes the shims, ref.mk
-# and rucc.mk in /build/toolchain (scripts/freebsd/rb-tools.sh). make kernel-toolchain builds the
-# host tools with the package's CROSS_TOOLCHAIN file, because they are not compiled by the C
-# compiler slot. Then make -k buildkernel runs with one of the two files. The job runs twice:
-#   ref    the control. XCC is the rb-cc-ref shim, which runs amd64-gcc15 with the arguments
-#          unchanged. This build must succeed, or the shims are broken and the rucc result means
-#          nothing.
-#   rucc   XCC is the rb-cc-rucc shim, which runs rucc with the persona of the pin. XCXX and XCPP
-#          stay the reference. This build may fail until B5 is done. With -k, make goes on with the
-#          units that do not depend on a failure, so compile.jsonl has every unit that fails.
+# The builder VM builds rb, rb-cc and rucc with rustup's Rust, and rb toolchain writes the shims,
+# ref.mk and rucc.mk in /build/toolchain (scripts/freebsd/rb-tools.sh). make kernel-toolchain builds
+# the host tools with the package's CROSS_TOOLCHAIN file, because the C compiler slot does not build
+# them. Then the job builds the kernel three ways:
+#   rucc     make -k buildkernel with rucc.mk. XCC is the rb-cc-rucc shim, which runs rucc with the
+#            persona of the pin. XCXX and XCPP stay the reference. This build may fail until B5 is
+#            done. It shows the first unit that stops make.
+#   ref      make buildkernel with ref.mk, the control. XCC is the rb-cc-ref shim, which runs
+#            amd64-gcc15 with the arguments unchanged. This build must succeed, or the shims are
+#            broken and the rucc result means nothing.
+#   replay   every unit of the ref build compiled again with rb-cc-rucc, in its own directory and
+#            with its own arguments, after the ref build made the generated headers. The objects go
+#            to /build/replay (scripts/freebsd/replay.py). So every unit gets a rucc result, also
+#            the units that a failure stops make before.
 #
-# scripts/freebsd/r-report.py groups the failed units of compile.jsonl by the first error line and
-# puts the groups in the step summary. rucc is built in the VM from the head of tamnd/rucc main, or
-# from the branch or commit a manual run names. It is not the pinned release, so the run is
-# ungraded, and the step summary names the commit.
+# scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
+# and the step summary shows the groups of the rucc build and of the replay. rucc is built from the
+# head of tamnd/rucc main, or from the branch or commit a manual run names. It is not the pinned
+# release, so the run is ungraded, and the step summary names the commit.
 
 name: freebsd-r
 
@@ -28,6 +31,7 @@ on:
       - scripts/freebsd/rb-tools.sh
       - scripts/freebsd/build.sh
       - scripts/freebsd/r-report.py
+      - scripts/freebsd/replay.py
   workflow_dispatch:
     inputs:
       rucc:
@@ -58,16 +62,9 @@ env:
 
 jobs:
   kernel:
-    name: ${{ inputs.kernconf || 'GENERIC' }} kernel with ${{ matrix.cc }}
+    name: ${{ inputs.kernconf || 'GENERIC' }} kernel with rucc
     runs-on: ubuntu-24.04
     timeout-minutes: 300
-    continue-on-error: ${{ matrix.cc == 'rucc' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        cc: [ref, rucc]
-    env:
-      CC_NAME: ${{ matrix.cc }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
@@ -97,7 +94,6 @@ jobs:
           path: /mnt/rb-cache/freebsd-src-*
           key: freebsd-src-${{ env.RB_PIN }}-${{ hashFiles('conf/freebsd/pins.conf') }}
       - name: the commit of tamnd/rucc
-        if: matrix.cc == 'rucc'
         run: |
           sha=$(gh api "repos/tamnd/rucc/commits/$REF" -q .sha)
           echo "RUCC_COMMIT=$sha" >> "$GITHUB_ENV"
@@ -118,29 +114,38 @@ jobs:
           read -r archive strip < <(RB_OUT=record scripts/freebsd/fetch.sh "$RB_PIN")
           scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
           scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
-      - name: rb, rb-cc and the shims of ${{ matrix.cc }}
-        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out $CC_NAME ${RUCC_COMMIT:-}"
+      - name: rb, rb-cc, rucc and the shims
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
       - name: make kernel-toolchain
         run: scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=amd64-gcc15 sh /root/harness/scripts/freebsd/build.sh toolchain"
-      - name: make -k buildkernel
-        id: kernel
-        run: |
-          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/$CC_NAME.mk RB_MAKEFLAGS=-k \
-            RB_PHASE=kernel-$CC_NAME sh /root/harness/scripts/freebsd/build.sh kernel"
-      - name: rb census
-        if: always()
+      - name: make -k buildkernel with rucc
         continue-on-error: true
         run: |
-          scripts/freebsd/builder.sh ssh "cd /root/harness && /build/rb/bin/rb census /build/out/compile.jsonl \
-            --objdir /build/obj/build/src/amd64.amd64/sys > /root/out/census.txt 2>&1; \
-            ls -l /build/obj/build/src/amd64.amd64/sys/*/kernel > /root/out/kernel-ls.txt 2>&1; \
-            xz -T0 -k -f /build/out/compile.jsonl"
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_MAKEFLAGS=-k \
+            RB_PHASE=kernel-rucc RB_COMPILE_LOG=/build/out/compile-rucc.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
+      - name: make buildkernel with ref, the control
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk \
+            RB_PHASE=kernel-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
+      - name: compile every unit of the ref build with rucc
+        run: |
+          mkdir -p compile replay
+          scripts/freebsd/builder.sh get /build/out/compile-ref.jsonl compile/compile-ref.jsonl
+          python3 -I scripts/freebsd/replay.py compile/compile-ref.jsonl --out replay --objects /build/replay \
+            --shim /build/toolchain/bin/x86_64-unknown-freebsd15.1-rb-cc-rucc | tee record/replay.txt
+          tar -cf - replay | scripts/freebsd/builder.sh ssh 'tar -xf - -C /root'
+          start=$(date +%s)
+          # shellcheck disable=SC2016
+          scripts/freebsd/builder.sh ssh 'export RB_COMPILE_LOG=/build/out/compile-replay.jsonl;
+            for f in /root/replay/replay-*.sh; do sh "$f" & done; wait'
+          echo "replay: $(($(date +%s) - start))s" | tee -a record/replay.txt
       - name: copy the record out
         if: always()
         run: |
           mkdir -p record compile
-          scripts/freebsd/builder.sh ssh 'tar -cf - -C /root/out .' | tar -xf - -C record || true
-          scripts/freebsd/builder.sh get /build/out/compile.jsonl.xz compile/compile.jsonl.xz || true
+          scripts/freebsd/builder.sh ssh 'xz -T0 -f /build/out/*.jsonl; tar -cf - -C /root/out .' | tar -xf - -C record || true
+          scripts/freebsd/builder.sh ssh 'tar -cf - -C /build/out .' | tar -xf - -C compile || true
+          rm -f compile/compile-ref.jsonl
           scripts/freebsd/builder.sh down || true
           xz -T0 record/*.log 2>/dev/null || true
           ls -l record compile
@@ -148,43 +153,34 @@ jobs:
         if: always()
         run: |
           {
-            echo "### ${KERNCONF} kernel with $CC_NAME"
+            echo "### ${KERNCONF} kernel with rucc"
             echo
             if [ -f record/phases.tsv ]; then
               echo '```'
               echo "phase status seconds obj_kb disk_used_kb"
               cat record/phases.tsv
               echo '```'
-            fi
-            if grep -q '/kernel$' record/kernel-ls.txt 2>/dev/null; then
-              echo "The kernel linked:"
-            else
-              echo "No kernel linked."
-            fi
-            echo
-            echo '```'
-            cat record/kernel-ls.txt 2>/dev/null || true
-            sed -n '/^# rucc/,/^$/p' record/rb-tools.txt 2>/dev/null || true
-            echo '```'
-            echo
-            if [ -f compile/compile.jsonl.xz ]; then
-              python3 -I scripts/freebsd/r-report.py compile/compile.jsonl.xz --tsv record/failed-units.tsv
-            else
-              echo "No compile.jsonl."
-            fi
-            if [ -f record/census.txt ]; then
               echo
-              echo '```'
-              head -40 record/census.txt
-              echo '```'
             fi
+            echo '```'
+            sed -n '/^# rucc/,/^$/p' record/rb-tools.txt 2>/dev/null || true
+            cat record/replay.txt 2>/dev/null || true
+            echo '```'
+            for run in replay rucc; do
+              f=compile/compile-$run.jsonl.xz
+              [ -f "$f" ] || continue
+              echo
+              echo "#### The failed units of the $run build"
+              echo
+              python3 -I scripts/freebsd/r-report.py "$f" --tsv "record/failed-units-$run.tsv"
+            done
             for f in record/*-error.txt; do
               [ -f "$f" ] || continue
               echo
               echo "First error in $(basename "$f" -error.txt):"
               echo
               echo '```'
-              tail -40 "$f"
+              tail -20 "$f"
               echo '```'
             done
           } >> "$GITHUB_STEP_SUMMARY"
@@ -193,7 +189,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: freebsd-r-kernel-${{ matrix.cc }}
+          name: freebsd-r-kernel
           path: |
             record
             compile
