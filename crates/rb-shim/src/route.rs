@@ -264,6 +264,12 @@ fn decide_cpp(
     }
     let mut added = rucc_added(config, rest);
     added.push("-E".to_string());
+    if needs_language(&operands, &invocation) {
+        // GCC's cpp reads an input of any other suffix as C (gcc/cppspec.cc), and so does standard
+        // input. A compiler driver would hand a .x or .lds file to the linker.
+        added.push("-x".to_string());
+        added.push("c".to_string());
+    }
     let mut passed = added.clone();
     passed.extend(operands);
     if invocation.inputs.is_empty() && !args::reads_stdin(&passed) {
@@ -280,6 +286,20 @@ fn decide_cpp(
         delegated: None,
         rucc: true,
     })
+}
+
+/// Whether a `cpp` call needs `-x c` to make a compiler driver read its input as C: it names no
+/// language, and its input is standard input or a file without a C or assembler suffix.
+fn needs_language(operands: &[String], invocation: &Invocation) -> bool {
+    if operands.iter().any(|a| a == "-x" || a.starts_with("-x")) {
+        return false;
+    }
+    let known = [".c", ".h", ".i", ".S", ".s", ".sx"];
+    invocation.inputs.is_empty()
+        || invocation
+            .inputs
+            .iter()
+            .any(|i| i == "-" || !known.iter().any(|s| i.ends_with(s)))
 }
 
 /// The arguments rucc gets before the build's: the configured ones, and the sysroot when the call
@@ -559,9 +579,15 @@ mod tests {
         config.side = Some(Side::R);
         let rucc = decide_line("rb-cpp", &config, "-P in.x out.y").unwrap();
         assert_eq!(rucc.compiler, config.rucc);
-        assert!(rucc.args.ends_with(&words("-E -P in.x -o out.y")));
+        assert!(rucc.args.ends_with(&words("-E -x c -P in.x -o out.y")));
+        assert!(rucc.added.ends_with(&words("-E -x c")));
+        let typed = decide_line("rb-cpp", &config, "-x assembler-with-cpp in.x").unwrap();
+        assert!(!typed.added.contains(&"c".to_string()));
+        let header = decide_line("rb-cpp", &config, "-P in.h").unwrap();
+        assert!(header.added.ends_with(&words("-E")));
         let stdin = decide_line("rb-cpp", &config, "-P").unwrap();
         assert_eq!(stdin.args.last().map(String::as_str), Some("-"));
+        assert!(stdin.added.ends_with(&words("-E -x c -")));
         config.side = Some(Side::G);
         let g = decide_line("rb-cpp", &config, "-P in.x").unwrap();
         assert_eq!(g.compiler, config.ref_cpp);

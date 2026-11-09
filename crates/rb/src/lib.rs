@@ -17,3 +17,4 @@ pub mod personas;
 pub mod repo;
 pub mod scan;
 pub mod sets;
+pub mod shims;

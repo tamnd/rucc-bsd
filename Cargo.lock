@@ -138,6 +138,7 @@ dependencies = [
  "harness-shim",
  "rb-image",
  "rb-pins",
+ "rb-shim",
  "serde",
  "serde_json",
  "toml",
