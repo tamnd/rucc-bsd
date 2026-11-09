@@ -123,6 +123,11 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["arch"],
             switches: &[],
         },
+        "sections-diff" | "symbols-diff" => Accepts {
+            positional: false,
+            values: &["g", "r", "g-root", "r-root", "jobs", "limit"],
+            switches: &[],
+        },
         "sets" => Accepts {
             positional: false,
             values: &["as-of"],
@@ -344,6 +349,15 @@ usage:
       compile.jsonl, once each. The probes run in DIR of --work, and the shims' records of them go
       to probes-G.jsonl and probes-R.jsonl there. --all prints the probes that are the same too.
       Exits 1 when a probe differs.
+  rb sections-diff --g LOG --r LOG [--g-root DIR --r-root DIR] [--jobs N] [--limit N]
+      Compare each object of two builds. LOG is the compile.jsonl of each build, and objects are
+      paired by path, with the roots replaced as for rb flags-diff. Section names must be the
+      same. Each section both objects have must have the same flags, type, entry size and group,
+      and each data section the same size. Each linker set, set_* or link_set_*, must hold the
+      same entries. Code, read-only data, relocation, debug and .comment sections may differ:
+      they are listed but not counted. Each difference is one line with the unit's source,
+      grouped by kind. Each list stops after N lines, 20 by default. Exits 1 when a difference
+      counts or no object is paired.
   rb sets [--as-of TIME] [--write]
       Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
       pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME,
@@ -360,6 +374,12 @@ usage:
       side, and rucc gets --destdir as its sysroot. Each call appends a record to FILE. The shim
       binary is PATH, else RB_SHIM, else rb-cc next to rb. --bringup and --bringup-units are
       those of rb build, and go in rb-shim.toml for R.
+  rb symbols-diff --g LOG --r LOG [--g-root DIR --r-root DIR] [--jobs N] [--limit N]
+      Compare the symbols of each object of two builds, paired as for rb sections-diff. Each
+      symbol that is not local must have the same name, binding, type and visibility in both,
+      and a data symbol the same size. Function sizes and the names a compiler makes, such as
+      .L*, *.cold, *.isra.* and *.constprop.*, may differ: they are listed but not counted. Exits
+      1 when a difference counts or no object is paired.
   rb syntax PIN --log LOG [--row ROW] [--rucc PATH] [--sysroot DIR] [--jobs N] [--limit N]
           [--out FILE]
       Check every C unit of a G build with rucc's front end. LOG is the compile.jsonl of the

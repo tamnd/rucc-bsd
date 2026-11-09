@@ -16,6 +16,8 @@ harness-agent = { git = "https://github.com/tamnd/rucc-harness", tag = "v0.1.0" 
 harness-elf = { git = "https://github.com/tamnd/rucc-harness", tag = "v0.1.0" }
 harness-shim = { git = "https://github.com/tamnd/rucc-harness", tag = "v0.1.0" }
 harness-stats = { git = "https://github.com/tamnd/rucc-harness", tag = "v0.1.0" }
+# The version harness-elf reads with, so that both read objects the same way.
+object = { version = "0.40", default-features = false, features = ["read_core", "elf", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
