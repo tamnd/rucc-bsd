@@ -1,0 +1,124 @@
+{
+ "boots": {
+  "bios": {
+   "compiler_version": "gcc version 15.2.0 (FreeBSD Ports Collection for amd64)",
+   "done": "tar=0 smoke= kyua=",
+   "firmware": "bios",
+   "panic": "",
+   "ready_seconds": 45,
+   "result": "done",
+   "seconds": 55,
+   "suites": "boot"
+  },
+  "uefi": {
+   "compiler_version": "gcc version 15.2.0 (FreeBSD Ports Collection for amd64)",
+   "done": "tar=0 smoke=6/6 kyua=10033_total,_177_skipped,_44_expected_failures,_1_broken,_23_failed",
+   "firmware": "uefi",
+   "kyua": {
+    "counts": {
+     "broken": 1,
+     "expected_failure": 44,
+     "failed": 23,
+     "passed": 9788,
+     "skipped": 177,
+     "total": 10033
+    },
+    "excluded": [
+     "cddl/usr.sbin/dtrace",
+     "sys/cddl/zfs",
+     "lib/libcasper/services/cap_dns:dns_test",
+     "lib/libcasper/services/cap_net:net_test",
+     "sys/geom/class/multipath"
+    ],
+    "exit": "1",
+    "seconds": 4432
+   },
+   "panic": "",
+   "ready_seconds": 40,
+   "result": "done",
+   "seconds": 4500,
+   "smoke": {
+    "fsck-mount": "pass",
+    "module": "pass",
+    "network": "pass",
+    "pkg-local": "pass",
+    "shells": "pass",
+    "tests-present": "pass"
+   },
+   "suites": "boot smoke kyua"
+  }
+ },
+ "build_run": "42508786724",
+ "conf": "graded",
+ "gap": {
+  "failed_and_broken": 17,
+  "skipped": 28,
+  "total": -731,
+  "total_percent": -6.79
+ },
+ "image": {
+  "raw_allocated_kb": 5348736,
+  "raw_bytes": 11878370816,
+  "staging_kb": 5491828,
+  "zst_bytes": 1246060619,
+  "zst_sha256": "640aeb16755854ad8f1ec44f2840815920e84ca1bff1404ca16b1082f628195c"
+ },
+ "phases": {
+  "image": {
+   "disk_used_kb": 29759940,
+   "seconds": 156,
+   "size_kb": 1217216,
+   "status": 0
+  },
+  "install": {
+   "disk_used_kb": 22045068,
+   "seconds": 72,
+   "size_kb": 4343676,
+   "status": 0
+  },
+  "kernel": {
+   "disk_used_kb": 17701396,
+   "seconds": 1220,
+   "size_kb": 15885372,
+   "status": 0
+  },
+  "overlay": {
+   "disk_used_kb": 23193228,
+   "seconds": 31,
+   "size_kb": 5491828,
+   "status": 0
+  },
+  "world": {
+   "disk_used_kb": 12327000,
+   "seconds": 4601,
+   "size_kb": 10510984,
+   "status": 0
+  }
+ },
+ "published": {
+  "build": 1271,
+  "commit": "91bcaea97cc6da847bb4edf5b9822b461c5a43fe",
+  "failed": 7,
+  "job": "FreeBSD-stable-15-amd64-test",
+  "minutes": 148,
+  "result": "UNSTABLE",
+  "skipped": 149,
+  "timestamp": 1794190280,
+  "total": 10764,
+  "url": "https://ci.freebsd.org/job/FreeBSD-stable-15-amd64-test/1271/"
+ },
+ "row": "amd64",
+ "run": "42559655890",
+ "side": "G",
+ "source": {
+  "hash": "cf5762da53fd52e1eaf0f9ceee9bf58cbe314c821031d0d9ffa76823185a89e1",
+  "kind": "txz",
+  "pin": "15.1-release",
+  "url": "https://download.freebsd.org/releases/amd64/15.1-RELEASE/src.txz"
+ },
+ "system": "freebsd",
+ "toolchain": {
+  "amd64-binutils": "2.44,1",
+  "amd64-gcc15": "15.2.0_1"
+ }
+}

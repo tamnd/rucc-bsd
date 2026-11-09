@@ -1,0 +1,2 @@
+# These scripts run under FreeBSD's sh, which has local.
+disable=SC3043

@@ -1,0 +1,24 @@
+# Packages installed into the test image from pkg.freebsd.org, as freebsd-ci's testvm image installs them.
+# Without them the tests that need them are skipped, and the counts cannot be held against ci.freebsd.org.
+# The installed versions are recorded in each run's packages.txt.
+coreutils	# bin/date
+fusefs-ext2	# sys/fs/fusefs/ctl
+gdb	# local/kyua/utils/stacktrace_test
+gtar	# sys/fs/tarfs
+jq	# sys/net/if_bridge_test
+ksh93	# sys/cddl/zfs
+nist-kat	# sys/opencrypto/runtests
+nmap	# sys/netinet/fibs_test
+perl5	# many tests
+pjdfstest	# sys/fs/pjdfstest
+porch	# sys/kern/tty
+net/py-dpkt	# sys/opencrypto/runtests
+net/scapy	# sys/netpfil
+python	# sys/opencrypto/runtests
+python3	# sys/opencrypto/runtests
+devel/py-pytest	# sys/net/routing and the other python tests
+devel/py-twisted	# sys/netpfil
+security/openvpn	# sys/net/if_ovpn
+sg3_utils	# sys/cam/ctl
+sudo	# sys/cddl/zfs delegate tests
+tcptestsuite	# the network stack test suite
