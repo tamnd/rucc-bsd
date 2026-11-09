@@ -45,6 +45,29 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "boot" => Accepts {
+            positional: false,
+            values: &[
+                "image",
+                "out",
+                "suite",
+                "row",
+                "firmware",
+                "tests-only",
+                "tests-except",
+                "boot-timeout",
+                "timeout",
+                "reboots",
+                "spare-disks",
+                "disk-size",
+                "cpus",
+                "memory",
+                "qemu",
+                "ovmf-code",
+                "ovmf-vars",
+            ],
+            switches: &["in-place", "keep", "dry-run"],
+        },
         "census" => Accepts {
             positional: true,
             values: &["objdir", "skip", "objects", "limit"],
@@ -86,6 +109,17 @@ pub const USAGE: &str = "\
 rb: build pinned FreeBSD and NetBSD trees with rucc and with a reference GCC
 
 usage:
+  rb boot --image IMG --out DIR [--suite boot,smoke,tests] [--row ROW] [--firmware ovmf|seabios]
+          [--tests-only DIR,...] [--tests-except DIR,...] [--boot-timeout SECS] [--timeout SECS]
+          [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
+          [--qemu PATH] [--ovmf-code FILE --ovmf-vars FILE] [--in-place] [--keep] [--dry-run]
+      Boot an image once under QEMU, on a qcow2 overlay so the image does not change. The second
+      disk holds an rb.conf with the suites, boot by default, and rb-rc writes its results back
+      to it. The console goes to DIR/console.log. rb waits for RB-READY or a login prompt for
+      SECS, 600 by default under KVM, then for RB-DONE until the row's run limit. On a panic it
+      sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
+      DIR/boot.json. ROW is amd64 by default, and the firmware is the row's test firmware.
+      Exits 1 when the boot did not pass.
   rb census LOG [--objdir DIR] [--skip PATH,...] [--objects FILE] [--limit N]
       Say which compiler made each object of one build, from the compile.jsonl that rb-cc,
       rb-c++, rb-cpp and rb-as wrote. With --objdir, also walk the object tree, and count every
