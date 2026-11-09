@@ -85,7 +85,9 @@ fn run(args: &Args) -> Result<ExitCode, String> {
                 ExitCode::from(1)
             })
         }
-        "build" | "probes" | "shim" | "toolchain" | "toolchain-diff" => compilers(args),
+        "build" | "flags-diff" | "mk-diff" | "probes" | "shim" | "toolchain" | "toolchain-diff" => {
+            compilers(args)
+        }
         "version" => {
             println!("rb {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
@@ -162,6 +164,16 @@ fn compilers(args: &Args) -> Result<ExitCode, String> {
     match args.command.as_str() {
         "build" => {
             let (text, ok) = rb::build::cli::run(args, &repo.root)?;
+            print!("{text}");
+            Ok(exit(ok))
+        }
+        "flags-diff" => {
+            let (text, ok) = rb::flagsdiff::cli::run(args, &repo.root)?;
+            print!("{text}");
+            Ok(exit(ok))
+        }
+        "mk-diff" => {
+            let (text, ok) = rb::mkdiff::cli::run(args, &repo.root)?;
             print!("{text}");
             Ok(exit(ok))
         }

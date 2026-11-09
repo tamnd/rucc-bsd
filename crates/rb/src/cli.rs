@@ -157,6 +157,26 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
             ],
             switches: &["no-shim", "ungraded", "dry-run"],
         },
+        "flags-diff" => Accepts {
+            positional: true,
+            values: &["row", "g", "r", "g-root", "r-root", "divergences", "limit"],
+            switches: &["paired-only"],
+        },
+        "mk-diff" => Accepts {
+            positional: true,
+            values: &[
+                "row",
+                "dir",
+                "g",
+                "r",
+                "src",
+                "conf",
+                "kernel",
+                "work",
+                "divergences",
+            ],
+            switches: &[],
+        },
         "probes" => Accepts {
             positional: true,
             values: &["row", "dir", "g", "r", "from", "work", "details"],
@@ -225,6 +245,15 @@ usage:
       Run it where the build ran. --flags-only reads the command lines and runs nothing. --write
       puts the result in demands.toml under the pin, row and configuration. N units run at once,
       one per CPU by default, and each list of the report stops after 30 lines by default.
+  rb flags-diff PIN --g LOG --r LOG [--row ROW] [--g-root DIR --r-root DIR] [--divergences FILE]
+          [--limit N] [--paired-only]
+      Compare the command line of every unit in two builds, from their compile.jsonl. Units are
+      paired by the object they made. The compiler's path, the persona flag -fgnuc-version= and
+      the target flag are left out, and each build's DIR is replaced by <root>. Units whose
+      remaining flags differ in the same way are one group, and each group lists its units. A
+      flag that an entry of mk-divergences.toml, or FILE, names is left out with its reason.
+      Units only one build made are listed, and they count unless --paired-only is given. Each
+      list stops after N lines, 20 by default. Exits 1 when a difference counts.
   rb fetch PIN [--tarball]
   rb fetch --set current|releases [--tarball]
       Fetch a pinned tree into RB_CACHE/trees and verify it. A pin with a commit is fetched one
@@ -240,6 +269,19 @@ usage:
       live-image target with its files added, and grows the image to SIZE. The suites go in
       /etc/rb.conf, boot only by default. --packages copies a local package repository to
       /var/db/rb-pkg. The logs go to --work, IMG.work by default. --dry-run prints the commands.
+  rb mk-diff PIN [--row ROW] (--dir DIR | --g G [--r R]) [--src DIR] [--conf CONF]
+          [--kernel DIR|G,R] [--work DIR] [--divergences FILE]
+      Read the make variables that depend on the compiler, in G's and R's configuration, and
+      compare them. G and R are toolchain descriptions: for FreeBSD the CROSS_TOOLCHAIN files, or
+      DIR/ref.mk and DIR/rucc.mk; for NetBSD the TOOLDIRs, whose bin/nbmake-MACHINE build.sh has
+      written. make runs in the tree --src at the top, in lib/libc and bin/sh, in stand/libsa on
+      FreeBSD and in the kernel build directory --kernel. FreeBSD adds make showconfig, NetBSD
+      adds every MK*, HAVE_* and CC_WNO_* of share/mk, and --kernel adds its opt_*.h files.
+      FreeBSD reads src.conf from conf/freebsd/CONF.conf, graded by default. Each side's values
+      go to WORK/mk-G.txt and WORK/mk-R.txt, and WORK is mk-diff by default. G or R may be such a
+      file from an earlier run. With --g alone, rb writes G's file and stops. A difference that
+      mk-divergences.toml, or FILE, allows is listed with its reason and does not count. Exits 1
+      when a difference counts.
   rb personas [--arch ARCH]
       Print the persona, the reference toolchain and rucc's --target for every pin, from
       pins.toml, personas.toml and toolchains.toml. ARCH is rucc's architecture, x86_64 by
