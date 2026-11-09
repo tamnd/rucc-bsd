@@ -17,6 +17,7 @@ pub mod fetch;
 pub mod flagsdiff;
 pub mod image;
 pub mod mkdiff;
+pub mod objdiff;
 pub mod personas;
 pub mod probes;
 pub mod repo;

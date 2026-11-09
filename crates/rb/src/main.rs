@@ -87,6 +87,16 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         }
         "build" | "flags-diff" | "mk-diff" | "probes" | "shim" | "syntax" | "toolchain"
         | "toolchain-diff" => compilers(args),
+        "sections-diff" | "symbols-diff" => {
+            let mode = if args.command == "sections-diff" {
+                rb::objdiff::Mode::Sections
+            } else {
+                rb::objdiff::Mode::Symbols
+            };
+            let (text, ok) = rb::objdiff::cli::run(args, mode)?;
+            print!("{text}");
+            Ok(exit(ok))
+        }
         "warnings" => {
             let (text, ok) = rb::warnings::cli::run(args)?;
             print!("{text}");
