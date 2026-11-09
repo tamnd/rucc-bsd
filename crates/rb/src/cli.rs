@@ -128,6 +128,11 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["as-of"],
             switches: &["write"],
         },
+        "warnings" => Accepts {
+            positional: false,
+            values: &["g", "r", "g-root", "r-root", "limit"],
+            switches: &[],
+        },
         _ => return toolchain_commands(command),
     })
 }
@@ -211,6 +216,11 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
             positional: true,
             values: &["row", "dir", "g", "r", "from", "work", "details"],
             switches: &["all"],
+        },
+        "syntax" => Accepts {
+            positional: true,
+            values: &["row", "log", "rucc", "sysroot", "jobs", "limit", "out"],
+            switches: &[],
         },
         "toolchain-diff" => Accepts {
             positional: true,
@@ -350,6 +360,16 @@ usage:
       side, and rucc gets --destdir as its sysroot. Each call appends a record to FILE. The shim
       binary is PATH, else RB_SHIM, else rb-cc next to rb. --bringup and --bringup-units are
       those of rb build, and go in rb-shim.toml for R.
+  rb syntax PIN --log LOG [--row ROW] [--rucc PATH] [--sysroot DIR] [--jobs N] [--limit N]
+          [--out FILE]
+      Check every C unit of a G build with rucc's front end. LOG is the compile.jsonl of the
+      build. Each C unit runs through rucc with -fsyntax-only and each .S unit with -E, with the
+      unit's own flags and the persona's arguments, in the directory the build ran it in. Nothing
+      is written. --sysroot is added to each unit that names none, such as the DESTDIR of a NetBSD
+      build. rucc is found as for rb shim. The report lists the units that failed with rucc's
+      first error, the flags rucc refused, and the units with a warning G did not give, compared
+      as rb warnings does. --out writes one line per unit as tab-separated values. Exits 1 when a
+      unit failed or has such a warning.
   rb toolchain PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
           [--destdir DIR] [--shim PATH] [--bringup as,cxx-c [--bringup-units UNIT,...]]
           [--ungraded]
@@ -367,6 +387,13 @@ usage:
       rucc must be the release of [rucc.binary_sha256], and no bring-up class may be on, or
       --ungraded must be given. Exits 1 when a check fails.
   rb version
+  rb warnings --g LOG --r LOG [--g-root DIR --r-root DIR] [--limit N]
+      Compare the warnings of each unit in two builds. LOG is the compile.jsonl of each build, and
+      units are paired by object, with the roots replaced as for rb flags-diff. A diagnostic is
+      its file, line and -W option. R's diagnostics must be a subset of G's: each one only R gives
+      is counted, and each one only G gives is listed but not counted. Only the first KiB of a
+      unit's standard error is kept, so the report says where it was cut. Exits 1 when R gives a
+      diagnostic G does not.
 
 The repository is found by walking up to sets.toml, or from RB_ROOT. Downloads and fetched
 trees go to RB_CACHE, or ~/.cache/rb.
