@@ -20,7 +20,9 @@
 # A manual run that names a G run (g_run) also boots the rucc kernel and tests it. The world is
 # G's: the sets of that run, with kern-GENERIC made from the rucc kernel by kernset.sh. The G run
 # must be of the same pin. The image, boot and atf jobs then do what they do in netbsd-g.yml, and
-# the report job compares the ATF counts with the G counts of the pin in results/netbsd.
+# the report job compares the ATF counts with the G counts of the pin in results/netbsd. The
+# rucc kernel job then also builds RB-TEST (conf/netbsd/kernel/RB-TEST), and the image and boot
+# jobs run once for GENERIC and once for RB-TEST. The ATF shards boot GENERIC.
 
 name: netbsd-r
 
@@ -222,6 +224,14 @@ jobs:
           NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/kernset.sh GENERIC
           mkdir -p "$NB_ROOT/r-kernel"
           cp "$NB_ROOT"/release/amd64/binary/sets/kern-GENERIC.* "$kernel" "$NB_ROOT/r-kernel/"
+      - name: build.sh kernel=RB-TEST
+        if: matrix.cc == 'rucc' && inputs.g_run != '' && steps.kernel.outcome == 'success'
+        run: |
+          conf="$GITHUB_WORKSPACE/conf/netbsd/kernel/RB-TEST"
+          NB_TOOLDIR="$NB_ROOT/tools-r" NB_NOISE=2 scripts/netbsd/phase.sh "kernel-$CC_NAME-rb-test" -u "kernel=$conf"
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/kernset.sh "$conf"
+          cp "$NB_ROOT"/release/amd64/binary/sets/kern-RB-TEST.* "$NB_ROOT/r-kernel/"
+          cp "$NB_ROOT/obj/sys/arch/amd64/compile/RB-TEST/netbsd" "$NB_ROOT/r-kernel/netbsd-RB-TEST"
       - uses: actions/upload-artifact@v7.0.1
         if: always() && matrix.cc == 'rucc' && inputs.g_run != ''
         with:
@@ -256,14 +266,28 @@ jobs:
           retention-days: 7
 
   # G's sets with the rucc kernel in kern-GENERIC, made into the live image as in netbsd-g.yml.
+  # The RB-TEST leg puts the rucc RB-TEST kernel in kern-GENERIC.
   image:
-    name: rb image with the rucc kernel
+    name: rb image with the rucc ${{ matrix.kernel }} kernel
     needs: [rb, kernel]
     # The kernel job fails when any step of build.sh fails, also after the link. The kernel
     # artifact is there when a kernel linked, and the download below fails when it is not.
     if: always() && inputs.g_run != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kernel: GENERIC
+            suffix: ""
+            file: netbsd
+          - kernel: RB-TEST
+            suffix: -RB-TEST
+            file: netbsd-RB-TEST
+    env:
+      KERNEL: ${{ matrix.kernel }}
+      KERNEL_FILE: ${{ matrix.file }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: work directory on /mnt
@@ -301,30 +325,17 @@ jobs:
           if [ -d "$NB_ROOT/release/binary" ]; then mv "$NB_ROOT/release/binary" "$NB_ROOT/release/amd64/"; fi
           tar -C "$NB_ROOT/destdir" -xf "$NB_ROOT/release/destdir-meta.tar"
           rm "$NB_ROOT/release/destdir-meta.tar"
-          # The kern-GENERIC set of G is replaced with the one made from the rucc kernel, and the
-          # checksum files of the sets are made to agree with it.
-          sets="$NB_ROOT/release/amd64/binary/sets"
-          for f in "$RUNNER_TEMP"/r-kernel/kern-GENERIC.*; do
-            name=$(basename "$f")
-            cp "$f" "$sets/$name"
-            for sum in MD5 SHA512; do
-              [ -f "$sets/$sum" ] || continue
-              hash=$("$(echo "$sum" | tr '[:upper:]' '[:lower:]')sum" "$sets/$name" | cut -d ' ' -f 1)
-              sed -i "s|^$sum ($name) = .*|$sum ($name) = $hash|" "$sets/$sum"
-            done
-          done
-          kernels="$NB_ROOT/release/amd64/binary/kernel"
-          if [ -f "$kernels/netbsd-GENERIC.gz" ]; then
-            gzip -9nc "$RUNNER_TEMP/r-kernel/netbsd" > "$kernels/netbsd-GENERIC.gz"
-          fi
+          # The kern-GENERIC set of G is replaced with the set of the rucc kernel.
+          binary="$NB_ROOT/release/amd64/binary"
+          scripts/netbsd/kern-into-sets.sh "$binary" "$RUNNER_TEMP/r-kernel/kern-$KERNEL.tar.xz"
           {
             echo "### The sets"
             echo
-            echo "The sets of G run $G_RUN, with kern-GENERIC made from the rucc kernel."
+            echo "The sets of G run $G_RUN, with kern-GENERIC made from the rucc $KERNEL kernel."
             echo
             echo '```'
-            ls -l "$sets"
-            "$NB_ROOT/tools/bin/x86_64--netbsd-size" "$RUNNER_TEMP/r-kernel/netbsd"
+            ls -l "$binary/sets"
+            "$NB_ROOT/tools/bin/x86_64--netbsd-size" "$RUNNER_TEMP/r-kernel/$KERNEL_FILE"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           # The live-image target runs make in etc and in distrib/amd64/liveimage. Their object
@@ -342,23 +353,37 @@ jobs:
           sha256sum "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: netbsd-r-amd64-serial-image
+          name: netbsd-r-amd64-serial-image${{ matrix.suffix }}
           path: /mnt/nb/netbsd-amd64-serial.img.gz
           compression-level: 0
           retention-days: 7
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: netbsd-r-logs-image
+          name: netbsd-r-logs-image${{ matrix.suffix }}
           path: /mnt/nb/logs
           retention-days: 14
 
   boot:
-    name: boot and smoke with the rucc kernel
+    name: boot and smoke with the rucc ${{ matrix.kernel }} kernel
     needs: [rb, image]
-    if: inputs.g_run != ''
+    # Each leg needs only its own image, so a failed image of the other kernel does not skip it.
+    if: ${{ !cancelled() && inputs.g_run != '' && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kernel: GENERIC
+            suffix: ""
+            file: netbsd
+          - kernel: RB-TEST
+            suffix: -RB-TEST
+            file: netbsd-RB-TEST
+    env:
+      KERNEL: ${{ matrix.kernel }}
+      KERNEL_FILE: ${{ matrix.file }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: let the runner user open /dev/kvm
@@ -373,7 +398,7 @@ jobs:
           sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-serial-image
+          name: netbsd-r-amd64-serial-image${{ matrix.suffix }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -405,13 +430,13 @@ jobs:
         run: |
           if grep -qs '"result": "no-ready"' "$RUNNER_TEMP"/boot/*/boot.json; then
             scripts/netbsd/boot-fault.sh "$RUNNER_TEMP/netbsd-amd64-serial.img" \
-              "$RUNNER_TEMP/kernel/netbsd" "$RUNNER_TEMP/boot/fault" >> "$GITHUB_STEP_SUMMARY"
+              "$RUNNER_TEMP/kernel/$KERNEL_FILE" "$RUNNER_TEMP/boot/fault" >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: summary
         if: always()
         run: |
           {
-            echo "### boot and smoke with the rucc kernel: the console's RB- lines"
+            echo "### boot and smoke with the rucc $KERNEL kernel: the console's RB- lines"
             echo
             echo '```'
             grep -a '^RB-' "$RUNNER_TEMP"/boot/*/console.log 2>/dev/null
@@ -420,14 +445,15 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: netbsd-r-boot-smoke
+          name: netbsd-r-boot-smoke${{ matrix.suffix }}
           path: ${{ runner.temp }}/boot
           retention-days: 14
 
   atf:
     name: ATF ${{ matrix.shard }} with the rucc kernel
     needs: [rb, image]
-    if: inputs.g_run != '' && inputs.atf
+    # The shards boot the GENERIC image only, so a failed RB-TEST image does not skip them.
+    if: ${{ !cancelled() && inputs.g_run != '' && inputs.atf && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:

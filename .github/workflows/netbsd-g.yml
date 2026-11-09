@@ -7,12 +7,15 @@
 #   rb       cargo builds rb. The binary is an artifact for the image, boot, atf and report jobs.
 #   tools    build.sh tools. TOOLDIR and the tools' object directory go to the cache, keyed by the
 #            pin file, so the other jobs and later runs restore them instead of building them.
-#   world    distribution, the GENERIC kernel and the sets. The sets, the kernel and the two parts
-#            of DESTDIR that the image needs (METALOG and etc/mtree) go on as an artifact.
+#   world    distribution, the GENERIC and RB-TEST kernels and the sets. RB-TEST is
+#            conf/netbsd/kernel/RB-TEST, GENERIC with the options the test rig adds (plan 12.2).
+#            The sets with kern-RB-TEST, the kernels and the two parts of DESTDIR that the image
+#            needs (METALOG and etc/mtree) go on as an artifact.
 #   image    rb image: build.sh's live-image target from those sets, with rb-rc, the smoke suite
-#            and the serial console added. The image is an artifact.
-#   boot     two boots with rb boot: BIOS with the boot suite, and UEFI with the boot and smoke
-#            suites, as the amd64 row of rows.toml says.
+#            and the serial console added. It runs once for each kernel. For RB-TEST,
+#            kern-RB-TEST takes the place of kern-GENERIC. The images are artifacts.
+#   boot     two boots of each image with rb boot: BIOS with the boot suite, and UEFI with the
+#            boot and smoke suites, as the amd64 row of rows.toml says.
 #   atf      the ATF suite in three shards by top-level directory, each in its own UEFI boot, so
 #            that each fits in a job. The split follows the time each directory took in the
 #            published run of 4 October 2026: net about 1.6 hours, lib about 0.9, the rest about 1.
@@ -154,10 +157,14 @@ jobs:
         run: |
           scripts/netbsd/phase.sh kernel -u kernel=GENERIC
           scripts/netbsd/phase.sh releasekernel -u releasekernel=GENERIC
+      - name: build.sh kernel=RB-TEST
+        run: scripts/netbsd/phase.sh kernel-rb-test -u "kernel=$GITHUB_WORKSPACE/conf/netbsd/kernel/RB-TEST"
       - name: build.sh sets
         run: |
           scripts/netbsd/phase.sh sets -u sets
           scripts/netbsd/phase.sh kernset -- scripts/netbsd/kernset.sh GENERIC
+          scripts/netbsd/phase.sh kernset-rb-test -- scripts/netbsd/kernset.sh \
+            "$GITHUB_WORKSPACE/conf/netbsd/kernel/RB-TEST"
       - name: hand the sets on
         run: |
           tar -C "$NB_ROOT/destdir" -cf "$NB_ROOT/release/destdir-meta.tar" METALOG etc/mtree
@@ -194,10 +201,20 @@ jobs:
           retention-days: 14
 
   image:
-    name: rb image
+    name: rb image with ${{ matrix.kernel }}
     needs: [rb, world]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kernel: GENERIC
+            suffix: ""
+          - kernel: RB-TEST
+            suffix: -RB-TEST
+    env:
+      KERNEL: ${{ matrix.kernel }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: work directory on /mnt
@@ -229,6 +246,10 @@ jobs:
           if [ -d "$NB_ROOT/release/binary" ]; then mv "$NB_ROOT/release/binary" "$NB_ROOT/release/amd64/"; fi
           tar -C "$NB_ROOT/destdir" -xf "$NB_ROOT/release/destdir-meta.tar"
           rm "$NB_ROOT/release/destdir-meta.tar"
+          binary="$NB_ROOT/release/amd64/binary"
+          if [ "$KERNEL" != GENERIC ]; then
+            scripts/netbsd/kern-into-sets.sh "$binary" "$binary/sets/kern-$KERNEL.tar.xz"
+          fi
           find "$NB_ROOT/release" -type f | sort
           # The live-image target runs make in etc and in distrib/amd64/liveimage. Their object
           # directories must exist, or make writes into the tree. rb image makes the second.
@@ -244,7 +265,7 @@ jobs:
           sha256sum "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: netbsd-amd64-serial-image
+          name: netbsd-amd64-serial-image${{ matrix.suffix }}
           path: /mnt/nb/netbsd-amd64-serial.img.gz
           compression-level: 0
           retention-days: 7
@@ -252,7 +273,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "### rb image"
+            echo "### rb image with $KERNEL"
             scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"
             echo
             img="$NB_ROOT/netbsd-amd64-serial.img.gz"
@@ -263,15 +284,27 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: netbsd-logs-image
+          name: netbsd-logs-image${{ matrix.suffix }}
           path: /mnt/nb/logs
           retention-days: 14
 
   boot:
-    name: boot and smoke
+    name: boot and smoke with ${{ matrix.kernel }}
     needs: [rb, image]
+    # Each leg needs only its own image, so a failed image of the other kernel does not skip it.
+    if: ${{ !cancelled() && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kernel: GENERIC
+            suffix: ""
+          - kernel: RB-TEST
+            suffix: -RB-TEST
+    env:
+      KERNEL: ${{ matrix.kernel }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: let the runner user open /dev/kvm
@@ -286,7 +319,7 @@ jobs:
           sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-amd64-serial-image
+          name: netbsd-amd64-serial-image${{ matrix.suffix }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -312,7 +345,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "### boot and smoke: the console's RB- lines"
+            echo "### boot and smoke with $KERNEL: the console's RB- lines"
             echo
             echo '```'
             grep -a '^RB-' "$RUNNER_TEMP"/boot/*/console.log 2>/dev/null
@@ -321,14 +354,15 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: netbsd-boot-smoke
+          name: netbsd-boot-smoke${{ matrix.suffix }}
           path: ${{ runner.temp }}/boot
           retention-days: 14
 
   atf:
     name: ATF ${{ matrix.shard }}
     needs: [rb, image]
-    if: github.event_name != 'workflow_dispatch' || inputs.atf
+    # The shards boot the GENERIC image only, so a failed RB-TEST image does not skip them.
+    if: ${{ !cancelled() && needs.rb.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.atf) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:

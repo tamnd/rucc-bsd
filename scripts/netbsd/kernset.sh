@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Make the kern-GENERIC set from the kernel that "build.sh kernel=GENERIC" built.
 #
+#   kernset.sh [CONF]
+#
+# CONF is a configuration name of the tree, GENERIC by default, or the path of a configuration
+# file outside the tree, as build.sh takes it. For conf/netbsd/kernel/RB-TEST the set is
+# kern-RB-TEST.
+#
 # The live image extracts kern-GENERIC with the other sets. build.sh makes that set only in
 # "release", which also builds six more kernels and the install media. This script runs the
 # commands of the kernset-GENERIC target of etc/Makefile in the tree, with the values that the tree's
@@ -12,6 +18,15 @@
 tooldir=${NB_TOOLDIR:-$NB_TOOLS}
 make="$tooldir/bin/nbmake-$NB_MACHINE"
 conf=${1:-GENERIC}
+case $conf in
+*/*)
+	conffile=$conf
+	conf=${conf##*/}
+	;;
+*)
+	conffile=$NB_SRC/sys/arch/$NB_MACHINE/conf/$conf
+	;;
+esac
 
 # -v expands the value; -V prints it as written.
 v() { "$make" -C "$NB_SRC/etc" -v "$1" 2>/dev/null; }
@@ -30,8 +45,7 @@ set_file="$setdir/kern-$conf.$suffix"
 mkdir -p "$setdir"
 
 # The kernel names come from the "config" lines of the kernel configuration, as GETKERNELAWK does.
-kernels=$(awk '/^config/ { print $2; found = 1 } END { if (!found) print "netbsd" }' \
-	"$NB_SRC/sys/arch/$NB_MACHINE/conf/$conf")
+kernels=$(awk '/^config/ { print $2; found = 1 } END { if (!found) print "netbsd" }' "$conffile")
 
 {
 	echo "/set uname=$owner gname=$group"
