@@ -1,0 +1,27 @@
+# The second G run on this pin, from rucc-bsd 9c363d6. The boot job failed only on no-poweroff, which #47 fixes. The 10 rc/t_rc_d_cli cases failed here and passed in g-42559922124. The 18 x86_xstate_zmm cases passed here and were skipped in g-42559922124, because this runner's CPU has AVX-512.
+label=G
+system=netbsd
+pin=trunk
+commit=3c50f59789893ab1f71051686347e79c7b2e8327
+row=amd64
+cc=gcc-in-tree
+gcc=14.4.0
+kernel=GENERIC
+image=live-image
+host=github-ubuntu-24.04-kvm
+vm=2-vcpu-8g
+run=https://github.com/tamnd/rucc-bsd/actions/runs/42610022291
+date=2026-11-09
+dirs=atf bin compat crypto dev fs games include ipf kernel lib libexec modules net rump sbin share sys usr.bin usr.sbin 
+programs=1039
+broken_programs=0
+cases=11623
+passed=10907
+failed=14
+skipped=562
+expected_failures=140
+expected_failure=111
+expected_death=0
+expected_exit=0
+expected_signal=29
+expected_timeout=0
