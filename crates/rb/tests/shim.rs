@@ -217,3 +217,128 @@ fn netbsd_shims_need_the_tools_and_a_side() {
     assert!(!ok && text.contains("/no/such/rucc"), "{text}");
     std::fs::remove_dir_all(&top).ok();
 }
+
+#[test]
+fn freebsd_toolchain_files_differ_in_xcc_only() {
+    let top = rig("fbsd-tc");
+    let (binary, _) = shim(&top);
+    let dir = top.join("tc");
+    let make = [
+        "toolchain",
+        "freebsd-15.1",
+        "--dir",
+        dir.to_str().unwrap(),
+        "--shim",
+        binary.to_str().unwrap(),
+    ];
+    // The fake rucc is not the pinned release.
+    let (ok, text) = rb(&top, &make);
+    assert!(!ok && text.contains("pass --ungraded"), "{text}");
+    let mut ungraded = make.to_vec();
+    ungraded.push("--ungraded");
+    let (ok, text) = rb(&top, &ungraded);
+    assert!(ok, "{text}");
+    assert!(text.contains("differ in the C compiler only"), "{text}");
+    let r = std::fs::read_to_string(dir.join("rucc.mk")).unwrap();
+    assert!(r.contains("-rb-cc-rucc\n"), "{r}");
+    assert!(
+        dir.join("bin/x86_64-unknown-freebsd15.1-rb-cc-rucc")
+            .is_file()
+    );
+
+    let diff = [
+        "toolchain-diff",
+        "freebsd-15.1",
+        "--dir",
+        dir.to_str().unwrap(),
+        "--ungraded",
+    ];
+    let (ok, text) = rb(&top, &diff);
+    assert!(ok, "{text}");
+    std::fs::write(
+        dir.join("rucc.mk"),
+        r.replace("X_COMPILER_TYPE=gcc", "X_COMPILER_TYPE=clang"),
+    )
+    .unwrap();
+    let (ok, text) = rb(&top, &diff);
+    assert!(
+        !ok && text.contains("X_COMPILER_TYPE: G has gcc, R has clang"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&top).ok();
+}
+
+#[test]
+fn netbsd_tooldirs_differ_from_the_tools_in_the_shim_only() {
+    let top = rig("nb-tc");
+    let (binary, _) = shim(&top);
+    let tools = top.join("tools");
+    std::fs::create_dir_all(tools.join("bin")).unwrap();
+    std::fs::create_dir_all(tools.join("x86_64--netbsd/lib")).unwrap();
+    for (file, text) in [
+        ("bin/x86_64--netbsd-gcc", "gcc"),
+        ("bin/x86_64--netbsd-cpp", "cpp"),
+        ("bin/x86_64--netbsd-as", "as"),
+        ("bin/nbmake-amd64", "old wrapper"),
+        ("x86_64--netbsd/lib/ldscripts", "ld"),
+    ] {
+        std::fs::write(tools.join(file), text).unwrap();
+    }
+    let side = |cc: &str, ungraded: bool| {
+        let dir = top.join(format!("tooldir-{cc}"));
+        let mut args = vec![
+            "toolchain".to_string(),
+            "netbsd-trunk".into(),
+            "--dir".into(),
+            dir.display().to_string(),
+            "--tools".into(),
+            tools.display().to_string(),
+            "--destdir".into(),
+            top.join("destdir").display().to_string(),
+            "--cc".into(),
+            cc.into(),
+            "--shim".into(),
+            binary.display().to_string(),
+        ];
+        if ungraded {
+            args.push("--ungraded".into());
+        }
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (ok, text) = rb(&top, &refs);
+        (ok, text, dir)
+    };
+    let (ok, text, g) = side("ref", false);
+    assert!(ok, "{text}");
+    assert!(!g.join("bin/nbmake-amd64").exists());
+    let (ok, text, _) = side("rucc", false);
+    assert!(!ok && text.contains("pass --ungraded"), "{text}");
+    let (ok, text, r) = side("rucc", true);
+    assert!(ok, "{text}");
+    assert_eq!(
+        std::fs::read(r.join("x86_64--netbsd/lib/ldscripts")).unwrap(),
+        b"ld"
+    );
+
+    let diff = [
+        "toolchain-diff",
+        "netbsd-trunk",
+        "--g",
+        g.to_str().unwrap(),
+        "--r",
+        r.to_str().unwrap(),
+        "--ungraded",
+    ];
+    let (ok, text) = rb(&top, &diff);
+    assert!(ok, "{text}");
+    assert!(
+        text.contains("differ in the side of rb-shim.toml only"),
+        "{text}"
+    );
+    std::fs::write(r.join("bin/x86_64--netbsd-as"), "patched").unwrap();
+    let (ok, text) = rb(&top, &diff);
+    assert!(
+        !ok && text.contains("bin/x86_64--netbsd-as differs"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&top).ok();
+}
