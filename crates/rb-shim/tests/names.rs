@@ -208,3 +208,55 @@ fn bringup_as_sends_assembly_to_the_reference_and_says_so() {
     assert_eq!(records[0].origin.as_deref(), Some("ref-c"));
     assert!(rig.calls().contains("gcc15 -c locore.S -o locore.o"));
 }
+
+/// A rucc that cannot make an object of `asm.c` but can write it as assembly.
+const NO_OBJECT: &str = r#"#!/bin/sh
+echo "$(basename "$0") $*" >> "$(dirname "$0")/calls"
+case " $* " in
+*" -c "*asm.c*) echo "asm.c:1: rucc cannot assemble this" >&2; exit 1 ;;
+esac
+out=
+while [ $# -gt 0 ]; do
+	if [ "$1" = -o ]; then out=$2; shift; fi
+	shift
+done
+if [ -n "$out" ]; then echo assembly > "$out"; fi
+exit 0
+"#;
+
+#[test]
+fn bringup_as_assembles_what_rucc_cannot_with_the_reference() {
+    let rig = Rig::new("bringup-c", "bringup = [\"as\"]\n");
+    std::fs::write(rig.bin.join("rucc"), NO_OBJECT).unwrap();
+    std::fs::write(rig.work.join("asm.c"), "int z;\n").unwrap();
+    let cc = "x86_64-unknown-freebsd15.1-rb-cc-rucc";
+    assert_eq!(rig.call(cc, "-O2 -m32 -c asm.c -o asm.o"), 0);
+    assert_eq!(rig.call(cc, "-c foo.c -o foo.o"), 0);
+    let calls = rig.calls();
+    assert!(
+        calls.contains(
+            "rucc --target=x86_64-unknown-freebsd15.1 -fgnuc-version=15.2.0 -O2 -m32 -S asm.c -o asm.o.rb-as.s"
+        ),
+        "{calls}"
+    );
+    assert!(
+        calls.contains("gcc15 -c asm.o.rb-as.s -o asm.o -m32"),
+        "{calls}"
+    );
+    assert!(!rig.work.join("asm.o.rb-as.s").exists());
+    let records = rig.records();
+    assert_eq!(records.len(), 2);
+    assert!(records[0].succeeded());
+    assert_eq!(records[0].delegated.as_deref(), Some("as"));
+    assert_eq!(records[0].origin.as_deref(), Some("rucc-c"));
+    assert!(records[0].stderr.contains("cannot assemble"));
+    assert_eq!(records[0].outputs[0].path, "asm.o");
+    assert_eq!(records[1].delegated, None);
+
+    let graded = Rig::new("graded-c", "");
+    std::fs::write(graded.bin.join("rucc"), NO_OBJECT).unwrap();
+    std::fs::write(graded.work.join("asm.c"), "int z;\n").unwrap();
+    assert_eq!(graded.call(cc, "-c asm.c -o asm.o"), 1);
+    assert!(!graded.calls().contains("gcc15"));
+    assert_eq!(graded.records()[0].delegated, None);
+}

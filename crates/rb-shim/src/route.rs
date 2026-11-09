@@ -10,6 +10,7 @@
 //! | `cc`, C or assembly input | rucc, with the target and the persona | the reference GCC | `rucc-c` or `rucc-asm` in R, `ref` in G |
 //! | `cc`, C++ input | the reference `g++` | the reference `g++` | `cxx-on-cc` |
 //! | `cc`, a bring-up unit | the reference GCC | | `ref-c` |
+//! | `cc`, a C unit rucc cannot assemble, under `as` | rucc writes assembly and the reference GCC assembles it | | `rucc-c`, delegated |
 //! | `c++` | the reference `g++` | the reference `g++` | `ref-cxx` |
 //! | `cpp` | rucc in `-E` mode where configured, else the reference `cpp` | the reference `cpp` | none |
 //! | `as` | the reference `as` | the reference `as` | `other` |
@@ -335,6 +336,100 @@ fn named_unit(invocation: &Invocation, config: &ShimConfig) -> bool {
     })
 }
 
+/// The two steps of the `as` class for a C unit that rucc could not compile to an object (00):
+/// rucc writes the unit as assembly, and the reference assembles it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsSteps {
+    /// rucc's arguments after the shim's own: the build's, with `-S` for `-c` and the assembly
+    /// file for the object.
+    pub rucc_args: Vec<String>,
+    /// The reference's arguments: `-c`, the assembly file and the object, with the build's `-m`
+    /// and assembler options.
+    pub ref_args: Vec<String>,
+    /// The assembly file, as the build's working directory sees it.
+    pub assembly: String,
+    /// The object, as the build named it.
+    pub object: String,
+}
+
+/// The `as` steps for a call, or `None` when the call is not one C unit compiled to an object.
+#[must_use]
+pub fn as_steps(rest: &[String], invocation: &Invocation) -> Option<AsSteps> {
+    if invocation.mode != Mode::Compile
+        || kind(invocation) != Kind::C
+        || invocation.inputs.len() != 1
+        || rest.iter().any(|a| a.starts_with('@'))
+    {
+        return None;
+    }
+    let mut object = None;
+    let mut iter = rest.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "-o" {
+            object = iter.next().cloned();
+        } else if let Some(o) = arg.strip_prefix("-o").filter(|o| !o.is_empty()) {
+            object = Some(o.to_string());
+        }
+    }
+    let object = match object {
+        Some(o) if o == "-" => return None,
+        Some(o) => o,
+        None => {
+            let stem = Path::new(&invocation.inputs[0]).file_stem()?;
+            format!("{}.o", stem.to_string_lossy())
+        }
+    };
+    let assembly = format!("{object}.rb-as.s");
+    let mut rucc_args = Vec::new();
+    let mut ref_args = vec![
+        "-c".to_string(),
+        assembly.clone(),
+        "-o".to_string(),
+        object.clone(),
+    ];
+    let mut iter = rest.iter();
+    let mut named = false;
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "-c" => rucc_args.push("-S".to_string()),
+            "-o" => {
+                iter.next();
+            }
+            "-Xassembler" => {
+                rucc_args.push(arg.clone());
+                if let Some(value) = iter.next() {
+                    rucc_args.push(value.clone());
+                    ref_args.push(arg.clone());
+                    ref_args.push(value.clone());
+                }
+            }
+            a if a.starts_with("-o") => {}
+            a => {
+                if a == "-MT" || a == "-MQ" || a.starts_with("-MT") || a.starts_with("-MQ") {
+                    named = true;
+                }
+                if a.starts_with("-m") || a.starts_with("-Wa,") {
+                    ref_args.push(arg.clone());
+                }
+                rucc_args.push(arg.clone());
+            }
+        }
+    }
+    rucc_args.push("-o".to_string());
+    rucc_args.push(assembly.clone());
+    // A dependency file names its target after the output unless told: keep it the object.
+    if !named && rest.iter().any(|a| a == "-MD" || a == "-MMD") {
+        rucc_args.push("-MT".to_string());
+        rucc_args.push(object.clone());
+    }
+    Some(AsSteps {
+        rucc_args,
+        ref_args,
+        assembly,
+        object,
+    })
+}
+
 /// The compiler for a slot, or the error that says how to name one.
 fn need(path: &Path, key: &str, var: &str) -> Result<PathBuf, String> {
     if path.as_os_str().is_empty() {
@@ -527,6 +622,37 @@ mod tests {
         let other = decide_line("x-rb-cc-rucc", &config, "-c /src/lib/libc/x.c").unwrap();
         assert_eq!(other.delegated, None);
         assert_eq!(other.compiler, config.rucc);
+    }
+
+    #[test]
+    fn as_compiles_a_c_unit_to_assembly_and_assembles_it_with_the_reference() {
+        let config = config();
+        let call = |line: &str| {
+            let d = decide_line("x-rb-cc-rucc", &config, line).unwrap();
+            as_steps(&words(line), &d.invocation)
+        };
+        let steps =
+            call("-O2 -m32 -Wa,--noexecstack -g -MD -MF .depend.x.o -c x.c -o x.o").unwrap();
+        assert_eq!(
+            steps.rucc_args,
+            words(
+                "-O2 -m32 -Wa,--noexecstack -g -MD -MF .depend.x.o -S x.c -o x.o.rb-as.s -MT x.o"
+            )
+        );
+        assert_eq!(
+            steps.ref_args,
+            words("-c x.o.rb-as.s -o x.o -m32 -Wa,--noexecstack")
+        );
+        assert_eq!(steps.object, "x.o");
+        let plain = call("-c sub/y.c -MD -MT y.o").unwrap();
+        assert_eq!(plain.object, "y.o");
+        assert_eq!(
+            plain.rucc_args,
+            words("-S sub/y.c -MD -MT y.o -o y.o.rb-as.s")
+        );
+        assert!(call("-c locore.S -o locore.o").is_none());
+        assert!(call("-E x.c").is_none());
+        assert!(call("-c x.c -o -").is_none());
     }
 
     #[test]

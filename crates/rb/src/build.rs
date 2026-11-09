@@ -359,6 +359,8 @@ pub mod cli {
         dry_run: bool,
         freebsd: bool,
         targets: Vec<String>,
+        bringup: Vec<String>,
+        bringup_units: Vec<String>,
     }
 
     impl<'a> Build<'a> {
@@ -391,6 +393,13 @@ pub mod cli {
                 .filter(|t| !t.is_empty())
                 .map(String::from)
                 .collect();
+            let (bringup, bringup_units) = if cc == Cc::Rucc {
+                shims::bringup(args.get("bringup"), args.get("bringup-units"), &|k| {
+                    std::env::var(k).ok()
+                })?
+            } else {
+                (Vec::new(), Vec::new())
+            };
             Ok(Self {
                 args,
                 root,
@@ -402,6 +411,8 @@ pub mod cli {
                 dry_run: args.has("dry-run"),
                 freebsd,
                 targets,
+                bringup,
+                bringup_units,
             })
         }
 
@@ -451,6 +462,8 @@ pub mod cli {
                 tools: Some(self.layout.tools.clone()),
                 destdir: Some(self.layout.destdir.clone()),
                 side: Some(self.cc.side()),
+                bringup: self.bringup.clone(),
+                bringup_units: self.bringup_units.clone(),
             };
             let f = &self.files;
             let shims = shims::plan(&f.pin, &f.row, &f.personas, &f.toolchains, &ask)?;
@@ -549,7 +562,7 @@ pub mod cli {
     pub fn run(args: &Args, root: &Path) -> Result<(String, bool), String> {
         let build = Build::read(args, root)?;
         let mut text = format!(
-            "rb build {} {} with {}{}\n",
+            "rb build {} {} with {}{}{}\n",
             build.files.pin.name,
             args.get("row").unwrap_or("amd64"),
             build.cc.name(),
@@ -557,6 +570,14 @@ pub mod cli {
                 ", without the shim"
             } else {
                 ""
+            },
+            if build.bringup.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ", ungraded because bring-up {} is on",
+                    build.bringup.join(", ")
+                )
             }
         );
         let mut rucc = None;
@@ -597,6 +618,13 @@ pub mod cli {
             );
         }
         let _ = writeln!(text, "rb build: every target built");
+        if !build.bringup.is_empty() {
+            let _ = writeln!(
+                text,
+                "rb build: the run is ungraded, because bring-up {} was on; rb census on the compile log lists the delegated units",
+                build.bringup.join(", ")
+            );
+        }
         Ok((text, true))
     }
 }

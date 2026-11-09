@@ -138,22 +138,52 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
         "shim" => Accepts {
             positional: true,
             values: &[
-                "row", "dir", "cc", "rucc", "log", "tools", "destdir", "shim",
+                "row",
+                "dir",
+                "cc",
+                "rucc",
+                "log",
+                "tools",
+                "destdir",
+                "shim",
+                "bringup",
+                "bringup-units",
             ],
             switches: &[],
         },
         "toolchain" => Accepts {
             positional: true,
             values: &[
-                "row", "dir", "cc", "rucc", "log", "tools", "destdir", "shim",
+                "row",
+                "dir",
+                "cc",
+                "rucc",
+                "log",
+                "tools",
+                "destdir",
+                "shim",
+                "bringup",
+                "bringup-units",
             ],
             switches: &["ungraded"],
         },
         "build" => Accepts {
             positional: true,
             values: &[
-                "row", "cc", "root", "src", "targets", "jobs", "conf", "kernconf", "rucc", "log",
-                "shim", "noise",
+                "row",
+                "cc",
+                "root",
+                "src",
+                "targets",
+                "jobs",
+                "conf",
+                "kernconf",
+                "rucc",
+                "log",
+                "shim",
+                "noise",
+                "bringup",
+                "bringup-units",
             ],
             switches: &["no-shim", "ungraded", "dry-run"],
         },
@@ -218,7 +248,7 @@ usage:
       Exits 1 when the boot did not pass.
   rb build PIN --cc rucc|ref --root DIR [--row ROW] [--targets T,...] [--src DIR] [--jobs N]
           [--conf CONF] [--kernconf NAME] [--rucc PATH] [--log FILE] [--shim PATH] [--noise N]
-          [--no-shim] [--ungraded] [--dry-run]
+          [--bringup as,cxx-c [--bringup-units UNIT,...]] [--no-shim] [--ungraded] [--dry-run]
       Build the pin for the row with R's or G's compiler, as the workflows do. The tree is DIR/src
       or --src, and the build writes DIR/obj, DIR/destdir, DIR/release and DIR/logs. First rb makes
       DIR/toolchain-<cc> as rb toolchain does and runs its checks; the compile records go to
@@ -228,7 +258,11 @@ usage:
       sets by default. For FreeBSD the targets are world and kernel by default, run by make with
       CROSS_TOOLCHAIN set to the .mk file of rb toolchain and SRCCONF=conf/freebsd/CONF.conf,
       graded by default; another target, such as installworld, gets DESTDIR=DIR/destdir.
-      --no-shim builds G with the reference alone, as the B0 workflows do. Each target's output
+      --bringup, else RB_BRINGUP, turns on the bring-up classes of R: as hands .S files, and C
+      units rucc compiles but cannot assemble, to the reference; cxx-c hands the units of
+      --bringup-units or RB_BRINGUP_UNITS, each a path suffix such as lib/libc/gen/x.c, to the
+      reference GCC. Either needs --ungraded, and the report says the run is ungraded in its
+      first line. --no-shim builds G with the reference alone, as the B0 workflows do. Each target's output
       goes to DIR/logs/<target>.log and a line to DIR/logs/phases.tsv. --dry-run prints the
       commands. Exits 1 when a check or a target fails.
   rb census LOG [--objdir DIR] [--skip PATH,...] [--objects FILE] [--limit N]
@@ -236,7 +270,9 @@ usage:
       rb-c++, rb-cpp and rb-as wrote. With --objdir, also walk the object tree, and count every
       object no call wrote as other; --skip leaves out paths under DIR, such as the host tools.
       --objects writes every object, its origin and its slot as tab-separated values. Lists in
-      the report stop after N lines, 50 by default.
+      the report stop after N lines, 50 by default. When a call was delegated under bring-up, the
+      first line says the build is ungraded, and the report lists each delegated unit with what
+      rucc said about it.
   rb demands LOG [--pin PIN --row ROW --conf CONF [--write]] [--flags-only] [--jobs N] [--limit N]
       Count the compiler features one build uses, from its compile.jsonl. Every C and assembly
       unit of the C compiler slot is run again with -E in place of -c, in its own directory, and
@@ -303,7 +339,7 @@ usage:
       pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME,
       such as 2026-11-08T06:00:00Z. Exits 1 when pins.toml is out of date and --write is not given.
   rb shim PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
-          [--destdir DIR] [--shim PATH]
+          [--destdir DIR] [--shim PATH] [--bringup as,cxx-c [--bringup-units UNIT,...]]
       Put rb-cc under the names a build calls its compilers by in DIR, with the rb-shim.toml that
       says what each name runs. rucc gets the --target and -fgnuc-version= of the pin's persona.
       rucc is PATH, else RB_RUCC, else the [rucc] command of toolchains.toml on PATH; rb prints
@@ -312,9 +348,11 @@ usage:
       package of toolchains.toml. For NetBSD the names are the C compiler and the preprocessor of
       TOOLDIR, the reference is in the TOOLDIR of build.sh tools given by --tools, --cc gives the
       side, and rucc gets --destdir as its sysroot. Each call appends a record to FILE. The shim
-      binary is PATH, else RB_SHIM, else rb-cc next to rb.
+      binary is PATH, else RB_SHIM, else rb-cc next to rb. --bringup and --bringup-units are
+      those of rb build, and go in rb-shim.toml for R.
   rb toolchain PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
-          [--destdir DIR] [--shim PATH] [--ungraded]
+          [--destdir DIR] [--shim PATH] [--bringup as,cxx-c [--bringup-units UNIT,...]]
+          [--ungraded]
       Make the toolchain a build of the pin reads, then run the checks of rb toolchain-diff on it.
       For FreeBSD, DIR gets the shims in DIR/bin and the CROSS_TOOLCHAIN files DIR/ref.mk for G
       and DIR/rucc.mk for R. For NetBSD, DIR becomes a copy of the TOOLDIR of build.sh tools in
@@ -326,8 +364,8 @@ usage:
       the shims they name must run the reference of toolchains.toml and give rucc the persona's
       arguments. For NetBSD, G and R are TOOLDIRs, and one of them is enough: each file must be
       the same as in the TOOLDIR of build.sh tools, except the two shim names and rb-shim.toml.
-      rucc must be the release of [rucc.binary_sha256], or --ungraded must be given. Exits 1
-      when a check fails.
+      rucc must be the release of [rucc.binary_sha256], and no bring-up class may be on, or
+      --ungraded must be given. Exits 1 when a check fails.
   rb version
 
 The repository is found by walking up to sets.toml, or from RB_ROOT. Downloads and fetched

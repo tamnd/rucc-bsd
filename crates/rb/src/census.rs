@@ -75,6 +75,9 @@ pub struct Census {
     pub linked_directly: BTreeMap<String, usize>,
     /// Calls delegated under a bring-up class, which make the run ungraded.
     pub delegated: usize,
+    /// The sources of the delegated calls, by class, each with what rucc said first when it
+    /// tried, if it did.
+    pub delegated_units: BTreeMap<String, BTreeMap<String, String>>,
     /// The sides the records name.
     pub sides: BTreeSet<String>,
     /// Every object, by absolute path.
@@ -126,8 +129,24 @@ pub fn from_records(records: &[CompileRecord]) -> Census {
         if !r.succeeded() {
             calls.1 += 1;
         }
-        if r.delegated.is_some() {
+        if let Some(class) = &r.delegated {
             census.delegated += 1;
+            let source = r
+                .inputs
+                .first()
+                .map_or_else(|| "(no input)".to_string(), |i| absolute(&r.cwd, &i.path));
+            let said = r
+                .stderr
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            census
+                .delegated_units
+                .entry(class.clone())
+                .or_default()
+                .insert(source, said);
         }
         if slot == "cpp" {
             let input = r
@@ -295,7 +314,21 @@ impl Census {
     #[must_use]
     pub fn report(&self, title: &str, limit: usize) -> String {
         let mut s = String::new();
-        let _ = writeln!(s, "# Census of {title}\n");
+        if self.delegated > 0 {
+            let classes: Vec<String> = self
+                .delegated_units
+                .iter()
+                .map(|(class, units)| format!("{class} {}", units.len()))
+                .collect();
+            let _ = writeln!(
+                s,
+                "# Census of {title}: ungraded. Calls delegated under bring-up: {} ({})\n",
+                self.delegated,
+                classes.join(", ")
+            );
+        } else {
+            let _ = writeln!(s, "# Census of {title}\n");
+        }
         let units: usize = self.calls.values().map(|c| c.0).sum();
         let failed: usize = self.calls.values().map(|c| c.1).sum();
         let sides: Vec<&str> = self.sides.iter().map(String::as_str).collect();
@@ -319,6 +352,7 @@ impl Census {
         }
         self.objects_part(&mut s);
         self.rules_part(&mut s);
+        self.delegated_part(&mut s, limit);
         self.cpp_part(&mut s, limit);
         self.foreign_part(&mut s, limit);
         s
@@ -414,6 +448,26 @@ impl Census {
             "- Delegated calls: {}. A run with any is ungraded.",
             self.delegated
         );
+    }
+
+    fn delegated_part(&self, s: &mut String, limit: usize) {
+        if self.delegated_units.is_empty() {
+            return;
+        }
+        let _ = writeln!(
+            s,
+            "\n## Delegated units\n\nEach unit here needs an issue before the run can be graded.\n\n| class | source | what rucc said |\n|---|---|---|"
+        );
+        let rows: Vec<(&String, &String, &String)> = self
+            .delegated_units
+            .iter()
+            .flat_map(|(class, units)| units.iter().map(move |(u, said)| (class, u, said)))
+            .collect();
+        for (class, unit, said) in rows.iter().take(limit) {
+            let said = said.replace('|', "\\|");
+            let _ = writeln!(s, "| {class} | `{unit}` | {said} |");
+        }
+        more(s, rows.len(), limit);
     }
 
     fn cpp_part(&self, s: &mut String, limit: usize) {
@@ -554,6 +608,14 @@ not json
         assert!(report.contains("Objects rucc built"), "{report}");
         assert!(report.contains("`cxx-on-cc` objects: 1."), "{report}");
         assert!(report.contains("Delegated calls: 1."), "{report}");
+        assert!(
+            report.starts_with(
+                "# Census of r: ungraded. Calls delegated under bring-up: 1 (cxx-c 1)"
+            ),
+            "{report}"
+        );
+        assert!(report.contains("## Delegated units"), "{report}");
+        assert_eq!(c.delegated_units["cxx-c"].len(), 1);
     }
 
     #[test]

@@ -11,10 +11,11 @@
 //! `x86_64-unknown-freebsd15.1-rb-cc-rucc` in R and `...-rb-cc-ref` in G. NetBSD's names are fixed
 //! by `TOOLDIR`, so the side goes in `rb-shim.toml`, and R and G each get a directory.
 
+use harness_shim::bringup::split_list;
 use rb_pins::pins::Pin;
 use rb_pins::places::Row;
 use rb_pins::toolchains::{Personas, RuccPin, Toolchain, Toolchains};
-use rb_shim::config::{FILE_NAME, ShimConfig, Side};
+use rb_shim::config::{CLASSES, FILE_NAME, ShimConfig, Side};
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -167,6 +168,43 @@ pub struct Ask {
     pub destdir: Option<PathBuf>,
     /// For NetBSD: the side, since the names do not say it.
     pub side: Option<Side>,
+    /// The bring-up classes of 00, which only R uses. Any makes the run ungraded.
+    pub bringup: Vec<String>,
+    /// The C units the `cxx-c` class hands to the reference.
+    pub bringup_units: Vec<String>,
+}
+
+/// The bring-up classes and units of a command: `--bringup` and `--bringup-units`, else
+/// `RB_BRINGUP` and `RB_BRINGUP_UNITS`.
+///
+/// # Errors
+///
+/// When a class is not one of 00's two, when `cxx-c` names no unit, or when units are named
+/// without `cxx-c`.
+pub fn bringup(
+    flag: Option<&str>,
+    units: Option<&str>,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let classes = flag
+        .map(String::from)
+        .or_else(|| env("RB_BRINGUP"))
+        .map(|v| split_list(&v))
+        .unwrap_or_default();
+    let units = units
+        .map(String::from)
+        .or_else(|| env("RB_BRINGUP_UNITS"))
+        .map(|v| split_list(&v))
+        .unwrap_or_default();
+    CLASSES.check(&classes)?;
+    let cxx_c = classes.iter().any(|c| c == "cxx-c");
+    if cxx_c && units.is_empty() {
+        return Err("the cxx-c class needs the units it hands to the reference: give --bringup-units or RB_BRINGUP_UNITS".into());
+    }
+    if !cxx_c && !units.is_empty() {
+        return Err("bring-up units are named, but the cxx-c class is not on".into());
+    }
+    Ok((classes, units))
 }
 
 /// The shims of one pin and row: the names and the settings.
@@ -209,6 +247,11 @@ pub fn plan(
         rucc_args: persona.rucc_args(pin, arch),
         ..ShimConfig::default()
     };
+    // G runs the reference for every unit, so bring-up means nothing there.
+    if ask.side != Some(Side::G) {
+        config.bringup.clone_from(&ask.bringup);
+        config.bringup_units.clone_from(&ask.bringup_units);
+    }
     let names = match pin.system.as_str() {
         "freebsd" => freebsd(&mut config, reference, toolchains, &target)?,
         "netbsd" => netbsd(&mut config, reference, ask)?,
@@ -359,6 +402,20 @@ pub fn report(dir: &Path, shims: &Shims, rucc: Option<&Rucc>, pin: Option<&RuccP
     if let Some(side) = shims.config.side {
         let _ = writeln!(s, "side: {}", side.letter());
     }
+    if !shims.config.bringup.is_empty() {
+        let _ = writeln!(
+            s,
+            "bring-up: {}, so every run with these shims is ungraded",
+            shims.config.bringup.join(", ")
+        );
+        if !shims.config.bringup_units.is_empty() {
+            let _ = writeln!(
+                s,
+                "units cxx-c hands to the reference: {}",
+                shims.config.bringup_units.join(", ")
+            );
+        }
+    }
     match rucc {
         Some(r) => {
             let _ = writeln!(s, "rucc: {}", r.line(pin));
@@ -381,7 +438,7 @@ pub fn report(dir: &Path, shims: &Shims, rucc: Option<&Rucc>, pin: Option<&RuccP
 
 /// `rb shim` on the command line.
 pub mod cli {
-    use super::{Ask, Cc, Rucc, install, plan, report, shim_binary};
+    use super::{Ask, Cc, Rucc, bringup, install, plan, report, shim_binary};
     use crate::cli::Args;
     use rb_pins::pins::PinsFile;
     use rb_pins::places::Rows;
@@ -420,12 +477,17 @@ pub mod cli {
             // A G directory, or a FreeBSD one without rucc, still works for the reference names.
             (Err(_), _) => None,
         };
+        let (classes, units) = bringup(args.get("bringup"), args.get("bringup-units"), &|k| {
+            std::env::var(k).ok()
+        })?;
         let ask = Ask {
             rucc: rucc.as_ref().map(|r| r.path.clone()),
             log: args.get("log").map(PathBuf::from).unwrap_or_default(),
             tools: args.get("tools").map(PathBuf::from),
             destdir: args.get("destdir").map(PathBuf::from),
             side: cc.map(Cc::side),
+            bringup: classes,
+            bringup_units: units,
         };
         let shims = plan(pin, row, &personas, &toolchains, &ask)?;
         let binary = shim_binary(args.get("shim"), std::env::var("RB_SHIM").ok().as_deref())?;
@@ -568,5 +630,34 @@ mod tests {
         assert_eq!(Cc::parse("rucc").unwrap(), Cc::Rucc);
         assert_eq!(Cc::parse("G").unwrap().side(), Side::G);
         assert!(Cc::parse("clang").is_err());
+    }
+    #[test]
+    fn bring_up_comes_from_the_flags_or_the_environment_and_only_r_gets_it() {
+        let none = |_: &str| None;
+        assert_eq!(bringup(None, None, &none).unwrap(), (vec![], vec![]));
+        let env = |k: &str| (k == "RB_BRINGUP").then(|| "as".to_string());
+        assert_eq!(bringup(None, None, &env).unwrap().0, ["as"]);
+        let (classes, units) = bringup(Some("as,cxx-c"), Some("lib/a.c"), &env).unwrap();
+        assert_eq!((classes.len(), units), (2, vec!["lib/a.c".to_string()]));
+        assert!(bringup(Some("m16"), None, &none).is_err());
+        assert!(bringup(Some("cxx-c"), None, &none).is_err());
+        assert!(bringup(Some("as"), Some("lib/a.c"), &none).is_err());
+
+        let (personas, toolchains, rows) = files();
+        let mut ask = Ask {
+            rucc: Some("/opt/rucc/rucc".into()),
+            tools: Some("/nb/tools".into()),
+            side: Some(Side::R),
+            bringup: vec!["as".into()],
+            ..Ask::default()
+        };
+        let trunk = pin("netbsd", "current", "11.99.10");
+        let row = &rows.row["amd64"];
+        let r = plan(&trunk, row, &personas, &toolchains, &ask).unwrap();
+        assert_eq!(r.config.bringup, ["as"]);
+        assert!(report(Path::new("/d"), &r, None, None).contains("ungraded"));
+        ask.side = Some(Side::G);
+        let g = plan(&trunk, row, &personas, &toolchains, &ask).unwrap();
+        assert!(g.config.bringup.is_empty());
     }
 }
