@@ -1,6 +1,6 @@
 # R for the NetBSD trunk amd64 kernel (milestone B3): the GENERIC kernel of the pinned tree built
-# by build.sh with rucc in the C compiler slot of TOOLDIR. The world, the image and the tests come
-# later. The pin, the tools and the paths are those of netbsd-g.yml.
+# by build.sh with rucc in the C compiler slot of TOOLDIR. The pin, the tools and the paths are
+# those of netbsd-g.yml.
 #
 # scripts/netbsd/overlay.sh copies the G TOOLDIR and replaces bin/x86_64--netbsd-gcc and
 # bin/x86_64--netbsd-cpp with the shims in conf/netbsd/toolchain. Every other tool, the C++ slot
@@ -16,6 +16,11 @@
 # workflow of rucc-kernel. A manual run can name a branch or commit of tamnd/rucc instead, which
 # is built from source and named by its commit in the step summary. A manual run can also name
 # another --target, to see how far rucc gets before it knows the NetBSD triple (tamnd/rucc#4088).
+#
+# A manual run that names a G run (g_run) also boots the rucc kernel and tests it. The world is
+# G's: the sets of that run, with kern-GENERIC made from the rucc kernel by kernset.sh. The G run
+# must be of the same pin. The image, boot and atf jobs then do what they do in netbsd-g.yml, and
+# the report job compares the ATF counts with the G counts of the pin in results/netbsd.
 
 name: netbsd-r
 
@@ -41,14 +46,24 @@ on:
         description: The --target the shims give rucc, or empty for x86_64--netbsd
         required: false
         default: ""
+      g_run:
+        description: A netbsd-g run of the same pin whose sets to boot the rucc kernel with, or empty for the kernel only
+        required: false
+        default: ""
+      atf:
+        description: Run the ATF shards after the smoke boot, when g_run is given
+        type: boolean
+        default: true
 
 # A manual run is its own group, so that a push to the branch does not cancel it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: true
 
+# actions: read lets the image job download the sets of another run.
 permissions:
   contents: read
+  actions: read
 
 env:
   NB_ROOT: /mnt/nb
@@ -189,6 +204,24 @@ jobs:
             echo
             scripts/netbsd/r-report.sh "$NB_ROOT/logs/kernel-$CC_NAME.log" "$NB_ROOT/logs/kernel-$CC_NAME-k.log"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: the kern-GENERIC set from the rucc kernel
+        if: matrix.cc == 'rucc' && inputs.g_run != ''
+        run: |
+          kernel="$NB_ROOT/obj/sys/arch/amd64/compile/GENERIC/netbsd"
+          if [ ! -f "$kernel" ]; then
+            echo "No kernel linked, so there is no set to boot."
+            exit 0
+          fi
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/kernset.sh GENERIC
+          mkdir -p "$NB_ROOT/r-kernel"
+          cp "$NB_ROOT"/release/amd64/binary/sets/kern-GENERIC.* "$kernel" "$NB_ROOT/r-kernel/"
+      - uses: actions/upload-artifact@v7.0.1
+        if: matrix.cc == 'rucc' && inputs.g_run != ''
+        with:
+          name: netbsd-r-kernel
+          path: /mnt/nb/r-kernel
+          if-no-files-found: ignore
+          retention-days: 14
       - name: compress the logs
         if: always()
         run: xz -T0 "$NB_ROOT"/logs/*.log "$NB_ROOT"/logs/shim.tsv 2>/dev/null || true
@@ -198,3 +231,314 @@ jobs:
           name: netbsd-r-logs-kernel-${{ matrix.cc }}
           path: /mnt/nb/logs
           retention-days: 14
+
+  rb:
+    name: cargo build rb
+    if: inputs.g_run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rb-linux-x86_64
+          path: target/release/rb
+          retention-days: 7
+
+  # G's sets with the rucc kernel in kern-GENERIC, made into the live image as in netbsd-g.yml.
+  image:
+    name: rb image with the rucc kernel
+    needs: [rb, kernel]
+    if: inputs.g_run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-amd64-sets
+          path: /mnt/nb/release
+          run-id: ${{ inputs.g_run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-kernel
+          path: ${{ runner.temp }}/r-kernel
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: put the sets, the rucc kernel and DESTDIR's metadata in place
+        run: |
+          mkdir -p "$NB_ROOT/release/amd64" "$NB_ROOT/destdir"
+          if [ -d "$NB_ROOT/release/binary" ]; then mv "$NB_ROOT/release/binary" "$NB_ROOT/release/amd64/"; fi
+          tar -C "$NB_ROOT/destdir" -xf "$NB_ROOT/release/destdir-meta.tar"
+          rm "$NB_ROOT/release/destdir-meta.tar"
+          # The kern-GENERIC set of G is replaced with the one made from the rucc kernel, and the
+          # checksum files of the sets are made to agree with it.
+          sets="$NB_ROOT/release/amd64/binary/sets"
+          for f in "$RUNNER_TEMP"/r-kernel/kern-GENERIC.*; do
+            name=$(basename "$f")
+            cp "$f" "$sets/$name"
+            for sum in MD5 SHA512; do
+              [ -f "$sets/$sum" ] || continue
+              hash=$("$(echo "$sum" | tr '[:upper:]' '[:lower:]')sum" "$sets/$name" | cut -d ' ' -f 1)
+              sed -i "s|^$sum ($name) = .*|$sum ($name) = $hash|" "$sets/$sum"
+            done
+          done
+          kernels="$NB_ROOT/release/amd64/binary/kernel"
+          if [ -f "$kernels/netbsd-GENERIC.gz" ]; then
+            gzip -9nc "$RUNNER_TEMP/r-kernel/netbsd" > "$kernels/netbsd-GENERIC.gz"
+          fi
+          {
+            echo "### The sets"
+            echo
+            echo "The sets of G run $G_RUN, with kern-GENERIC made from the rucc kernel."
+            echo
+            echo '```'
+            ls -l "$sets"
+            "$NB_ROOT/tools/bin/x86_64--netbsd-size" "$RUNNER_TEMP/r-kernel/netbsd"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # The live-image target runs make in etc and in distrib/amd64/liveimage. Their object
+          # directories must exist, or make writes into the tree. rb image makes the second.
+          "$NB_ROOT/tools/bin/nbmake-amd64" -C "$NB_ROOT/src/etc" obj
+        env:
+          G_RUN: ${{ inputs.g_run }}
+      - name: rb image
+        run: |
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          scripts/netbsd/phase.sh image -- "$RUNNER_TEMP/rb/rb" image --build "$NB_ROOT/tools" \
+            --out "$NB_ROOT/netbsd-amd64-serial.img" --work "$NB_ROOT/image-work"
+          cp "$NB_ROOT"/image-work/logs/* "$NB_ROOT/logs/" 2>/dev/null || true
+          gzip -1 "$NB_ROOT/netbsd-amd64-serial.img"
+          sha256sum "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: netbsd-r-amd64-serial-image
+          path: /mnt/nb/netbsd-amd64-serial.img.gz
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-logs-image
+          path: /mnt/nb/logs
+          retention-days: 14
+
+  boot:
+    name: boot and smoke with the rucc kernel
+    needs: [rb, image]
+    if: inputs.g_run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-amd64-serial-image
+          path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: rb boot
+        run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
+          truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
+          status=0
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/boot/seabios" --firmware seabios --suite boot \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/boot/ovmf" --suite boot,smoke \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          exit "$status"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### boot and smoke with the rucc kernel: the console's RB- lines"
+            echo
+            echo '```'
+            grep -a '^RB-' "$RUNNER_TEMP"/boot/*/console.log 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-boot-smoke
+          path: ${{ runner.temp }}/boot
+          retention-days: 14
+
+  atf:
+    name: ATF ${{ matrix.shard }} with the rucc kernel
+    needs: [rb, image]
+    if: inputs.g_run != '' && inputs.atf
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: "only:net"
+            tests: --tests-only net
+          - shard: "only:lib"
+            tests: --tests-only lib
+          - shard: "except:net,lib"
+            tests: --tests-except net,lib
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-amd64-serial-image
+          path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: shard name
+        run: echo "SHARD_NAME=$(echo "$SHARD" | tr ':,' '--')" >> "$GITHUB_ENV"
+        env:
+          SHARD: ${{ matrix.shard }}
+      - name: rb boot with the tests suite
+        run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
+          truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
+          # shellcheck disable=SC2086
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/atf-$SHARD_NAME" --suite boot,smoke,tests $TESTS --timeout 18000 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          TESTS: ${{ matrix.tests }}
+      - name: counts
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/atf-$SHARD_NAME"
+          shopt -s nullglob
+          tps=("$out"/results/tests/atf/*.tps)
+          if [ ${#tps[@]} -gt 0 ]; then
+            python3 scripts/netbsd/atf-counts.py count --out "$out/shard.counts" \
+              --cases "$out/shard.cases.tsv" --set "shard=$SHARD" "${tps[@]}"
+          fi
+          {
+            echo "### ATF $SHARD with the rucc kernel"
+            echo
+            echo '```'
+            cat "$out/results/tests/atf/status" "$out/shard.counts" 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP"/netbsd-amd64-serial.img
+        env:
+          SHARD: ${{ matrix.shard }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-atf-${{ env.SHARD_NAME }}
+          path: ${{ runner.temp }}/atf-${{ env.SHARD_NAME }}
+          retention-days: 30
+
+  # The ATF counts of the rucc kernel against the G counts of the same pin in results/netbsd.
+  report:
+    name: report
+    needs: [kernel, image, boot, atf]
+    if: always() && inputs.g_run != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: netbsd-r-atf-*
+          path: atf
+      - name: ATF counts against G
+        run: |
+          . conf/netbsd/trunk.pin
+          mkdir -p out
+          shopt -s nullglob
+          tps=(atf/*/results/tests/atf/*.tps)
+          if [ ${#tps[@]} -eq 0 ]; then
+            echo "No ATF results." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          dirs=$(cat atf/*/results/tests/dirs | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ')
+          name="$NB_PIN_NAME-$NB_PIN_SHORT-amd64-r-$GITHUB_RUN_ID"
+          python3 scripts/netbsd/atf-counts.py count --out "out/$name.counts" --cases "out/$name.cases.tsv" \
+            --set label=R --set system=netbsd --set "pin=$NB_PIN_NAME" --set "commit=$NB_PIN_COMMIT" \
+            --set row=amd64 --set cc=rucc --set "rucc=$RUCC_REF" --set kernel=GENERIC \
+            --set "world=g-$G_RUN" --set image=live-image --set host=github-ubuntu-24.04-kvm \
+            --set vm=2-vcpu-8g --set "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --set "date=$(date -u +%Y-%m-%d)" --set "dirs=$dirs" "${tps[@]}"
+          awk -F '\t' '$3 == "failed" { print $1 "\t" $2 }' "out/$name.cases.tsv" > "out/$name.failed"
+          bases=("results/netbsd/$NB_PIN_NAME-$NB_PIN_SHORT/amd64/"g-*.counts)
+          base=${bases[-1]:-}
+          {
+            echo "### ATF: R (the rucc kernel on G's world) against G"
+            echo
+            echo "Directories run: $dirs"
+            echo
+            if [ -z "$base" ]; then
+              echo "There are no G counts for this pin in results/netbsd."
+              exit 0
+            fi
+            echo "G: \`$base\`"
+            echo
+            python3 scripts/netbsd/atf-counts.py compare "$base" "out/$name.counts"
+            echo
+            echo "Failed here and not in G:"
+            echo
+            echo '```'
+            sort "out/$name.failed" | comm -23 - <(sort "${base%.counts}.failed")
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          G_RUN: ${{ inputs.g_run }}
+          RUCC_REF: ${{ inputs.rucc }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-results
+          path: out
+          if-no-files-found: ignore
+          retention-days: 90
