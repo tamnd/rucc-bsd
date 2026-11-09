@@ -128,12 +128,31 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["as-of"],
             switches: &["write"],
         },
+        _ => return toolchain_commands(command),
+    })
+}
+
+/// What the commands that set up compilers accept.
+fn toolchain_commands(command: &str) -> Option<Accepts> {
+    Some(match command {
         "shim" => Accepts {
             positional: true,
             values: &[
                 "row", "dir", "cc", "rucc", "log", "tools", "destdir", "shim",
             ],
             switches: &[],
+        },
+        "toolchain" => Accepts {
+            positional: true,
+            values: &[
+                "row", "dir", "cc", "rucc", "log", "tools", "destdir", "shim",
+            ],
+            switches: &["ungraded"],
+        },
+        "toolchain-diff" => Accepts {
+            positional: true,
+            values: &["row", "dir", "g", "r"],
+            switches: &["ungraded"],
         },
         _ => return None,
     })
@@ -211,6 +230,21 @@ usage:
       TOOLDIR, the reference is in the TOOLDIR of build.sh tools given by --tools, --cc gives the
       side, and rucc gets --destdir as its sysroot. Each call appends a record to FILE. The shim
       binary is PATH, else RB_SHIM, else rb-cc next to rb.
+  rb toolchain PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
+          [--destdir DIR] [--shim PATH] [--ungraded]
+      Make the toolchain a build of the pin reads, then run the checks of rb toolchain-diff on it.
+      For FreeBSD, DIR gets the shims in DIR/bin and the CROSS_TOOLCHAIN files DIR/ref.mk for G
+      and DIR/rucc.mk for R. For NetBSD, DIR becomes a copy of the TOOLDIR of build.sh tools in
+      --tools, with the shim as its C compiler and preprocessor for the side --cc gives. Give DIR
+      to build.sh -T. The other options are those of rb shim. Exits 1 when a check fails.
+  rb toolchain-diff PIN [--row ROW] (--dir DIR | --g G --r R) [--ungraded]
+      Check that R's toolchain differs from G's in the C compiler only. For FreeBSD, G and R are
+      the CROSS_TOOLCHAIN files, or DIR/ref.mk and DIR/rucc.mk: they must differ in XCC only, and
+      the shims they name must run the reference of toolchains.toml and give rucc the persona's
+      arguments. For NetBSD, G and R are TOOLDIRs, and one of them is enough: each file must be
+      the same as in the TOOLDIR of build.sh tools, except the two shim names and rb-shim.toml.
+      rucc must be the release of [rucc.binary_sha256], or --ungraded must be given. Exits 1
+      when a check fails.
   rb version
 
 The repository is found by walking up to sets.toml, or from RB_ROOT. Downloads and fetched

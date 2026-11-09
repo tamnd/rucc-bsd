@@ -90,6 +90,26 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             print!("{}", rb::shims::cli::run(args, &repo.root)?);
             Ok(ExitCode::SUCCESS)
         }
+        "toolchain" => {
+            let repo = rb::repo::Repo::find()?;
+            let made = rb::toolchain::cli::make(args, &repo.root)?;
+            print!("{}", made.report);
+            Ok(if made.ok {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
+        }
+        "toolchain-diff" => {
+            let repo = rb::repo::Repo::find()?;
+            let (text, ok) = rb::toolchain::cli::diff(args, &repo.root)?;
+            print!("{text}");
+            Ok(if ok {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
+        }
         "version" => {
             println!("rb {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
