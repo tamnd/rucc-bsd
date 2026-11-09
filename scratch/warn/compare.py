@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Scratch: compare the warnings of GCC and rucc per unit, from the records of shim-dual.sh.
 
-    compare.py DIR SUMMARY.md DETAILS.txt
+    compare.py DIR NAMED.rs SUMMARY.md DETAILS.txt
+
+rucc prints its own code, such as [E0785], where GCC prints the option. NAMED.rs is
+crates/rucc-diag/src/named.rs of the rucc that ran, whose OPTIONS table maps a code to its option.
 """
 
 import collections
@@ -11,18 +14,26 @@ import sys
 
 DIAG = re.compile(
     r"^(?P<file>[^:\s][^:]*):(?P<line>\d+):(?:(?P<col>\d+):)? "
-    r"(?P<kind>warning|error|fatal error): (?P<msg>.*?)(?: \[(?P<opt>-W[^\]]+)\])?$"
+    r"(?P<kind>warning|error|fatal error): (?P<msg>.*?)(?: \[(?P<opt>-W[^\]]+|[EW]\d{4})\])?$"
 )
-DRIVER = re.compile(r"^(?P<prog>[\w.+-]+): (?P<kind>warning|error|fatal error): (?P<msg>.*?)(?: \[(?P<opt>-W[^\]]+)\])?$")
+DRIVER = re.compile(r"^(?P<prog>[\w.+-]+): (?P<kind>warning|error|fatal error): (?P<msg>.*?)(?: \[(?P<opt>-W[^\]]+|[EW]\d{4})\])?$")
+CODES = {}
 
 
 def option(opt):
+    """The option name of a diagnostic, or the rucc code when the code has none."""
     if opt is None:
         return None
+    if not opt.startswith("-W"):
+        return CODES.get(opt, opt)
     opt = opt[2:]
     if opt.startswith("error="):
         opt = opt[len("error="):]
-    return opt
+    return opt.split("=", 1)[0]
+
+
+def named(opt):
+    return opt is not None and not re.fullmatch(r"[EW]\d{4}", opt)
 
 
 def shape(msg):
@@ -50,7 +61,9 @@ def read(path):
 
 
 def main():
-    top, summary, details = sys.argv[1:4]
+    top, table, summary, details = sys.argv[1:5]
+    for code, name in re.findall(r'\("([EW]\d{4})", "([^"]+)"\)', open(table).read()):
+        CODES.setdefault(code, name)
     units = 0
     rucc_failed = 0
     try:
@@ -81,17 +94,15 @@ def main():
         gfiles = {(f, l) for f, l, k, o, m, t in gd}
         rkeys = set()
         for f, l, k, o, m, t in rd:
-            if o:
-                key = (f, l, o)
+            if named(o) or k == "warning":
+                key = (f, l, o or "(none)")
                 if key in rkeys:
                     continue
                 rkeys.add(key)
                 if key not in gkeys:
-                    extra[o].append((unit, t, (f, l) in gfiles))
-            elif k != "warning":
-                hard[shape(m)].append((unit, t))
+                    extra[o or "(none)"].append((unit, t, (f, l) in gfiles))
             else:
-                extra["(no option)"].append((unit, t, (f, l) in gfiles))
+                hard[f"{o or ''} {shape(m)}"].append((unit, t))
         for f, l, o in gkeys - rkeys:
             missing[o] += 1
         for k, o, m, t in rdrv:

@@ -106,7 +106,7 @@ jobs:
       - name: compare
         if: always()
         run: |
-          python3 scratch/warn/compare.py "$NB_ROOT/warn" "$NB_ROOT/warn/summary.md" "$NB_ROOT/warn/details.txt"
+          python3 scratch/warn/compare.py "$NB_ROOT/warn" "$RUNNER_TEMP/rucc-src/crates/rucc-diag/src/named.rs" "$NB_ROOT/warn/summary.md" "$NB_ROOT/warn/details.txt"
           cat "$NB_ROOT/warn/summary.md" >> "$GITHUB_STEP_SUMMARY"
           scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv" >> "$GITHUB_STEP_SUMMARY" || true
           tar -C "$NB_ROOT" -cJf "$NB_ROOT/warn.tar.xz" warn

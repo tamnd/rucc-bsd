@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Scratch: the C compiler slot runs the reference GCC as it is, so the build is the G build. After a
 # compile of a .c file that the reference passed, it also runs rucc on the same command line with
-# the output and dependency files sent elsewhere, and keeps both standard errors.
+# the output and dependency files sent elsewhere and without -Werror, so that a warning prints as
+# one, and keeps both standard errors.
 
 ref="$0.ref"
 rucc=@RUCC@
@@ -37,7 +38,7 @@ for a in "$@"; do
 	-o) rargs+=(-o); drop=1 drop_o=1 has_o=1 ;;
 	-o?*) rargs+=("-o$out"); has_o=1 ;;
 	-MF | -MT | -MQ) drop=1 ;;
-	-MD | -MMD | -MP | -Wp,-M*) ;;
+	-MD | -MMD | -MP | -Wp,-M* | -Werror) ;;
 	--sysroot | --sysroot=*) sysroot= ; rargs+=("$a") ;;
 	*) rargs+=("$a") ;;
 	esac
