@@ -170,7 +170,8 @@ usage:
       case's result in each run, the cases that passed in every run, the counts per run, the
       kernel messages and the image's SHA-256. The boots go to work/baseline/... and run every
       suite by default. With --from, the runs are the output directories of earlier rb boot
-      commands, and nothing boots. Exits 1 when a run did not pass.
+      commands, and nothing boots. A run in shards, one boot per shard, joins the directories
+      of its shards with '+', as in --from smoke+net+lib. Exits 1 when a run did not pass.
   rb boot --image IMG --out DIR [--suite boot,smoke,tests] [--row ROW] [--firmware ovmf|seabios]
           [--tests-only DIR,...] [--tests-except DIR,...] [--boot-timeout SECS] [--timeout SECS]
           [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
