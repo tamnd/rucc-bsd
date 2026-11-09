@@ -203,18 +203,34 @@ pub fn check_config(
         ));
     }
     if !config.bringup.is_empty() {
-        checks.push(Check::new(
-            format!("{label}: no bring-up class is on"),
-            vec![format!(
-                "bringup is {:?}, which makes the run ungraded",
-                config.bringup
-            )],
-        ));
+        checks.push(bringup_check(label, config, ungraded));
     }
     if rucc_needed {
         checks.push(rucc_check(label, &config.rucc, pin, ungraded));
     }
     checks
+}
+
+/// A bring-up class is on: the run is ungraded, so `--ungraded` must say the caller knows.
+fn bringup_check(label: &str, config: &ShimConfig, ungraded: bool) -> Check {
+    let classes = config.bringup.join(", ");
+    let mut wrong = Vec::new();
+    if let Err(e) = rb_shim::config::CLASSES.check(&config.bringup) {
+        wrong.push(e);
+    }
+    if config.delegates("cxx-c") && config.bringup_units.is_empty() {
+        wrong.push("cxx-c is on and bringup-units is empty".to_string());
+    }
+    if !ungraded {
+        wrong.push(format!(
+            "bringup is {classes}, which makes the run ungraded; pass --ungraded to build with it anyway"
+        ));
+        return Check::new(format!("{label}: no bring-up class is on"), wrong);
+    }
+    Check::new(
+        format!("{label}: bring-up {classes} is on, so the run is ungraded; --ungraded allows it"),
+        wrong,
+    )
 }
 
 /// Whether the shims' rucc is the pinned release, or `--ungraded` allows another.
@@ -510,14 +526,19 @@ pub fn diff_netbsd(
             .filter(|f| *f != format!("bin/{FILE_NAME}"))
             .map(|f| format!("{f} differs"))
             .collect();
+        // G never delegates, so only R's file carries bring-up.
         let same = |c: &ShimConfig| ShimConfig {
             side: None,
             log: PathBuf::new(),
+            bringup: Vec::new(),
+            bringup_units: Vec::new(),
             ..c.clone()
         };
         if same(g) != same(r) {
-            wrong
-                .push("the two rb-shim.toml files differ in more than the side and the log".into());
+            wrong.push(
+                "the two rb-shim.toml files differ in more than the side, the log and bring-up"
+                    .into(),
+            );
         }
         checks.push(Check::new(
             "G's and R's TOOLDIRs differ in the side of rb-shim.toml only",
@@ -689,12 +710,18 @@ pub mod cli {
             args.get(name)
                 .map(|p| std::path::absolute(p).unwrap_or_else(|_| PathBuf::from(p)))
         };
+        let (bringup, bringup_units) =
+            shims::bringup(args.get("bringup"), args.get("bringup-units"), &|k| {
+                std::env::var(k).ok()
+            })?;
         let ask = Ask {
             rucc: rucc.as_ref().map(|r| r.path.clone()),
             log: full("log").unwrap_or_default(),
             tools: full("tools"),
             destdir: full("destdir"),
             side: cc.map(Cc::side),
+            bringup,
+            bringup_units,
         };
         let shims = shims::plan(
             &files.pin,
@@ -831,5 +858,37 @@ mod tests {
         let b = hashes(&dir.join("b"), &skip).unwrap();
         assert_eq!(differing(&a, &b), ["bin/gcc"]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn bring_up_needs_ungraded_and_says_the_run_is_ungraded() {
+        let expected = Expected {
+            rucc_args: Vec::new(),
+            target: "x86_64--netbsd".into(),
+            reference: None,
+            cross_prefix: None,
+        };
+        let config = ShimConfig {
+            bringup: vec!["as".into()],
+            ..ShimConfig::default()
+        };
+        let graded = check_config("R", &config, &expected, None, false, false);
+        assert!(
+            graded
+                .iter()
+                .any(|c| !c.ok && c.what.contains("no bring-up"))
+        );
+        let ungraded = check_config("R", &config, &expected, None, false, true);
+        assert!(ungraded.iter().all(|c| c.ok), "{ungraded:?}");
+        assert!(
+            ungraded
+                .iter()
+                .any(|c| c.what.contains("the run is ungraded"))
+        );
+        let empty = ShimConfig {
+            bringup: vec!["cxx-c".into()],
+            ..ShimConfig::default()
+        };
+        let checks = check_config("R", &empty, &expected, None, false, true);
+        assert!(checks.iter().any(|c| !c.ok), "{checks:?}");
     }
 }
