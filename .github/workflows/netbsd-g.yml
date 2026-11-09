@@ -1,20 +1,24 @@
 # G for NetBSD trunk on amd64: the pinned tree built by its own in-tree GCC with build.sh, made
-# into the project's live image, booted under QEMU with KVM, and tested with the system's own ATF
-# suite. Nothing here runs rucc. The scripts are in scripts/netbsd and the pin in conf/netbsd.
+# into the project's live image by rb image, booted under QEMU with KVM by rb boot, and tested with
+# the system's own ATF suite. Nothing here runs rucc. The build scripts are in scripts/netbsd and
+# the pin in conf/netbsd. rb is built from this commit, and rb-rc in the image runs the suites.
 #
 # The jobs and what they hand on:
+#   rb       cargo builds rb. The binary is an artifact for the image, boot, atf and report jobs.
 #   tools    build.sh tools. TOOLDIR and the tools' object directory go to the cache, keyed by the
 #            pin file, so the other jobs and later runs restore them instead of building them.
 #   world    distribution, the GENERIC kernel and the sets. The sets, the kernel and the two parts
 #            of DESTDIR that the image needs (METALOG and etc/mtree) go on as an artifact.
-#   image    build.sh live-image from those sets, then a copy with the serial console set in the
-#            boot block. Both images are artifacts.
-#   boot     one boot of the serial image with the smoke suite.
-#   atf      the ATF suite in three shards by top-level directory, each in its own boot, so that
-#            each fits in a job. The split follows the time each directory took in the published
-#            run of 4 October 2026: net about 1.6 hours, lib about 0.9, the rest about 1.
-#   report   the phase table and the ATF counts against the published run, and the results
-#            files in the format of results/README.md as an artifact.
+#   image    rb image: build.sh's live-image target from those sets, with rb-rc, the smoke suite
+#            and the serial console added. The image is an artifact.
+#   boot     two boots with rb boot: BIOS with the boot suite, and UEFI with the boot and smoke
+#            suites, as the amd64 row of rows.toml says.
+#   atf      the ATF suite in three shards by top-level directory, each in its own UEFI boot, so
+#            that each fits in a job. The split follows the time each directory took in the
+#            published run of 4 October 2026: net about 1.6 hours, lib about 0.9, the rest about 1.
+#   report   the phase table and the ATF counts against the published run, the results files in
+#            the format of results/README.md, and a one-run baseline from rb baseline --from, as
+#            an artifact.
 #
 # Every job works under /mnt, the runner's larger disk, at the same absolute paths, because a
 # TOOLDIR records them.
@@ -51,6 +55,21 @@ env:
   NB_ROOT: /mnt/nb
 
 jobs:
+  rb:
+    name: cargo build rb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rb-linux-x86_64
+          path: target/release/rb
+          retention-days: 7
+
   tools:
     name: build.sh tools
     runs-on: ubuntu-24.04
@@ -175,8 +194,8 @@ jobs:
           retention-days: 14
 
   image:
-    name: build.sh live-image
-    needs: world
+    name: rb image
+    needs: [rb, world]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
@@ -200,6 +219,10 @@ jobs:
         with:
           name: netbsd-amd64-sets
           path: /mnt/nb/release
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
       - name: put the sets and DESTDIR's metadata in place
         run: |
           mkdir -p "$NB_ROOT/release/amd64" "$NB_ROOT/destdir"
@@ -207,27 +230,18 @@ jobs:
           tar -C "$NB_ROOT/destdir" -xf "$NB_ROOT/release/destdir-meta.tar"
           rm "$NB_ROOT/release/destdir-meta.tar"
           find "$NB_ROOT/release" -type f | sort
-          # build.sh live-image runs make in etc and in distrib/amd64/liveimage. Their object
-          # directories must exist, or make writes into the tree.
-          for d in etc distrib/amd64/liveimage; do
-            "$NB_ROOT/tools/bin/nbmake-amd64" -C "$NB_ROOT/src/$d" obj
-          done
-      - name: build.sh live-image
-        run: scripts/netbsd/phase.sh live-image -u live-image
-      - name: the serial console copy
+          # The live-image target runs make in etc and in distrib/amd64/liveimage. Their object
+          # directories must exist, or make writes into the tree. rb image makes the second.
+          "$NB_ROOT/tools/bin/nbmake-amd64" -C "$NB_ROOT/src/etc" obj
+      - name: rb image
         run: |
-          live=$(find "$NB_ROOT/release" -name '*-live.img.gz' | head -1)
-          echo "LIVE=$live" >> "$GITHUB_ENV"
-          scripts/netbsd/prepare-image.sh "$live" "$NB_ROOT/netbsd-amd64-serial.img"
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          scripts/netbsd/phase.sh image -- "$RUNNER_TEMP/rb/rb" image --build "$NB_ROOT/tools" \
+            --out "$NB_ROOT/netbsd-amd64-serial.img" --work "$NB_ROOT/image-work"
+          cp "$NB_ROOT"/image-work/logs/* "$NB_ROOT/logs/" 2>/dev/null || true
           gzip -1 "$NB_ROOT/netbsd-amd64-serial.img"
-          ls -l "$live" "$NB_ROOT/netbsd-amd64-serial.img.gz"
-          sha256sum "$live" "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: netbsd-amd64-live-image
-          path: ${{ env.LIVE }}
-          compression-level: 0
-          retention-days: 7
+          ls -l "$NB_ROOT/netbsd-amd64-serial.img.gz"
+          sha256sum "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: netbsd-amd64-serial-image
@@ -238,11 +252,12 @@ jobs:
         if: always()
         run: |
           {
-            echo "### build.sh live-image"
+            echo "### rb image"
             scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"
             echo
-            if [ -n "${LIVE:-}" ]; then
-              echo "Image \`$(basename "$LIVE")\`: $(du -m "$LIVE" | cut -f1) MiB compressed, $(gzip -dc "$LIVE" | wc -c | awk '{ printf "%d", $1 / 1048576 }') MiB raw."
+            img="$NB_ROOT/netbsd-amd64-serial.img.gz"
+            if [ -f "$img" ]; then
+              echo "Image \`$(basename "$img")\`: $(du -m "$img" | cut -f1) MiB compressed, $(gzip -dc "$img" | wc -c | awk '{ printf "%d", $1 / 1048576 }') MiB raw."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.1
@@ -254,7 +269,7 @@ jobs:
 
   boot:
     name: boot and smoke
-    needs: image
+    needs: [rb, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -265,29 +280,42 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
-      - name: QEMU and pexpect
+      - name: QEMU and OVMF
         run: |
           sudo apt-get update -q
-          sudo apt-get install -qy --no-install-recommends qemu-system-x86 python3-pexpect
+          sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
           name: netbsd-amd64-serial-image
           path: ${{ runner.temp }}
-      - name: boot
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: rb boot
         run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
           gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
           truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
-          python3 scripts/netbsd/boot.py --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
-            --out "$RUNNER_TEMP/boot" --suite smoke
+          status=0
+          # BIOS boots once with the boot suite only, because its point is the boot code. UEFI is
+          # the row's test firmware, so it runs the smoke suite too.
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/boot/seabios" --firmware seabios --suite boot \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/boot/ovmf" --suite boot,smoke \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          exit "$status"
       - name: summary
         if: always()
         run: |
           {
-            echo "### boot and smoke"
+            echo "### boot and smoke: the console's RB- lines"
             echo
             echo '```'
-            cat "$RUNNER_TEMP/boot/boot.json" 2>/dev/null
-            grep -a '^RB-' "$RUNNER_TEMP/boot/console.log" 2>/dev/null
+            grep -a '^RB-' "$RUNNER_TEMP"/boot/*/console.log 2>/dev/null
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.1
@@ -299,14 +327,20 @@ jobs:
 
   atf:
     name: ATF ${{ matrix.shard }}
-    needs: image
+    needs: [rb, image]
     if: github.event_name != 'workflow_dispatch' || inputs.atf
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
-        shard: ["only:net", "only:lib", "except:net,lib"]
+        include:
+          - shard: "only:net"
+            tests: --tests-only net
+          - shard: "only:lib"
+            tests: --tests-only lib
+          - shard: "except:net,lib"
+            tests: --tests-except net,lib
     steps:
       - uses: actions/checkout@v7.0.1
       - name: let the runner user open /dev/kvm
@@ -315,33 +349,40 @@ jobs:
             | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
-      - name: QEMU and pexpect
+      - name: QEMU and OVMF
         run: |
           sudo apt-get update -q
-          sudo apt-get install -qy --no-install-recommends qemu-system-x86 python3-pexpect
+          sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
           name: netbsd-amd64-serial-image
           path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
       - name: shard name
         run: echo "SHARD_NAME=$(echo "$SHARD" | tr ':,' '--')" >> "$GITHUB_ENV"
         env:
           SHARD: ${{ matrix.shard }}
-      - name: boot and run atf-run
+      - name: rb boot with the tests suite
         run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
           gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
           truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
-          python3 scripts/netbsd/boot.py --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
-            --out "$RUNNER_TEMP/atf-$SHARD_NAME" --suite smoke --suite "atf:$SHARD" \
-            --suite-timeout 18000
+          # shellcheck disable=SC2086
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/atf-$SHARD_NAME" --suite boot,smoke,tests $TESTS --timeout 18000 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
         env:
-          SHARD: ${{ matrix.shard }}
+          TESTS: ${{ matrix.tests }}
       - name: counts
         if: always()
         run: |
           out="$RUNNER_TEMP/atf-$SHARD_NAME"
           shopt -s nullglob
-          tps=("$out"/results/atf/*.tps)
+          tps=("$out"/results/tests/atf/*.tps)
           if [ ${#tps[@]} -gt 0 ]; then
             python3 scripts/netbsd/atf-counts.py count --out "$out/shard.counts" \
               --cases "$out/shard.cases.tsv" --set "shard=$SHARD" "${tps[@]}"
@@ -350,7 +391,7 @@ jobs:
             echo "### ATF $SHARD"
             echo
             echo '```'
-            cat "$out/boot.json" "$out/results/atf/status" "$out/shard.counts" 2>/dev/null
+            cat "$out/results/tests/atf/status" "$out/shard.counts" 2>/dev/null
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           rm -f "$RUNNER_TEMP"/netbsd-amd64-serial.img
@@ -365,7 +406,7 @@ jobs:
 
   report:
     name: report
-    needs: [tools, world, image, boot, atf]
+    needs: [rb, tools, world, image, boot, atf]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -398,13 +439,13 @@ jobs:
           . conf/netbsd/trunk.pin
           mkdir -p out
           shopt -s nullglob
-          tps=(atf/*/results/atf/*.tps)
+          tps=(atf/*/results/tests/atf/*.tps)
           if [ ${#tps[@]} -eq 0 ]; then
             echo "No ATF results." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          dirs=$(cat atf/*/results/atf/dirs | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ')
-          all=$(cat atf/*/results/atf/all-dirs | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')
+          dirs=$(cat atf/*/results/tests/dirs | tr ' ' '\n' | sed '/^$/d' | sort | tr '\n' ' ')
+          all=$(cat atf/*/results/tests/all-dirs | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')
           name="$NB_PIN_NAME-$NB_PIN_SHORT-amd64-g-$GITHUB_RUN_ID"
           python3 scripts/netbsd/atf-counts.py count --out "out/$name.counts" --cases "out/$name.cases.tsv" \
             --set label=G --set system=netbsd --set "pin=$NB_PIN_NAME" --set "commit=$NB_PIN_COMMIT" \
@@ -430,6 +471,31 @@ jobs:
             echo '```'
             sort "out/$name.failed" | comm -23 - <(sort results/netbsd/published/amd64-baremetal-2026.10.04.03.28.10.failed)
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+        continue-on-error: true
+      - name: a one-run baseline
+        run: |
+          # The run is in shards: the two boots of the boot job and the three ATF boots. rb
+          # baseline joins them with + into one run. It writes to out/baselines, not baselines/.
+          shopt -s nullglob
+          shards=(boot/*/ atf/*/)
+          chmod +x "$RUNNER_TEMP/rb/rb" 2>/dev/null || true
+          if [ ! -x "$RUNNER_TEMP/rb/rb" ] || [ ${#shards[@]} -eq 0 ]; then
+            echo "No rb or no boots, so no baseline." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          from=$(printf '%s+' "${shards[@]%/}")
+          status=0
+          "$RUNNER_TEMP/rb/rb" baseline netbsd-trunk --row amd64 --conf graded \
+            --from "${from%+}" --dir out/baselines > baseline.md || status=$?
+          {
+            cat baseline.md
+            echo
+            echo "rb baseline exited with $status."
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.1
         if: always()

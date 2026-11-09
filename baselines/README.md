@@ -18,6 +18,14 @@ A workflow that boots in separate jobs runs `rb boot --suite boot,smoke,tests` i
 rb baseline netbsd-trunk --row amd64 --conf graded --from run-1,run-2,run-3 --image G.img
 ```
 
+A run can be in shards, one boot per shard, when the whole suite does not fit in one job. Join the directories of the shards of one run with `+`. This is one run in three shards:
+
+```
+rb baseline netbsd-trunk --row amd64 --conf graded --from net+lib+rest
+```
+
+A case that more than one shard ran, such as `boot`, keeps its worse result. The run passed only if every shard passed.
+
 `rb baseline` exits 1 when a run did not pass, for example after a panic or a timeout. It still writes the files, with `complete = false`.
 
 ## Layout

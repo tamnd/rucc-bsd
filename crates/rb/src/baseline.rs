@@ -12,7 +12,9 @@
 //! - `kernel-log.txt`: the kernel messages of the runs, as the allowed set of 12.1.
 //!
 //! The runs come from `rb boot`, or with `--from` from the output directories of earlier boots.
-//! The second way lets a workflow boot in separate jobs and write the baseline at the end.
+//! The second way lets a workflow boot in separate jobs and write the baseline at the end. A run
+//! can be in shards, one boot per shard, such as one boot per group of test directories. `--from`
+//! joins the directories of the shards of one run with `+`, and [`join`] makes them one run.
 
 use crate::boot::{self, Outcome};
 use crate::cases::{self, Case};
@@ -66,6 +68,53 @@ pub fn read_run(dir: &Path) -> Result<Run, String> {
         cases,
         kernel,
     })
+}
+
+/// Make one run of the shards of a run: each shard is one boot that ran a part of the run.
+///
+/// The cases are all the shards' cases. A case that more than one shard ran, such as the boot
+/// and the smoke suite, keeps its worse result, as [`table`] does with a name twice in one run.
+/// The outcome is the first shard's, with the result of the first shard that did not pass, or
+/// `pass` when every shard passed. The seconds and restarts are the sums, and the suites asked
+/// for are those of any shard. The directory is the shards' directories joined with `+`.
+#[must_use]
+pub fn join(shards: Vec<Run>) -> Option<Run> {
+    let mut shards = shards.into_iter();
+    let mut run = shards.next()?;
+    let mut failed = !run.outcome.passed();
+    let mut dir = run.dir.as_os_str().to_os_string();
+    for s in shards {
+        dir.push("+");
+        dir.push(s.dir.as_os_str());
+        run.outcome.seconds += s.outcome.seconds;
+        run.outcome.restarts += s.outcome.restarts;
+        for a in &s.outcome.asked {
+            if !run.outcome.asked.contains(a) {
+                run.outcome.asked.push(a.clone());
+            }
+        }
+        if !failed && !s.outcome.passed() {
+            failed = true;
+            run.outcome.result = s.outcome.result;
+            run.outcome.seen = s.outcome.seen;
+        }
+        run.cases.extend(s.cases);
+        run.kernel.extend(s.kernel);
+    }
+    if !failed {
+        run.outcome.result = "pass".into();
+    }
+    run.dir = PathBuf::from(dir);
+    Some(run)
+}
+
+/// Read one run from the output directories of its shards, as [`join`] makes them one.
+pub fn read_shards(dirs: &[PathBuf]) -> Result<Run, String> {
+    let shards = dirs
+        .iter()
+        .map(|d| read_run(d))
+        .collect::<Result<Vec<_>, _>>()?;
+    join(shards).ok_or_else(|| "a run with no directories".to_string())
 }
 
 /// What a baseline is of.
@@ -341,7 +390,7 @@ pub fn boot_runs(
 
 /// The command line of `rb baseline`.
 pub mod cli {
-    use super::{Meta, Run, boot_runs, read_run, report, write};
+    use super::{Meta, Run, boot_runs, read_shards, report, write};
     use crate::boot::{cli as boot_cli, kvm_usable};
     use crate::cli::Args;
     use rb_pins::pins::PinsFile;
@@ -359,8 +408,8 @@ pub mod cli {
         pub meta: Meta,
         /// The image to boot, or to hash with `--from`.
         pub image: Option<PathBuf>,
-        /// The directories of earlier boots.
-        pub from: Vec<PathBuf>,
+        /// The directories of earlier boots, one list per run. A run in shards has more than one.
+        pub from: Vec<Vec<PathBuf>>,
         /// How many runs.
         pub runs: usize,
         /// The `baselines` directory.
@@ -415,12 +464,17 @@ pub mod cli {
                 .map_err(|_| format!("--runs {v} is not a number"))?,
             None => 3,
         };
-        let from: Vec<PathBuf> = args
+        let from: Vec<Vec<PathBuf>> = args
             .get("from")
             .map(|v| {
                 v.split(',')
                     .filter(|s| !s.is_empty())
-                    .map(PathBuf::from)
+                    .map(|run| {
+                        run.split('+')
+                            .filter(|s| !s.is_empty())
+                            .map(PathBuf::from)
+                            .collect()
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -508,8 +562,10 @@ pub mod cli {
                     crate::boot::qemu_command(&req).join(" ")
                 );
             } else {
-                for d in &plan.from {
-                    let _ = writeln!(s, "- a run from {}", d.display());
+                for shards in &plan.from {
+                    let dirs: Vec<String> =
+                        shards.iter().map(|d| d.display().to_string()).collect();
+                    let _ = writeln!(s, "- a run from {}", dirs.join(" and "));
                 }
             }
             return Ok((s, true));
@@ -521,7 +577,7 @@ pub mod cli {
         } else {
             plan.from
                 .iter()
-                .map(|d| read_run(d))
+                .map(|shards| read_shards(shards))
                 .collect::<Result<_, _>>()?
         };
         let image = plan
@@ -582,6 +638,47 @@ mod tests {
             image: "g.img".into(),
             image_sha256: "00ff".into(),
         }
+    }
+
+    #[test]
+    fn shards_make_one_run() {
+        let mut net = run(
+            "pass",
+            vec![
+                case("boot", "boot", "passed", None),
+                case("tests", "net/a:x", "passed", Some(1.0)),
+            ],
+            &["cpu0"],
+        );
+        net.dir = PathBuf::from("net");
+        let mut lib = run(
+            "panic",
+            vec![
+                case("boot", "boot", "panic", None),
+                case("tests", "lib/b:y", "failed", Some(2.0)),
+            ],
+            &["cpu0", "panic: z"],
+        );
+        lib.dir = PathBuf::from("lib");
+        lib.outcome.asked = vec!["boot".into(), "smoke".into()];
+        lib.outcome.seen.panic = Some("z".into());
+        let one = join(vec![net.clone(), lib]).unwrap();
+        assert_eq!(one.dir, Path::new("net+lib"));
+        assert_eq!(one.outcome.result, "panic");
+        assert_eq!(one.outcome.seen.panic.as_deref(), Some("z"));
+        assert_eq!(one.outcome.asked, ["boot", "tests", "smoke"]);
+        assert!((one.outcome.seconds - 122.52).abs() < 1e-9);
+        assert_eq!(one.cases.len(), 4);
+        assert_eq!(one.kernel.len(), 2);
+        let t = table(std::slice::from_ref(&one));
+        assert_eq!(t[&("boot", "boot")][0].unwrap().result, "panic");
+        let mut smoke = net.clone();
+        smoke.outcome.result = "login".into();
+        smoke.outcome.asked = vec!["boot".into()];
+        let one = join(vec![smoke, net]).unwrap();
+        assert_eq!(one.outcome.result, "pass");
+        assert!(one.outcome.passed());
+        assert!(join(Vec::new()).is_none());
     }
 
     #[test]
@@ -723,7 +820,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!((p.runs, p.meta.system.as_str()), (2, "netbsd"));
-        assert_eq!(p.from, [PathBuf::from("a"), PathBuf::from("b")]);
+        assert_eq!(p.from, [vec![PathBuf::from("a")], vec![PathBuf::from("b")]]);
+        let p = cli::plan(
+            &parse(&[
+                "baseline",
+                "netbsd-trunk",
+                "--conf",
+                "graded",
+                "--from",
+                "smoke+net+lib",
+            ]),
+            root,
+            Some(&pins),
+        )
+        .unwrap();
+        assert_eq!(p.runs, 1);
+        assert_eq!(
+            p.from,
+            [["smoke", "net", "lib"].map(PathBuf::from).to_vec()]
+        );
         for (words, want) in [
             (
                 &["baseline", "--conf", "graded", "--image", "g"][..],
