@@ -13,6 +13,7 @@ harness-agent.workspace = true
 harness-shim.workspace = true
 rb-image = { path = "../rb-image" }
 rb-pins = { path = "../rb-pins" }
+rb-shim = { path = "../rb-shim" }
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

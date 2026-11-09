@@ -17,6 +17,44 @@ pub const PERSONAS: &str = "personas.toml";
 pub struct Toolchains {
     /// The toolchains by name.
     pub toolchain: BTreeMap<String, Toolchain>,
+    /// The rucc release that R builds with when no other rucc is named.
+    pub rucc: Option<RuccPin>,
+}
+
+/// The pinned rucc release: where it comes from, and the digests of its tarballs and binaries.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuccPin {
+    /// The GitHub repository of the release.
+    pub repo: String,
+    /// The release tag, such as `v0.30.15`.
+    pub version: String,
+    /// The command `rb` runs when neither `--rucc` nor `RB_RUCC` names one, looked up on `PATH`
+    /// when it has no slash.
+    pub command: String,
+    /// The SHA-256 of the release tarball, by host triple.
+    #[serde(default)]
+    pub tarball_sha256: BTreeMap<String, String>,
+    /// The SHA-256 of the `rucc` binary in the tarball, by host triple.
+    #[serde(default)]
+    pub binary_sha256: BTreeMap<String, String>,
+}
+
+impl RuccPin {
+    /// The release asset for a host triple.
+    #[must_use]
+    pub fn asset(&self, host: &str) -> String {
+        format!("rucc-{}-{host}.tar.gz", self.version)
+    }
+
+    /// The host triple whose pinned binary has this digest, if any.
+    #[must_use]
+    pub fn host_of(&self, sha256: &str) -> Option<&str> {
+        self.binary_sha256
+            .iter()
+            .find(|(_, d)| d.as_str() == sha256)
+            .map(|(h, _)| h.as_str())
+    }
 }
 
 /// One reference toolchain: a FreeBSD package, or the tools `build.sh` builds from a NetBSD tree.
@@ -143,6 +181,27 @@ impl Personas {
     }
 }
 
+impl Persona {
+    /// rucc's `--target` for a pin and an architecture, such as `x86_64-unknown-netbsd11.99`.
+    #[must_use]
+    pub fn target(&self, pin: &Pin, arch: &str) -> String {
+        format!(
+            "{arch}-unknown-{}",
+            self.target_os
+                .replace("{version}", &two_places(&pin.version))
+        )
+    }
+
+    /// The arguments rucc gets in front of the build's: the target and the persona (05.4).
+    #[must_use]
+    pub fn rucc_args(&self, pin: &Pin, arch: &str) -> Vec<String> {
+        vec![
+            format!("--target={}", self.target(pin, arch)),
+            format!("-fgnuc-version={}", self.gnuc),
+        ]
+    }
+}
+
 /// The persona of one pin, checked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
@@ -233,12 +292,7 @@ pub fn check(pins: &[Pin], personas: &Personas, toolchains: &Toolchains, arch: &
                 reference: persona.reference.clone(),
                 fallback: persona.fallback.clone(),
                 gnuc: persona.gnuc.clone(),
-                target: format!(
-                    "{arch}-unknown-{}",
-                    persona
-                        .target_os
-                        .replace("{version}", &two_places(&pin.version))
-                ),
+                target: persona.target(pin, arch),
                 binutils,
                 review,
             }
@@ -352,6 +406,14 @@ binutils = "2.46"
         assert_eq!(lines[0].fallback.as_deref(), Some("gcc14"));
         assert_eq!(lines[1].target, "x86_64-unknown-netbsd11.99");
         assert!(lines.iter().all(|l| l.review.is_empty()), "{lines:?}");
+        let netbsd = personas.for_pin(&pins[1]).unwrap();
+        assert_eq!(
+            netbsd.rucc_args(&pins[1], "x86_64"),
+            [
+                "--target=x86_64-unknown-netbsd11.99",
+                "-fgnuc-version=14.4.0"
+            ]
+        );
     }
 
     #[test]
@@ -370,6 +432,19 @@ binutils = "2.46"
         let lines = check(&pins, &personas, &toolchains, "x86_64");
         assert!(lines[0].review[0].contains("BASE-VER is 15.1.0"));
         assert!(lines[1].review[0].contains("no persona"));
+    }
+
+    #[test]
+    fn the_rucc_pin_names_its_assets_and_knows_its_binaries() {
+        let text = "[toolchain]\n\n[rucc]\nrepo = \"tamnd/rucc\"\nversion = \"v0.30.15\"\ncommand = \"rucc\"\nbinary_sha256 = { x86_64-unknown-linux-gnu = \"ab\" }\n";
+        let file = Toolchains::parse(text).unwrap();
+        let rucc = file.rucc.unwrap();
+        assert_eq!(
+            rucc.asset("x86_64-unknown-linux-gnu"),
+            "rucc-v0.30.15-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(rucc.host_of("ab"), Some("x86_64-unknown-linux-gnu"));
+        assert_eq!(rucc.host_of("cd"), None);
     }
 
     #[test]

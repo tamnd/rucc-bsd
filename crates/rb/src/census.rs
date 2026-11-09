@@ -21,6 +21,12 @@ use std::path::{Component, Path, PathBuf};
 /// NetBSD's `.o`, `.pico`, `.po` and `.So`.
 pub const OBJECT_SUFFIXES: &[&str] = &[".o", ".pico", ".po", ".So", ".nossppico", ".pieo"];
 
+/// The origin of an object rucc compiled from C.
+pub const RUCC_C: &str = "rucc-c";
+
+/// The origin of an object rucc assembled.
+pub const RUCC_ASM: &str = "rucc-asm";
+
 /// The origin of an object that no record with an origin wrote.
 pub const OTHER: &str = "other";
 
@@ -260,6 +266,15 @@ impl Census {
         out
     }
 
+    /// Objects rucc built: the origins `rucc-c` and `rucc-asm`.
+    #[must_use]
+    pub fn rucc_objects(&self) -> usize {
+        self.objects
+            .values()
+            .filter(|o| o.origin == RUCC_C || o.origin == RUCC_ASM)
+            .count()
+    }
+
     /// Objects whose origin is `other` or `ref-c`, which 10.4 lists by file.
     #[must_use]
     pub fn foreign(&self) -> Vec<(&str, &Object)> {
@@ -319,6 +334,14 @@ impl Census {
             let _ = writeln!(s, "| {origin} | {n} | {} |", percent(n, total));
         }
         let _ = writeln!(s, "| all | {total} | |");
+        if !self.is_reference() {
+            let rucc = self.rucc_objects();
+            let _ = writeln!(
+                s,
+                "\nObjects rucc built (`rucc-c` and `rucc-asm`): {rucc} of {total}, {}.",
+                percent(rucc, total)
+            );
+        }
         let rewritten = self.objects.values().filter(|o| o.rewritten).count();
         let missing = self
             .objects
@@ -518,12 +541,17 @@ not json
 
     #[test]
     fn an_r_build_reports_the_rules() {
-        let r = G.replace("\"side\":\"G\"", "\"side\":\"R\"").replace(
-            "\"origin\":\"ref-cxx\"",
-            "\"origin\":\"cxx-on-cc\",\"delegated\":\"cxx-c\"",
-        );
+        let r = G
+            .replace("\"side\":\"G\"", "\"side\":\"R\"")
+            .replace(
+                "\"origin\":\"ref-cxx\"",
+                "\"origin\":\"cxx-on-cc\",\"delegated\":\"cxx-c\"",
+            )
+            .replacen("\"origin\":\"ref\"", "\"origin\":\"rucc-c\"", 2);
         let c = from_records(&parse_log(&r).0);
+        assert_eq!(c.rucc_objects(), 2);
         let report = c.report("r", 10);
+        assert!(report.contains("Objects rucc built"), "{report}");
         assert!(report.contains("`cxx-on-cc` objects: 1."), "{report}");
         assert!(report.contains("Delegated calls: 1."), "{report}");
     }

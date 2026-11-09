@@ -85,6 +85,11 @@ fn run(args: &Args) -> Result<ExitCode, String> {
                 ExitCode::from(1)
             })
         }
+        "shim" => {
+            let repo = rb::repo::Repo::find()?;
+            print!("{}", rb::shims::cli::run(args, &repo.root)?);
+            Ok(ExitCode::SUCCESS)
+        }
         "version" => {
             println!("rb {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)

@@ -128,6 +128,13 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["as-of"],
             switches: &["write"],
         },
+        "shim" => Accepts {
+            positional: true,
+            values: &[
+                "row", "dir", "cc", "rucc", "log", "tools", "destdir", "shim",
+            ],
+            switches: &[],
+        },
         _ => return None,
     })
 }
@@ -193,6 +200,17 @@ usage:
       Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
       pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME,
       such as 2026-11-08T06:00:00Z. Exits 1 when pins.toml is out of date and --write is not given.
+  rb shim PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
+          [--destdir DIR] [--shim PATH]
+      Put rb-cc under the names a build calls its compilers by in DIR, with the rb-shim.toml that
+      says what each name runs. rucc gets the --target and -fgnuc-version= of the pin's persona.
+      rucc is PATH, else RB_RUCC, else the [rucc] command of toolchains.toml on PATH; rb prints
+      its SHA-256, its --version and whether it is the pinned release. For FreeBSD the names are
+      <triple>-rb-cc-rucc, -rb-cc-ref, -rb-c++, -rb-cpp and -rb-as, and the reference is the
+      package of toolchains.toml. For NetBSD the names are the C compiler and the preprocessor of
+      TOOLDIR, the reference is in the TOOLDIR of build.sh tools given by --tools, --cc gives the
+      side, and rucc gets --destdir as its sysroot. Each call appends a record to FILE. The shim
+      binary is PATH, else RB_SHIM, else rb-cc next to rb.
   rb version
 
 The repository is found by walking up to sets.toml, or from RB_ROOT. Downloads and fetched

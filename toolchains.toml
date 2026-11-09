@@ -84,3 +84,23 @@ gcc = "10.5.0"
 binutils = "2.34"
 tooldir_cc = "bin/x86_64--netbsd-gcc"
 tooldir_cpp = "bin/x86_64--netbsd-cpp"
+
+# The rucc release that R builds with when no other rucc is named (plan 14.3). rb finds rucc in
+# this order: --rucc PATH, then RB_RUCC, then command, looked up on PATH when it has no slash. It
+# records the binary's SHA-256 and the first line of its --version with every R build. A binary
+# whose SHA-256 is not one of binary_sha256 is not the pinned release, and rb says so. The digests
+# were read from the release on 9 November 2026.
+[rucc]
+repo = "tamnd/rucc"
+version = "v0.30.15"
+command = "rucc"
+
+[rucc.tarball_sha256]
+x86_64-unknown-linux-gnu = "32e1cab992940f0563cb9e49bfc3c3ed23192e519ee277fdcf9edfefb8503ddb"
+aarch64-unknown-linux-gnu = "24a8dcfc8bc5694dcdb66578cba9077f0a1ba7de1de571d8a62de41402f42c7a"
+aarch64-apple-darwin = "d49f226cdbdb6283e23dd9251f9050046d79487c70a179a05e5b50ef65fec972"
+x86_64-apple-darwin = "0dc72b4a50786811e86f30286bdbc6a194145dfaa81ebe259d7fc86402d43119"
+
+[rucc.binary_sha256]
+x86_64-unknown-linux-gnu = "990c14790b273a2ea8e9bd55d2e8ec5b5124c2e3b8ad878d80a29925a622d39c"
+aarch64-apple-darwin = "e379521b30078b10f5f00dd83d16f1ea59760b483a83de7814ccf22d2aa428d3"
