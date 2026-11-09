@@ -2,7 +2,7 @@
 # Scratch: the C compiler slot runs the reference GCC as it is, so the build is the G build. After a
 # compile of a .c file that the reference passed, it also runs rucc on the same command line with
 # the output and dependency files sent elsewhere and without -Werror, so that a warning prints as
-# one, and keeps both standard errors.
+# one, and without --param ssp-buffer-size, which rucc refuses, and keeps both standard errors.
 
 ref="$0.ref"
 rucc=@RUCC@
@@ -26,7 +26,7 @@ if [ -z "$compile" ] || [ -n "$skip" ] || [ -z "$src" ] || [ $status -ne 0 ]; th
 fi
 
 out=$(mktemp)
-rargs=() sysroot=--sysroot=@SYSROOT@ drop= drop_o= has_o=
+rargs=() sysroot=--sysroot=@SYSROOT@ drop= drop_o= has_o= param=
 for a in "$@"; do
 	if [ -n "$drop" ]; then
 		drop=
@@ -34,7 +34,13 @@ for a in "$@"; do
 		drop_o=
 		continue
 	fi
+	if [ -n "$param" ]; then
+		param=
+		case $a in ssp-buffer-size=*) unset 'rargs[${#rargs[@]}-1]'; continue ;; esac
+	fi
 	case $a in
+	--param) param=1; rargs+=("$a") ;;
+	--param=ssp-buffer-size=*) ;;
 	-o) rargs+=(-o); drop=1 drop_o=1 has_o=1 ;;
 	-o?*) rargs+=("-o$out"); has_o=1 ;;
 	-MF | -MT | -MQ) drop=1 ;;
