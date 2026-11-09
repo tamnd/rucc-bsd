@@ -8,7 +8,8 @@
 #   toolchain  rb toolchain makes G's and R's TOOLDIR from the TOOLDIR of build.sh tools, and
 #              rb toolchain-diff checks that they differ in the side of rb-shim.toml only (05.4).
 # rucc is built from a branch or commit of tamnd/rucc, main by default. It is not the pinned
-# release, so the toolchain check runs with --ungraded.
+# release, so the toolchain check runs with --ungraded. G's rb-shim.toml names the same rucc as
+# R's, because toolchain-diff wants the two files to differ in the side and the log only.
 
 name: reader-cost
 
@@ -23,6 +24,11 @@ on:
         description: The seconds the replay may take
         required: false
         default: "9000"
+      reader:
+        description: Run the reader measurement as well as the toolchain check
+        type: boolean
+        required: false
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.run_id }}
@@ -89,8 +95,8 @@ jobs:
           out="$RUNNER_TEMP/toolchain.txt"
           status=0
           "$bins/rb" toolchain netbsd-trunk --dir "$NB_ROOT/tools-g" --tools "$NB_ROOT/tools" \
-            --destdir "$NB_ROOT/destdir" --cc ref --shim "$bins/rb-cc" --log "$NB_ROOT/g.jsonl" \
-            > "$out" 2>&1 || status=1
+            --destdir "$NB_ROOT/destdir" --cc ref --rucc "$bins/rucc" --ungraded \
+            --shim "$bins/rb-cc" --log "$NB_ROOT/g.jsonl" > "$out" 2>&1 || status=1
           echo >> "$out"
           "$bins/rb" toolchain netbsd-trunk --dir "$NB_ROOT/tools-r" --tools "$NB_ROOT/tools" \
             --destdir "$NB_ROOT/destdir" --cc rucc --rucc "$bins/rucc" --ungraded \
@@ -111,6 +117,7 @@ jobs:
   reader:
     name: the reader on and off over NetBSD userland
     needs: bins
+    if: inputs.reader
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
