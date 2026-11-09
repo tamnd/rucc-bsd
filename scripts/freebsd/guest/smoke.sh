@@ -29,11 +29,14 @@ shells()
 	[ "$(/bin/tcsh -c 'echo ok')" = ok ]
 }
 
+# QEMU's user network runs with restrict=on, so its DHCP server gives no router and there is no
+# default route. The virtual host 10.0.2.2 answers ping in that mode, so the check pings it.
 network()
 {
 	ifconfig vtnet0 &&
 	ifconfig vtnet0 inet | grep -q 'inet 10\.0\.2\.' &&
-	netstat -rn -f inet | grep -q '^default'
+	netstat -rn -f inet &&
+	ping -c 3 -t 10 10.0.2.2
 }
 
 fsck_mount()

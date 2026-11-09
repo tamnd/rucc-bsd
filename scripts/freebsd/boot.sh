@@ -88,7 +88,7 @@ while kill -0 "$qemu" 2>/dev/null; do
 		echo "RB-READY after ${now}s: $(grep -m1 '^RB-READY' "$console")"
 	fi
 	if [ -z "$done_line" ] && grep -q '^RB-DONE' "$console" 2>/dev/null; then
-		done_line="$(grep -m1 '^RB-DONE' "$console")"
+		done_line="$(grep -a -m1 '^RB-DONE' "$console" | tr -d '"\\\r')"
 		echo "$done_line after ${now}s"
 	fi
 	if [ -z "$ready" ] && [ "$now" -gt "$RB_BOOT_LIMIT" ]; then

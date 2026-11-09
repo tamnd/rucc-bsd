@@ -5,7 +5,9 @@
 #
 # RB_KYUA_FILTERS, if set, names the test directories or programs to run, for a shard. RB_KYUA_LIMIT
 # is the whole-run limit in seconds. When it runs out, kyua is stopped, and the cases it did not
-# finish are missing from the results, which the host counts as timeouts.
+# finish are missing from the results, which the host counts as timeouts. timeout runs with --foreground.
+# Without it, FreeBSD's timeout(1) also waits for every descendant of kyua, and a process that a
+# test leaves behind keeps the run going until the limit (run 42508786724).
 #
 # Before the run, the tests in kyua-exclude next to this script are taken out of the Kyuafiles in
 # /usr/tests. This changes the installed test list, not the source tree. kyua's lines go to the
@@ -45,11 +47,13 @@ start=$(date +%s)
 # RB_KYUA_FILTERS is a list of words, so it is not quoted.
 # shellcheck disable=SC2086
 {
-	timeout -s TERM -k 60 "$RB_KYUA_LIMIT" kyua test -k /usr/tests/Kyuafile --results-file="$db" \
+	timeout --foreground -s TERM -k 60 "$RB_KYUA_LIMIT" kyua test -k /usr/tests/Kyuafile --results-file="$db" \
 		${RB_KYUA_FILTERS} 2>&1
 	echo $? > "$out/exit"
 } | tee "$out/test.log" > /dev/console
 echo $(($(date +%s) - start)) > "$out/seconds"
+# The processes that are still running after kyua, for example a daemon that a test left behind.
+ps -axww -o pid,ppid,etime,command > "$out/ps-after.txt"
 
 kyua report --results-file="$db" --results-filter passed,skipped,xfail,broken,failed \
 	--output "$out/report.txt"
