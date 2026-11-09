@@ -23,6 +23,19 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
+        "baseline" => {
+            let repo = rb::repo::Repo::find()?;
+            let rows = rb_pins::places::Rows::load(&repo.root)?;
+            let pins = rb_pins::pins::PinsFile::load(&repo.root)?;
+            let (report, complete) =
+                rb::baseline::cli::run(args, &repo.root, pins.as_ref(), &rows)?;
+            print!("{report}");
+            Ok(if complete {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
+        }
         "boot" => {
             let repo = rb::repo::Repo::find()?;
             let rows = rb_pins::places::Rows::load(&repo.root)?;
