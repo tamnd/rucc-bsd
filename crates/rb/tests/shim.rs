@@ -380,3 +380,114 @@ fn probes_compare_what_the_build_reads() {
     );
     std::fs::remove_dir_all(&top).ok();
 }
+
+#[test]
+fn netbsd_build_runs_build_sh_with_the_shims_tooldir() {
+    let top = rig("nb-build");
+    let (binary, _) = shim(&top);
+    let root = top.join("nb");
+    let tools = root.join("tools/bin");
+    std::fs::create_dir_all(&tools).unwrap();
+    for name in ["x86_64--netbsd-gcc", "x86_64--netbsd-cpp", "nbmake-amd64"] {
+        std::fs::write(tools.join(name), name).unwrap();
+    }
+    // A build.sh that writes its arguments where the test can read them.
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("build.sh"),
+        "#!/bin/sh\necho \"build.sh $*\" >> ../calls\necho building \"$*\"\nexit 0\n",
+    )
+    .unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(src.join("build.sh"))
+        .status()
+        .unwrap();
+    let base = [
+        "build",
+        "netbsd-trunk",
+        "--cc",
+        "rucc",
+        "--root",
+        root.to_str().unwrap(),
+        "--jobs",
+        "2",
+        "--targets",
+        "kernel=GENERIC",
+        "--shim",
+        binary.to_str().unwrap(),
+    ];
+    let mut args = base.to_vec();
+    args.push("--ungraded");
+    let (ok, text) = rb(&top, &args);
+    assert!(ok, "{text}");
+    assert!(text.contains("every target built"), "{text}");
+    let calls = std::fs::read_to_string(root.join("calls")).unwrap();
+    assert!(
+        calls.contains(&format!(
+            "-T {} -D {} -R {} -u kernel=GENERIC",
+            root.join("toolchain-rucc").display(),
+            root.join("destdir").display(),
+            root.join("release").display()
+        )),
+        "{calls}"
+    );
+    let config = std::fs::read_to_string(root.join("toolchain-rucc/bin/rb-shim.toml")).unwrap();
+    assert!(config.contains("compile-rucc.jsonl"), "{config}");
+    let log = std::fs::read_to_string(root.join("logs/kernel.log")).unwrap();
+    assert!(log.starts_with("building"), "{log}");
+    let tsv = std::fs::read_to_string(root.join("logs/phases.tsv")).unwrap();
+    assert!(tsv.starts_with("kernel\t0\t"), "{tsv}");
+
+    // Without --ungraded the fake rucc stops the build before build.sh runs.
+    std::fs::remove_file(root.join("calls")).unwrap();
+    let (ok, text) = rb(&top, &base);
+    assert!(!ok && text.contains("pass --ungraded"), "{text}");
+    assert!(!root.join("calls").exists());
+    std::fs::remove_dir_all(&top).ok();
+}
+
+#[test]
+fn freebsd_build_dry_run_names_the_toolchain_file() {
+    let top = rig("fb-build");
+    let (ok, text) = rb(
+        &top,
+        &[
+            "build",
+            "freebsd-15.1",
+            "--cc",
+            "rucc",
+            "--root",
+            "/b",
+            "--src",
+            "/usr/src",
+            "--jobs",
+            "8",
+            "--dry-run",
+        ],
+    );
+    assert!(ok, "{text}");
+    assert!(
+        text.contains("make -C /usr/src -j8 buildworld TARGET=amd64 TARGET_ARCH=amd64 KERNCONF=GENERIC CROSS_TOOLCHAIN=/b/toolchain-rucc/rucc.mk"),
+        "{text}"
+    );
+    let (ok, text) = rb(
+        &top,
+        &[
+            "build",
+            "freebsd-15.1",
+            "--cc",
+            "ref",
+            "--no-shim",
+            "--root",
+            "/b",
+            "--dry-run",
+        ],
+    );
+    assert!(
+        ok && text.contains("CROSS_TOOLCHAIN=amd64-gcc15 "),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&top).ok();
+}

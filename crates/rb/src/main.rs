@@ -85,29 +85,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
                 ExitCode::from(1)
             })
         }
-        "probes" => {
-            let repo = rb::repo::Repo::find()?;
-            let (text, same) = rb::probes::cli::run_cli(args, &repo.root)?;
-            print!("{text}");
-            Ok(exit(same))
-        }
-        "shim" => {
-            let repo = rb::repo::Repo::find()?;
-            print!("{}", rb::shims::cli::run(args, &repo.root)?);
-            Ok(ExitCode::SUCCESS)
-        }
-        "toolchain" => {
-            let repo = rb::repo::Repo::find()?;
-            let made = rb::toolchain::cli::make(args, &repo.root)?;
-            print!("{}", made.report);
-            Ok(exit(made.ok))
-        }
-        "toolchain-diff" => {
-            let repo = rb::repo::Repo::find()?;
-            let (text, ok) = rb::toolchain::cli::diff(args, &repo.root)?;
-            print!("{text}");
-            Ok(exit(ok))
-        }
+        "build" | "probes" | "shim" | "toolchain" | "toolchain-diff" => compilers(args),
         "version" => {
             println!("rb {}", env!("CARGO_PKG_VERSION"));
             Ok(ExitCode::SUCCESS)
@@ -176,6 +154,38 @@ fn demands(args: &Args) -> Result<ExitCode, String> {
     })?;
     print!("{report}");
     Ok(ExitCode::SUCCESS)
+}
+
+/// The commands that set up and run the compilers.
+fn compilers(args: &Args) -> Result<ExitCode, String> {
+    let repo = rb::repo::Repo::find()?;
+    match args.command.as_str() {
+        "build" => {
+            let (text, ok) = rb::build::cli::run(args, &repo.root)?;
+            print!("{text}");
+            Ok(exit(ok))
+        }
+        "probes" => {
+            let (text, same) = rb::probes::cli::run_cli(args, &repo.root)?;
+            print!("{text}");
+            Ok(exit(same))
+        }
+        "shim" => {
+            print!("{}", rb::shims::cli::run(args, &repo.root)?);
+            Ok(ExitCode::SUCCESS)
+        }
+        "toolchain" => {
+            let made = rb::toolchain::cli::make(args, &repo.root)?;
+            print!("{}", made.report);
+            Ok(exit(made.ok))
+        }
+        "toolchain-diff" => {
+            let (text, ok) = rb::toolchain::cli::diff(args, &repo.root)?;
+            print!("{text}");
+            Ok(exit(ok))
+        }
+        other => Err(format!("unknown command {other}; see rb help")),
+    }
 }
 
 /// Exit 0 when a check held, and 1 when it did not.
