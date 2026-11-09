@@ -14,6 +14,7 @@ pub mod demands;
 pub mod fetch;
 pub mod image;
 pub mod personas;
+pub mod probes;
 pub mod repo;
 pub mod scan;
 pub mod sets;

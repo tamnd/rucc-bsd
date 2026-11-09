@@ -342,3 +342,41 @@ fn netbsd_tooldirs_differ_from_the_tools_in_the_shim_only() {
     );
     std::fs::remove_dir_all(&top).ok();
 }
+
+#[test]
+fn probes_compare_what_the_build_reads() {
+    let top = rig("probes");
+    let gcc = top.join("gcc");
+    std::fs::write(
+        &gcc,
+        "#!/bin/sh\ncase \" $* \" in *\" --version \"*) echo 'x86_64-unknown-freebsd15.1-gcc15 (FreeBSD Ports Collection for amd64) 15.2.0'; echo 'Copyright (C) 2025 Free Software Foundation, Inc.' ;; esac\nexit 0\n",
+    )
+    .unwrap();
+    Command::new("chmod").arg("+x").arg(&gcc).status().unwrap();
+    let work = top.join("work");
+    let rucc = top.join("repo/bin/rucc");
+    let args = [
+        "probes",
+        "freebsd-15.1",
+        "--g",
+        gcc.to_str().unwrap(),
+        "--r",
+        rucc.to_str().unwrap(),
+        "--work",
+        work.to_str().unwrap(),
+    ];
+    let (ok, text) = rb(&top, &args);
+    assert!(ok, "{text}");
+    assert!(text.contains("26 asked, 26 the same, 0 differ"), "{text}");
+    std::fs::write(
+        &gcc,
+        "#!/bin/sh\ncase \" $* \" in *\" -dM \"*) echo '#define __GNUC__ 15' ;; esac\nexit 0\n",
+    )
+    .unwrap();
+    let (ok, text) = rb(&top, &args);
+    assert!(
+        !ok && text.contains("__GNUC__: G 15, R undefined"),
+        "{text}"
+    );
+    std::fs::remove_dir_all(&top).ok();
+}

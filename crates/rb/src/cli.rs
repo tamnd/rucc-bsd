@@ -149,6 +149,11 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
             ],
             switches: &["ungraded"],
         },
+        "probes" => Accepts {
+            positional: true,
+            values: &["row", "dir", "g", "r", "from", "work", "details"],
+            switches: &["all"],
+        },
         "toolchain-diff" => Accepts {
             positional: true,
             values: &["row", "dir", "g", "r"],
@@ -216,6 +221,18 @@ usage:
       Print the persona, the reference toolchain and rucc's --target for every pin, from
       pins.toml, personas.toml and toolchains.toml. ARCH is rucc's architecture, x86_64 by
       default. Exits 1 when a persona needs review, such as a NetBSD BASE-VER that moved.
+  rb probes PIN [--row ROW] (--dir DIR | --g G --r R) [--from LOG] [--work DIR] [--all]
+          [--details N]
+      Ask G's and R's C compilers the questions a build asks, without building, and say for each
+      whether they answer the same. DIR is a FreeBSD directory of rb toolchain. G and R are
+      compilers, or directories of rb toolchain or rb shim whose rb-shim.toml names a cc slot,
+      such as NetBSD TOOLDIRs. The probes are --version as bsd.compiler.mk reads it, the gcc
+      version of -v, echo __FreeBSD_cc_version | cc -E -, the -print- questions, the macros of
+      -dM -E, the __has_feature and __has_extension queries of the systems' headers, and the
+      kernel and boot code flags rucc may refuse. --from adds every C compiler probe of a
+      compile.jsonl, once each. The probes run in DIR of --work, and the shims' records of them go
+      to probes-G.jsonl and probes-R.jsonl there. --all prints the probes that are the same too.
+      Exits 1 when a probe differs.
   rb sets [--as-of TIME] [--write]
       Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
       pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME,
