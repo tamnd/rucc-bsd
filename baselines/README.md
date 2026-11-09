@@ -28,6 +28,8 @@ A case that more than one shard ran, such as `boot`, keeps its worse result. The
 
 `rb baseline` exits 1 when a run did not pass, for example after a panic or a timeout. It still writes the files, with `complete = false`.
 
+A complete baseline is also the record that G is good at its `commit` (plan 04.6). `rb sets` reads `pin`, `commit`, `made` and `complete` from every `baseline.toml`. A branch pin is `reference = "good"` at the commit of the newest complete baseline of that pin, and under `head = "last-g-good"` it stays at that commit until a complete baseline names the head. So nobody edits `pins.toml` by hand to move a pin.
+
 ## Layout
 
 ```

@@ -6,6 +6,7 @@
 
 pub mod expand;
 pub mod fetch;
+pub mod good;
 pub mod pins;
 pub mod places;
 pub mod publish;

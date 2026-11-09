@@ -360,8 +360,11 @@ usage:
       counts or no object is paired.
   rb sets [--as-of TIME] [--write]
       Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
-      pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME,
-      such as 2026-11-08T06:00:00Z. Exits 1 when pins.toml is out of date and --write is not given.
+      pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME on
+      each branch's first-parent line, such as 2026-11-08T06:00:00Z. A branch pin is good at the
+      commit of a complete baseline under baselines/ made by TIME. Under last-g-good it stays at
+      that commit until G is good at the head. Exits 1 when pins.toml is out of date and --write is
+      not given.
   rb shim PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
           [--destdir DIR] [--shim PATH] [--bringup as,cxx-c [--bringup-units UNIT,...]]
       Put rb-cc under the names a build calls its compilers by in DIR, with the rb-shim.toml that

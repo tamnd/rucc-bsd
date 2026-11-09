@@ -1,5 +1,6 @@
 //! `rb sets`: expand `sets.toml` into pins from what the projects publish (plan 04.5 to 04.7).
 
+use crate::good::Good;
 use crate::pins::{Gone, Pin, PinsFile, Tarball};
 use crate::publish;
 use crate::sets::{Current, Releases, Sets};
@@ -32,18 +33,21 @@ pub struct Expanded {
 }
 
 /// Expand `sets` as of `as_of`, an RFC 3339 UTC time. `until` is passed to the commit queries;
-/// it is `None` for "now". `old` is the current `pins.toml`, which keeps last-g-good pins.
+/// it is `None` for "now". `old` is the current `pins.toml`, which keeps last-g-good pins. `good`
+/// is the complete baselines, newest first, from [`crate::good::from_baselines`].
 pub fn expand(
     sets: &Sets,
     web: &dyn Web,
     as_of: &str,
     until: Option<&str>,
     old: Option<&PinsFile>,
+    good: &[Good],
 ) -> Result<Expanded, String> {
     let mut run = Run {
         web,
         until,
         old,
+        good,
         last_good: sets.pin_policy.head == "last-g-good",
         notes: Vec::new(),
         pins: Vec::new(),
@@ -103,6 +107,7 @@ struct Run<'a> {
     web: &'a dyn Web,
     until: Option<&'a str>,
     old: Option<&'a PinsFile>,
+    good: &'a [Good],
     last_good: bool,
     notes: Vec<String>,
     pins: Vec<Pin>,
@@ -110,6 +115,10 @@ struct Run<'a> {
 
 impl Run<'_> {
     /// A branch pin at its head, or at its last good commit under last-g-good.
+    ///
+    /// A commit is good when a complete baseline names it. Under last-g-good the pin is the head
+    /// if G is good there; else the commit of the newest complete baseline; else the commit the
+    /// old `pins.toml` kept as good; else the head, untried.
     fn branch(
         &mut self,
         slug: &str,
@@ -124,33 +133,46 @@ impl Run<'_> {
             return Err(format!("{slug} has no branch {branch}"));
         }
         let head = self.web.commit_at(slug, branch, self.until)?;
+        let good: Vec<&Good> = self.good.iter().filter(|g| g.pin == pin.name).collect();
         let before = self.old.and_then(|o| o.find(&pin.name));
-        let kept = before.filter(|b| {
-            self.last_good && b.reference.as_deref() == Some("good") && b.commit.is_some()
-        });
-        match kept {
-            Some(b) if b.commit.as_deref() != Some(&head.sha) => {
-                pin.commit.clone_from(&b.commit);
-                pin.date.clone_from(&b.date);
-                pin.reference = Some("good".into());
-                self.notes.push(format!(
-                    "{} stays at its last good commit {}; the head is {} ({})",
-                    pin.name,
-                    short(b.commit.as_deref().unwrap_or_default()),
-                    short(&head.sha),
-                    head.date
+        let kept = before
+            .filter(|b| b.reference.as_deref() == Some("good"))
+            .and_then(|b| Some((b.commit.clone()?, b.date.clone(), "pins.toml".to_string())));
+        let last = if good.iter().any(|g| g.commit == head.sha) || !self.last_good {
+            None
+        } else if let Some(g) = good.first() {
+            let at = self.web.commit_at(slug, &g.commit, None)?;
+            if at.sha != g.commit {
+                return Err(format!(
+                    "{slug}: the commit {} of baselines/{} is not in the repository",
+                    g.commit, g.place
                 ));
             }
-            Some(_) => {
-                pin.commit = Some(head.sha.clone());
-                pin.date.clone_from(&head.date);
-                pin.reference = Some("good".into());
-            }
-            None => {
-                pin.commit = Some(head.sha.clone());
-                pin.date.clone_from(&head.date);
-                pin.reference = Some("untried".into());
-            }
+            Some((at.sha, at.date, format!("baselines/{}", g.place)))
+        } else {
+            kept.filter(|(commit, _, _)| *commit != head.sha)
+        };
+        if let Some((commit, date, from)) = last {
+            self.notes.push(format!(
+                "{} stays at its last good commit {} ({from}); the head is {} ({})",
+                pin.name,
+                short(&commit),
+                short(&head.sha),
+                head.date
+            ));
+            pin.commit = Some(commit);
+            pin.date = date;
+            pin.reference = Some("good".into());
+        } else {
+            let at_head = good.iter().any(|g| g.commit == head.sha)
+                || (self.last_good
+                    && before.is_some_and(|b| {
+                        b.reference.as_deref() == Some("good")
+                            && b.commit.as_deref() == Some(&head.sha)
+                    }));
+            pin.commit = Some(head.sha.clone());
+            pin.date.clone_from(&head.date);
+            pin.reference = Some(if at_head { "good" } else { "untried" }.into());
         }
         pin.repo = Some(format!("https://github.com/{slug}"));
         pin.branch = Some(branch.to_string());
@@ -578,7 +600,15 @@ mod tests {
 
     #[test]
     fn the_sets_of_the_plan_expand_to_its_pins() {
-        let out = expand(&plan(true), &world(), "2026-11-08T06:00:00Z", None, None).unwrap();
+        let out = expand(
+            &plan(true),
+            &world(),
+            "2026-11-08T06:00:00Z",
+            None,
+            None,
+            &[],
+        )
+        .unwrap();
         let names: Vec<&str> = out.file.pin.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(
             names,
@@ -625,13 +655,29 @@ mod tests {
 
     #[test]
     fn without_latest_per_major_every_supported_release_is_pinned() {
-        let out = expand(&plan(false), &world(), "2026-11-08T06:00:00Z", None, None).unwrap();
+        let out = expand(
+            &plan(false),
+            &world(),
+            "2026-11-08T06:00:00Z",
+            None,
+            None,
+            &[],
+        )
+        .unwrap();
         assert!(out.file.find("freebsd-14.4").is_some());
     }
 
     #[test]
     fn a_good_pin_stays_and_a_gone_pin_is_kept() {
-        let first = expand(&plan(true), &world(), "2026-11-08T06:00:00Z", None, None).unwrap();
+        let first = expand(
+            &plan(true),
+            &world(),
+            "2026-11-08T06:00:00Z",
+            None,
+            None,
+            &[],
+        )
+        .unwrap();
         let mut old = first.file.clone();
         let main = old
             .pin
@@ -666,6 +712,7 @@ mod tests {
             "2026-11-09T06:00:00Z",
             None,
             Some(&old),
+            &[],
         )
         .unwrap();
         let main = second.file.find("freebsd-main").unwrap();
@@ -688,8 +735,67 @@ mod tests {
             "2026-11-10T06:00:00Z",
             None,
             Some(&second.file),
+            &[],
         )
         .unwrap();
         assert!(third.file.same_pins(&second.file));
+    }
+
+    #[test]
+    fn a_complete_baseline_makes_a_commit_good() {
+        let good = |commit: String| Good {
+            pin: "freebsd-main".into(),
+            commit,
+            made: "2026-11-08T05:00:00Z".into(),
+            place: "freebsd/amd64/main/graded".into(),
+        };
+        let mut w = world();
+        w.pages.insert(
+            format!(
+                "https://raw.githubusercontent.com/freebsd/freebsd-src/{}/sys/conf/newvers.sh",
+                sha('7')
+            ),
+            "REVISION=\"16.0\"\nBRANCH=\"CURRENT\"\n".into(),
+        );
+        w.heads.insert(
+            format!("{FREEBSD_REPO} {}", sha('7')),
+            (sha('7'), "2026-10-30T00:00:00Z".into()),
+        );
+        let at =
+            |g: &[Good]| expand(&plan(true), &w, "2026-11-08T06:00:00Z", None, None, g).unwrap();
+
+        let out = at(&[good(sha('7'))]);
+        let main = out.file.find("freebsd-main").unwrap();
+        assert_eq!(main.commit.as_deref(), Some(sha('7').as_str()));
+        assert_eq!(main.date, "2026-10-30T00:00:00Z");
+        assert_eq!(main.head.as_deref(), Some(sha('a').as_str()));
+        assert_eq!(main.reference.as_deref(), Some("good"));
+        assert!(
+            out.notes
+                .iter()
+                .any(|n| n.contains("baselines/freebsd/amd64/main/graded"))
+        );
+        let stable = out.file.find("freebsd-stable-15").unwrap();
+        assert_eq!(stable.reference.as_deref(), Some("untried"));
+
+        let out = at(&[good(sha('a'))]);
+        let main = out.file.find("freebsd-main").unwrap();
+        assert_eq!(main.commit.as_deref(), Some(sha('a').as_str()));
+        assert_eq!(main.reference.as_deref(), Some("good"));
+
+        let mut wrong = world();
+        wrong.heads.insert(
+            format!("{FREEBSD_REPO} {}", sha('7')),
+            (sha('8'), "2026-10-30T00:00:00Z".into()),
+        );
+        let err = expand(
+            &plan(true),
+            &wrong,
+            "2026-11-08T06:00:00Z",
+            None,
+            None,
+            &[good(sha('7'))],
+        );
+        assert!(err.is_err());
     }
 }

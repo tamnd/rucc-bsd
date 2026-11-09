@@ -9,8 +9,9 @@ pub const FILE_NAME: &str = "pins.toml";
 /// The lines at the top of the written file.
 pub const HEADER: &str = "\
 # Written by `rb sets --write` from sets.toml and what the projects publish (plan 04.5).
-# Do not edit by hand. A branch pin with reference = \"good\" keeps its commit under
-# pin_policy.head = \"last-g-good\" until the reference builds and boots a newer one (04.6).
+# Do not edit by hand. A branch pin is reference = \"good\" at a commit with a complete baseline
+# under baselines/. Under pin_policy.head = \"last-g-good\" it keeps that commit until the
+# reference builds and boots a newer one (04.6).
 
 ";
 
