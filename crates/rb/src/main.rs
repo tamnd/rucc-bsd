@@ -85,8 +85,12 @@ fn run(args: &Args) -> Result<ExitCode, String> {
                 ExitCode::from(1)
             })
         }
-        "build" | "flags-diff" | "mk-diff" | "probes" | "shim" | "toolchain" | "toolchain-diff" => {
-            compilers(args)
+        "build" | "flags-diff" | "mk-diff" | "probes" | "shim" | "syntax" | "toolchain"
+        | "toolchain-diff" => compilers(args),
+        "warnings" => {
+            let (text, ok) = rb::warnings::cli::run(args)?;
+            print!("{text}");
+            Ok(exit(ok))
         }
         "version" => {
             println!("rb {}", env!("CARGO_PKG_VERSION"));
@@ -185,6 +189,11 @@ fn compilers(args: &Args) -> Result<ExitCode, String> {
         "shim" => {
             print!("{}", rb::shims::cli::run(args, &repo.root)?);
             Ok(ExitCode::SUCCESS)
+        }
+        "syntax" => {
+            let (text, ok) = rb::syntax::cli::run_cli(args, &repo.root)?;
+            print!("{text}");
+            Ok(exit(ok))
         }
         "toolchain" => {
             let made = rb::toolchain::cli::make(args, &repo.root)?;
