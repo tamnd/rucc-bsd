@@ -1,0 +1,6 @@
+libarchive/t_libarchive	libarchive
+libc/sys/t_ptrace_kill	pt_kill
+net/t_forwarding	ipforwarding_fastforward_v4
+net/t_forwarding	ipforwarding_fragment_v4
+net/t_forwarding	ipforwarding_misc
+npf/t_npf	npf_bpf
