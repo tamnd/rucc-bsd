@@ -14,8 +14,15 @@
 #            broken and the rucc result means nothing.
 #   replay   every unit of the ref build compiled again with rb-cc-rucc, in its own directory and
 #            with its own arguments, after the ref build made the generated headers. The objects go
-#            to /build/replay (scripts/freebsd/replay.py). So every unit gets a rucc result, also
-#            the units that a failure stops make before.
+#            to the same paths under /build/replay (scripts/freebsd/replay.py). So every unit gets a
+#            rucc result, also the units that a failure stops make before.
+#
+# Then the job compares the builds with rb in the builder VM. rb mk-diff compares the make
+# variables that depend on the compiler with ref.mk and with rucc.mk. rb flags-diff compares the
+# command line of each unit that both the ref and the rucc build made. rb warnings compares the
+# diagnostics of each unit of the ref build and of the replay, and rb sections-diff and rb
+# symbols-diff compare their objects. The reports go in the step summary and in the artifact. None
+# of them fails the run.
 #
 # scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
 # and the step summary shows the groups of the rucc build and of the replay. rucc is built from the
@@ -139,6 +146,25 @@ jobs:
           scripts/freebsd/builder.sh ssh 'export RB_COMPILE_LOG=/build/out/compile-replay.jsonl;
             for f in /root/replay/replay-*.sh; do sh "$f" & done; wait'
           echo "replay: $(($(date +%s) - start))s" | tee -a record/replay.txt
+      - name: compare the builds with rb
+        if: always()
+        continue-on-error: true
+        run: |
+          # The ref objects are under /build/obj and the replay objects are at the same paths under
+          # /build/replay, so the roots pair them. The probes of rb mk-diff go to their own log.
+          # shellcheck disable=SC2016
+          scripts/freebsd/builder.sh ssh "cd /root/harness && export KERNCONF=$KERNCONF && "'
+            rb=/build/rb/bin/rb; ref=/build/out/compile-ref.jsonl; out=/root/out
+            run() { "$rb" "$@" > "$out/$1.txt" 2>&1 || echo "rb $1 exited $?" >> "$out/$1.txt"; }
+            RB_COMPILE_LOG=/build/out/compile-mk-diff.jsonl; export RB_COMPILE_LOG
+            run mk-diff freebsd-15.1 --dir /build/toolchain --src /build/src --work "$out/mk-diff" \
+              --kernel "/build/obj/build/src/amd64.amd64/sys/$KERNCONF"
+            run flags-diff freebsd-15.1 --g "$ref" --r /build/out/compile-rucc.jsonl --paired-only
+            for tool in warnings sections-diff symbols-diff; do
+              run "$tool" --g "$ref" --r /build/out/compile-replay.jsonl --g-root /build/obj --r-root /build/replay/build/obj
+            done'
+        env:
+          KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
       - name: copy the record out
         if: always()
         run: |
@@ -173,6 +199,15 @@ jobs:
               echo "#### The failed units of the $run build"
               echo
               python3 -I scripts/freebsd/r-report.py "$f" --tsv "record/failed-units-$run.tsv"
+            done
+            for tool in mk-diff flags-diff warnings sections-diff symbols-diff; do
+              [ -f "record/$tool.txt" ] || continue
+              echo
+              echo "#### rb $tool"
+              echo
+              echo '```'
+              head -60 "record/$tool.txt"
+              echo '```'
             done
             for f in record/*-error.txt; do
               [ -f "$f" ] || continue

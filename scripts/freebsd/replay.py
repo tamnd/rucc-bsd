@@ -6,8 +6,10 @@
 LOG is the compile.jsonl of a build through rb-cc-ref, or the same file compressed with xz. A
 unit is a call of the C compiler slot that is not a probe, has a C or assembly input and has -c.
 Each unit becomes one line: in the recorded directory, run PATH in place of the recorded shim,
-with the recorded arguments. The object and the dependency file go to DIR/objects/N.o and
-DIR/objects/N.d (or --objects), so the G objects stay as they are.
+with the recorded arguments. The object goes to the same path under DIR/objects (or --objects),
+so that /build/obj/x/y.o becomes DIR/objects/build/obj/x/y.o, and the dependency file goes next
+to it with .d in place of .o. So the G objects stay as they are, and rb sections-diff can pair
+each object with its G object when the roots are given.
 
 The units go round-robin into DIR/replay-0.sh to DIR/replay-(N-1).sh, 4 by default, to run at
 the same time. Each line ends with "|| true", so one failed unit does not stop the script. The
@@ -62,6 +64,20 @@ def redirect(args, obj, dep):
     return out
 
 
+def original(args, cwd, inputs):
+    """The absolute path of the object the recorded call wrote."""
+    obj = None
+    for i, a in enumerate(args):
+        if a == "-o" and i + 1 < len(args):
+            obj = args[i + 1]
+        elif a.startswith("-o") and len(a) > 2:
+            obj = a[2:]
+    if obj is None:
+        source = next(i["path"] for i in inputs if i.get("path", "").endswith(SOURCES))
+        obj = os.path.splitext(os.path.basename(source))[0] + ".o"
+    return os.path.normpath(os.path.join(cwd, obj))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("log")
@@ -80,16 +96,19 @@ def main():
         argv = rec.get("argv") or []
         if "-c" not in argv[1:]:
             continue
-        if not any(i.get("path", "").endswith(SOURCES) for i in rec.get("inputs") or []):
+        inputs = rec.get("inputs") or []
+        if not any(i.get("path", "").endswith(SOURCES) for i in inputs):
             continue
-        n = len(lines)
-        args = redirect(argv[1:], f"{objects}/{n}.o", f"{objects}/{n}.d")
+        cwd = rec.get("cwd", ".")
+        obj = objects + original(argv[1:], cwd, inputs)
+        args = redirect(argv[1:], obj, os.path.splitext(obj)[0] + ".d")
         cmd = " ".join(shlex.quote(x) for x in [a.shim, *args])
-        lines.append(f"cd {shlex.quote(rec.get('cwd', '.'))} && {cmd} > /dev/null 2>&1 || true")
+        mkdir = f"mkdir -p {shlex.quote(os.path.dirname(obj))}"
+        lines.append(f"{mkdir} && cd {shlex.quote(cwd)} && {cmd} > /dev/null 2>&1 || true")
 
     for k in range(a.shards):
         with open(os.path.join(a.out, f"replay-{k}.sh"), "w", encoding="utf-8") as f:
-            f.write(f"#!/bin/sh\nmkdir -p {shlex.quote(objects)}\n")
+            f.write("#!/bin/sh\n")
             f.writelines(line + "\n" for line in lines[k :: a.shards])
     print(f"{len(lines)} units in {a.shards} scripts in {a.out}")
 
