@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shell scripts that compile every unit of a G build again with another shim.
 
-    replay.py LOG --shim PATH --out DIR [--shards N] [--objects DIR]
+    replay.py LOG --shim PATH --out DIR [--shards N] [--objects DIR] [--timeout S] [--timeouts FILE]
 
 LOG is the compile.jsonl of a build through rb-cc-ref, or the same file compressed with xz. A
 unit is a call of the C compiler slot that is not a probe, has a C or assembly input and has -c.
@@ -14,6 +14,10 @@ each object with its G object when the roots are given.
 The units go round-robin into DIR/replay-0.sh to DIR/replay-(N-1).sh, 4 by default, to run at
 the same time. Each line ends with "|| true", so one failed unit does not stop the script. The
 shim writes the records; the scripts print nothing of their own.
+
+timeout(1) stops a unit after S seconds, 300 by default, so one unit that does not stop cannot
+hold its script. A stopped unit has no record, so its source goes on a line of FILE when --timeouts
+is given.
 """
 
 import argparse
@@ -85,6 +89,8 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--shards", type=int, default=4)
     ap.add_argument("--objects")
+    ap.add_argument("--timeout", type=int, default=300)
+    ap.add_argument("--timeouts")
     a = ap.parse_args()
     objects = a.objects or os.path.join(a.out, "objects")
     os.makedirs(a.out, exist_ok=True)
@@ -104,7 +110,12 @@ def main():
         args = redirect(argv[1:], obj, os.path.splitext(obj)[0] + ".d")
         cmd = " ".join(shlex.quote(x) for x in [a.shim, *args])
         mkdir = f"mkdir -p {shlex.quote(os.path.dirname(obj))}"
-        lines.append(f"{mkdir} && cd {shlex.quote(cwd)} && {cmd} > /dev/null 2>&1 || true")
+        run = f"timeout -k 10 {a.timeout} {cmd} > /dev/null 2>&1"
+        if a.timeouts:
+            source = next(i["path"] for i in inputs if i["path"].endswith(SOURCES))
+            note = shlex.quote(f"{a.timeout}s {source}")
+            run = f"{{ {run}; [ $? -ne 124 ] || echo {note} >> {shlex.quote(a.timeouts)}; }}"
+        lines.append(f"{mkdir} && cd {shlex.quote(cwd)} && {run} || true")
 
     for k in range(a.shards):
         with open(os.path.join(a.out, f"replay-{k}.sh"), "w", encoding="utf-8") as f:
