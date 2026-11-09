@@ -325,8 +325,22 @@ jobs:
           if [ -d "$NB_ROOT/release/binary" ]; then mv "$NB_ROOT/release/binary" "$NB_ROOT/release/amd64/"; fi
           tar -C "$NB_ROOT/destdir" -xf "$NB_ROOT/release/destdir-meta.tar"
           rm "$NB_ROOT/release/destdir-meta.tar"
-          # The kern-GENERIC set of G is replaced with the set of the rucc kernel.
           binary="$NB_ROOT/release/amd64/binary"
+          # The CTF of the rucc kernel against the CTF of G's kernel of the same configuration,
+          # until rb ctf-diff does it (plan 09.6). The full lists go to the logs artifact.
+          {
+            echo "### CTF: the rucc $KERNEL kernel against G's"
+            echo
+            if [ -f "$binary/sets/kern-$KERNEL.tar.xz" ]; then
+              tar -xJOf "$binary/sets/kern-$KERNEL.tar.xz" ./netbsd > "$RUNNER_TEMP/g-netbsd"
+              python3 scripts/netbsd/ctf-diff.py "$RUNNER_TEMP/g-netbsd" \
+                "$RUNNER_TEMP/r-kernel/$KERNEL_FILE" --out "$NB_ROOT/logs/ctf" || true
+              rm "$RUNNER_TEMP/g-netbsd"
+            else
+              echo "G run $G_RUN has no kern-$KERNEL set."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # The kern-GENERIC set of G is replaced with the set of the rucc kernel.
           scripts/netbsd/kern-into-sets.sh "$binary" "$RUNNER_TEMP/r-kernel/kern-$KERNEL.tar.xz"
           {
             echo "### The sets"
