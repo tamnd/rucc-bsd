@@ -1,0 +1,14 @@
+libarchive/t_libarchive	libarchive
+libc/sys/t_getgroups	getgroups_getgid
+libc/sys/t_ptrace_kill	pt_kill
+npf/t_npf	npf_bpf
+rc/t_rc_d_cli	default_start_with_args
+rc/t_rc_d_cli	no_command
+rc/t_rc_d_cli	overriden_custom_no_args
+rc/t_rc_d_cli	overriden_custom_with_args
+rc/t_rc_d_cli	overriden_restart_no_args
+rc/t_rc_d_cli	overriden_restart_with_args
+rc/t_rc_d_cli	overriden_start_no_args
+rc/t_rc_d_cli	overriden_start_with_args
+rc/t_rc_d_cli	overriden_stop_no_args
+rc/t_rc_d_cli	overriden_stop_with_args
