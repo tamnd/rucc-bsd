@@ -393,6 +393,20 @@ jobs:
             --out "$RUNNER_TEMP/boot/ovmf" --suite boot,smoke \
             | tee -a "$GITHUB_STEP_SUMMARY" || status=1
           exit "$status"
+      # A boot that did not reach rb-rc tells only that the guest reset. This boots once more
+      # under TCG with QEMU's interrupt log and names the kernel functions at the last exceptions.
+      - uses: actions/download-artifact@v8.0.1
+        if: failure()
+        with:
+          name: netbsd-r-kernel
+          path: ${{ runner.temp }}/kernel
+      - name: where the kernel stopped
+        if: failure()
+        run: |
+          if grep -qs '"result": "no-ready"' "$RUNNER_TEMP"/boot/*/boot.json; then
+            scripts/netbsd/boot-fault.sh "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+              "$RUNNER_TEMP/kernel/netbsd" "$RUNNER_TEMP/boot/fault" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: summary
         if: always()
         run: |
