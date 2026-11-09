@@ -17,7 +17,15 @@
 #
 # The boot job boots the image twice, with 2 vCPUs and 8 GB as FreeBSD's CI test VM has: by BIOS for
 # the boot suite only, and by UEFI for the boot suite, the smoke suite and kyua over /usr/tests. It
-# compares the kyua counts with the last completed build of FreeBSD's own test job for the branch.
+# compares the kyua counts with the build of FreeBSD's own test job that conf/freebsd/published.conf
+# gives for the pin, or else with the last completed build of the branch's test job.
+#
+# A manual run can boot the image three times (runs: 3). Each run is one boot job with both boots,
+# and the baseline job gives the runs to rb baseline, which writes the cases that passed in every
+# run (plan 12.5). With rebuild, a second build job builds the same pin again, and the repro job
+# compares the two images and the manifests of their staging trees (plan 16.1). With kyua off, the
+# UEFI boot runs only the boot and smoke suites, which is enough to say that a pin is G-good: G built
+# it, and it booted (plan 04.6).
 #
 # A manual run can stop after a stage, and can boot the image of an earlier run instead of building.
 # On a pull request, the image and the build record are cached by the hash of what goes into them,
@@ -52,6 +60,19 @@ on:
         description: Boot the image of this earlier run, and do not build
         required: false
         default: ""
+      runs:
+        description: How many times to boot and test the image, for rb baseline
+        type: choice
+        options: ["1", "3"]
+        default: "1"
+      rebuild:
+        description: Build the pin a second time and compare the two images
+        type: boolean
+        default: false
+      kyua:
+        description: Run kyua in the UEFI boot
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
@@ -74,14 +95,37 @@ env:
     RB_SRCCONF=/root/harness/conf/freebsd/${{ inputs.conf || 'graded' }}.conf RB_TOOLCHAIN=/build/toolchain/ref.mk
     RB_HARNESS=/root/harness RB_DESTDIR=/build/destdir RB_IMAGE=/build/image/freebsd.img
     RB_CONF=${{ inputs.conf || 'graded' }} RB_COMPILE_JSONL=/build/out/compile.jsonl
-    RB_PIN_NAME=${{ (inputs.pin || '15.1-release') == 'main' && 'freebsd-main' || 'freebsd-15.1' }}
+    RB_PIN_NAME=${{ (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
 
 jobs:
+  rb:
+    name: cargo build rb
+    if: (inputs.stop || 'all') == 'all'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rb-linux-x86_64
+          path: target/release/rb
+          retention-days: 7
+
   build:
-    name: build ${{ inputs.pin || '15.1-release' }} ${{ inputs.conf || 'graded' }}
+    name: build ${{ inputs.pin || '15.1-release' }} ${{ inputs.conf || 'graded' }}${{ matrix.build == 2 && ' again' || '' }}
     if: ${{ !inputs.image-run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJSON(inputs.rebuild && '[1, 2]' || '[1]') }}
+    env:
+      # The second build's artifacts have names that the boot job does not download.
+      RB_AGAIN: ${{ matrix.build == 2 && '-rebuild' || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: look for a cached image
@@ -189,7 +233,9 @@ jobs:
           cat record/host-df.txt
           ls -l record
       - name: keep the image for the next push
-        if: steps.cached.outcome == 'success' && env.RB_HIT != 'true' && hashFiles('image/freebsd.img.zst') != ''
+        if: >-
+          steps.cached.outcome == 'success' && env.RB_HIT != 'true' && matrix.build == 1
+          && hashFiles('image/freebsd.img.zst') != ''
         run: |
           mkdir -p cached
           cp -R record cached/record
@@ -217,14 +263,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: freebsd-build-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          name: freebsd-build-${{ env.RB_PIN }}-${{ env.RB_CONF }}${{ env.RB_AGAIN }}
           path: record
           if-no-files-found: ignore
       - name: upload compile.jsonl
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: freebsd-compile-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          name: freebsd-compile-${{ env.RB_PIN }}-${{ env.RB_CONF }}${{ env.RB_AGAIN }}
           path: compile
           if-no-files-found: ignore
           compression-level: 0
@@ -232,18 +278,24 @@ jobs:
         if: env.RB_STOP != 'provision' && env.RB_STOP != 'build'
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: freebsd-image-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          name: freebsd-image-${{ env.RB_PIN }}-${{ env.RB_CONF }}${{ env.RB_AGAIN }}
           path: image/freebsd.img.zst
           compression-level: 0
 
   boot:
-    name: boot and test
+    name: boot and test, run ${{ matrix.run }}
     needs: build
     if: >-
       always() && (inputs.stop || 'all') == 'all'
-      && (needs.build.result == 'success' || inputs.image-run)
+      && (needs.build.result == 'success' || inputs.image-run || (inputs.rebuild && needs.build.result == 'failure'))
     runs-on: ubuntu-24.04
     timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON((inputs.runs || '1') == '3' && '[1, 2, 3]' || '[1]') }}
+    env:
+      RB_RUN_NAME: ${{ matrix.run > 1 && format('-run-{0}', matrix.run) || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: let the runner user open /dev/kvm
@@ -274,17 +326,23 @@ jobs:
           RB_RUN_LIMIT: 900
       - name: boot by UEFI, boot, smoke and kyua
         if: always()
-        run: scripts/freebsd/boot.sh /mnt/rb/freebsd.img uefi "boot smoke kyua" boots/uefi
+        run: scripts/freebsd/boot.sh /mnt/rb/freebsd.img uefi "boot smoke${{ (inputs.kyua || github.event_name != 'workflow_dispatch') && ' kyua' || '' }}" boots/uefi
         env:
           RB_RUN_LIMIT: 14400
       - name: summary
         if: always()
         run: |
-          case $RB_PIN in
-          main) job=FreeBSD-main-amd64-test ;;
-          *) job=FreeBSD-stable-15-amd64-test ;;
-          esac
-          python3 -I scripts/freebsd/published.py "$job" published.json || true
+          # The published run of the pin, from conf/freebsd/published.conf, or else the last one of
+          # the branch's test job.
+          read -r job build < <(awk -v p="$RB_PIN" '$1 == p { print $2, $3 }' conf/freebsd/published.conf) || true
+          if [ -z "${job:-}" ]; then
+            case $RB_PIN in
+            main) job=FreeBSD-main-amd64-test ;;
+            stable-14) job=FreeBSD-stable-14-amd64-test ;;
+            *) job=FreeBSD-stable-15-amd64-test ;;
+            esac
+          fi
+          python3 -I scripts/freebsd/published.py "$job" published.json ${build:+"$build"} || true
           python3 -I scripts/freebsd/summarize.py --build artifacts/freebsd-build-"$RB_PIN-$RB_CONF" \
             --boot bios=boots/bios --boot uefi=boots/uefi --published published.json \
             --conf "$RB_CONF" --out summary
@@ -296,9 +354,97 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: freebsd-results-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          name: freebsd-results-${{ env.RB_PIN }}-${{ env.RB_CONF }}${{ env.RB_RUN_NAME }}
           path: |
             boots
             summary
             published.json
           if-no-files-found: ignore
+
+  baseline:
+    name: rb baseline
+    needs: [rb, boot]
+    if: always() && needs.rb.result == 'success' && needs.boot.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RB_PIN_NAME: ${{ (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: download the results of the runs
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: freebsd-results-${{ env.RB_PIN }}-${{ env.RB_CONF }}*
+          path: results
+      - name: download the image
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: freebsd-image-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: image
+          run-id: ${{ inputs.image-run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: rb baseline
+        run: |
+          # Each run is two boots, BIOS and UEFI, which rb baseline joins with + into one run. The
+          # runs are separated by commas. It writes to out/baselines, not baselines/.
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          zstd -d -q image/freebsd.img.zst -o "$RUNNER_TEMP/freebsd.img"
+          from=""
+          for r in results/freebsd-results-*; do
+            run=""
+            for fw in bios uefi; do
+              [ -f "$r/boots/$fw/boot.json" ] || continue
+              python3 -I scripts/freebsd/rb-runs.py "$r/boots/$fw" "runs/$(basename "$r")/$fw" --image "$RUNNER_TEMP/freebsd.img"
+              run="$run+runs/$(basename "$r")/$fw"
+            done
+            [ -z "$run" ] || from="$from,${run#+}"
+          done
+          status=0
+          "$RUNNER_TEMP/rb/rb" baseline "$RB_PIN_NAME" --row amd64 --conf "$RB_CONF" --from "${from#,}" \
+            --image "$RUNNER_TEMP/freebsd.img" --dir out/baselines > baseline.md || status=$?
+          cp results/freebsd-results-"$RB_PIN-$RB_CONF"/published.json out/ 2>/dev/null || true
+          python3 -I scripts/freebsd/baseline-gap.py out/baselines out/published.json >> baseline.md || true
+          {
+            cat baseline.md
+            echo
+            echo "rb baseline exited with $status."
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp baseline.md out/
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: freebsd-baseline-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: out
+          if-no-files-found: ignore
+          retention-days: 90
+
+  repro:
+    name: compare the two builds
+    needs: build
+    if: always() && inputs.rebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: freebsd-build-${{ env.RB_PIN }}-${{ env.RB_CONF }}*
+          path: builds
+      - name: compare
+        run: |
+          status=0
+          python3 -I scripts/freebsd/repro.py builds/freebsd-build-"$RB_PIN-$RB_CONF" \
+            builds/freebsd-build-"$RB_PIN-$RB_CONF"-rebuild --out repro > /dev/null || status=$?
+          cat repro/repro.md >> "$GITHUB_STEP_SUMMARY"
+          echo "repro.py exited with $status." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: freebsd-repro-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: repro
+          if-no-files-found: ignore
+          retention-days: 90
