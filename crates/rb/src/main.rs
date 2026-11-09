@@ -85,6 +85,12 @@ fn run(args: &Args) -> Result<ExitCode, String> {
                 ExitCode::from(1)
             })
         }
+        "probes" => {
+            let repo = rb::repo::Repo::find()?;
+            let (text, same) = rb::probes::cli::run_cli(args, &repo.root)?;
+            print!("{text}");
+            Ok(exit(same))
+        }
         "shim" => {
             let repo = rb::repo::Repo::find()?;
             print!("{}", rb::shims::cli::run(args, &repo.root)?);
@@ -94,21 +100,13 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             let repo = rb::repo::Repo::find()?;
             let made = rb::toolchain::cli::make(args, &repo.root)?;
             print!("{}", made.report);
-            Ok(if made.ok {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            })
+            Ok(exit(made.ok))
         }
         "toolchain-diff" => {
             let repo = rb::repo::Repo::find()?;
             let (text, ok) = rb::toolchain::cli::diff(args, &repo.root)?;
             print!("{text}");
-            Ok(if ok {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            })
+            Ok(exit(ok))
         }
         "version" => {
             println!("rb {}", env!("CARGO_PKG_VERSION"));
@@ -178,4 +176,13 @@ fn demands(args: &Args) -> Result<ExitCode, String> {
     })?;
     print!("{report}");
     Ok(ExitCode::SUCCESS)
+}
+
+/// Exit 0 when a check held, and 1 when it did not.
+fn exit(ok: bool) -> ExitCode {
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
 }
