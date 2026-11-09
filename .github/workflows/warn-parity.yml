@@ -1,0 +1,123 @@
+# Scratch, for tamnd/rucc#4095: the NetBSD trunk build by its own GCC, with rucc run beside GCC on
+# every C unit. scratch/warn/shim-dual.sh is the C compiler slot: it runs the reference GCC, then rucc
+# on the same command line, and keeps both standard errors. scratch/warn/compare.py counts, per
+# option, the warnings rucc gives that GCC does not give on the same unit and line.
+
+name: warn-parity
+
+on:
+  push:
+    branches: [scratch/warn-parity]
+
+permissions:
+  contents: read
+
+env:
+  NB_ROOT: /mnt/nb
+  RUCC_REF: main
+
+jobs:
+  tools:
+    name: build.sh tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache@v6.1.0
+        id: tools
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          lookup-only: true
+      - name: host packages
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+      - name: fetch the pinned tree
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: build.sh tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: scripts/netbsd/phase.sh tools tools
+
+  world:
+    name: world and kernel, GCC and rucc
+    needs: tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: host packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rucc from source
+        run: |
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$RUCC_REF"
+          cargo build -q --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc --bin rucc
+          echo "rucc built from $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - name: the dual TOOLDIR
+        run: |
+          . scripts/netbsd/common.sh
+          dst="$NB_ROOT/tools-w"
+          mkdir -p "$NB_ROOT/warn/u"
+          cp -a "$NB_TOOLS" "$dst"
+          rm -f "$dst/bin/nbmake-amd64" "$dst/bin/nbmake-amd64-"*
+          mv "$dst/bin/x86_64--netbsd-gcc" "$dst/bin/x86_64--netbsd-gcc.ref"
+          sed -e "s|@RUCC@|$RUNNER_TEMP/rucc-src/target/release/rucc|" -e "s|@DIR@|$NB_ROOT/warn|" \
+            -e "s|@SYSROOT@|$NB_DEST|" -e "s|@GNUC@|$NB_PIN_GCC|" scratch/warn/shim-dual.sh \
+            > "$dst/bin/x86_64--netbsd-gcc"
+          chmod 755 "$dst/bin/x86_64--netbsd-gcc"
+          NB_TOOLDIR="$dst" scripts/netbsd/phase.sh wrapper -u makewrapper
+          ls -l "$dst/bin/nbmake-amd64"
+      - name: the world without the tools
+        run: |
+          NB_TOOLDIR="$NB_ROOT/tools-w" scripts/netbsd/phase.sh world -- \
+            "$NB_ROOT/tools-w/bin/nbmake-amd64" -C "$NB_ROOT/src" -j "$(nproc)" build \
+            BUILDTARGETS="do-top-obj params obj clean_METALOG do-distrib-dirs includes do-lib do-compat-lib do-build" \
+            || true
+      - name: the GENERIC kernel
+        run: NB_TOOLDIR="$NB_ROOT/tools-w" scripts/netbsd/phase.sh kernel -u kernel=GENERIC || true
+      - name: compare
+        if: always()
+        run: |
+          python3 scratch/warn/compare.py "$NB_ROOT/warn" "$NB_ROOT/warn/summary.md" "$NB_ROOT/warn/details.txt"
+          cat "$NB_ROOT/warn/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv" >> "$GITHUB_STEP_SUMMARY" || true
+          tar -C "$NB_ROOT" -cJf "$NB_ROOT/warn.tar.xz" warn
+          xz -T0 "$NB_ROOT"/logs/*.log || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: warn-parity
+          path: |
+            /mnt/nb/warn.tar.xz
+            /mnt/nb/warn/summary.md
+            /mnt/nb/warn/details.txt
+            /mnt/nb/logs
+          retention-days: 14
