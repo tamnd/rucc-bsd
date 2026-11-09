@@ -135,11 +135,15 @@ jobs:
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk \
             RB_PHASE=kernel-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: compile every unit of the ref build with rucc
+        # A unit stops after 300 s. The step stops after 120 minutes, and the steps after it still run.
+        timeout-minutes: 120
+        continue-on-error: true
         run: |
           mkdir -p compile replay
           scripts/freebsd/builder.sh get /build/out/compile-ref.jsonl compile/compile-ref.jsonl
           python3 -I scripts/freebsd/replay.py compile/compile-ref.jsonl --out replay --objects /build/replay \
-            --shim /build/toolchain/bin/x86_64-unknown-freebsd15.1-rb-cc-rucc | tee record/replay.txt
+            --shim /build/toolchain/bin/x86_64-unknown-freebsd15.1-rb-cc-rucc \
+            --timeouts /root/out/replay-timeouts.txt | tee record/replay.txt
           tar -cf - replay | scripts/freebsd/builder.sh ssh 'tar -xf - -C /root'
           start=$(date +%s)
           # shellcheck disable=SC2016
@@ -191,6 +195,10 @@ jobs:
             echo '```'
             sed -n '/^# rucc/,/^$/p' record/rb-tools.txt 2>/dev/null || true
             cat record/replay.txt 2>/dev/null || true
+            if [ -f record/replay-timeouts.txt ]; then
+              echo "units stopped by the timeout: $(wc -l < record/replay-timeouts.txt)"
+              head -40 record/replay-timeouts.txt
+            fi
             echo '```'
             for run in replay rucc; do
               f=compile/compile-$run.jsonl.xz
