@@ -1,15 +1,18 @@
 #!/bin/sh
 # One phase of a FreeBSD build, run as root in the builder VM.
 #
-#   build.sh world | kernel
+#   build.sh world | kernel | toolchain
 #
 # Environment:
 #   RB_SRC       the tree, unmodified
 #   RB_OBJ       MAKEOBJDIRPREFIX, the only place the build writes
 #   RB_SRCCONF   the SRCCONF file, conf/freebsd/<conf>.conf
-#   RB_TOOLCHAIN the CROSS_TOOLCHAIN name, amd64-gcc15 for G
+#   RB_TOOLCHAIN the CROSS_TOOLCHAIN name, amd64-gcc15, or the path of a .mk file of rb toolchain
 #   RB_OUT       where logs and phases.tsv go
 #   RB_JOBS      make -j
+#   RB_KERNCONF  the kernel configuration, GENERIC by default
+#   RB_MAKEFLAGS more make flags, such as -k
+#   RB_PHASE     the name of the phase in the logs, the argument by default
 #
 # The make command line is the one FreeBSD's own GCC CI jobs use (freebsd-ci, jobs/*-gcc14_build),
 # with our SRCCONF. Each phase appends "phase status seconds obj_kb disk_used_kb" to phases.tsv. On a
@@ -24,16 +27,19 @@ export MAKEOBJDIRPREFIX="$RB_OBJ"
 case $phase in
 world) target=buildworld ;;
 kernel) target=buildkernel ;;
-*) echo "usage: $0 world | kernel" >&2; exit 2 ;;
+toolchain) target=kernel-toolchain ;;
+*) echo "usage: $0 world | kernel | toolchain" >&2; exit 2 ;;
 esac
+phase=${RB_PHASE:-$phase}
 
 log="$RB_OUT/$phase.log"
 start=$(date +%s)
-echo "$phase: make -j$RB_JOBS $target CROSS_TOOLCHAIN=$RB_TOOLCHAIN SRCCONF=$RB_SRCCONF" \
+echo "$phase: make -j$RB_JOBS ${RB_MAKEFLAGS:+$RB_MAKEFLAGS }$target CROSS_TOOLCHAIN=$RB_TOOLCHAIN SRCCONF=$RB_SRCCONF" \
 	"in $RB_SRC, started $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # Only the stage banners reach the job log. The whole log is kept as an artifact.
 {
-	make -C "$RB_SRC" -j"$RB_JOBS" "$target" \
+	# shellcheck disable=SC2086
+	make -C "$RB_SRC" -j"$RB_JOBS" ${RB_MAKEFLAGS:-} "$target" \
 		TARGET=amd64 TARGET_ARCH=amd64 KERNCONF="$RB_KERNCONF" \
 		CROSS_TOOLCHAIN="$RB_TOOLCHAIN" \
 		__MAKE_CONF=/dev/null SRCCONF="$RB_SRCCONF" 2>&1

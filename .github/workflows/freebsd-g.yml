@@ -2,14 +2,18 @@
 #
 # The build job boots the official FreeBSD 15.1-RELEASE BASIC-CI image under QEMU with KVM on the
 # runner, with all the runner's vCPUs, 12 GB and a sparse 100 GB build disk on /mnt. In that VM it
-# installs amd64-gcc15 and amd64-binutils from the FreeBSD package repository, and builds the pinned,
+# installs amd64-gcc15 and amd64-binutils from the FreeBSD package repository. It builds rb and rb-cc
+# with rustup's Rust, and rb toolchain puts G's shims in /build/toolchain. Then it builds the pinned,
 # unmodified tree with
 #
-#   make -j4 buildworld buildkernel CROSS_TOOLCHAIN=amd64-gcc15 SRCCONF=conf/freebsd/<conf>.conf
+#   make -j4 buildworld buildkernel CROSS_TOOLCHAIN=/build/toolchain/ref.mk SRCCONF=conf/freebsd/<conf>.conf
 #
-# which is the command line of FreeBSD's own GCC CI jobs with our SRCCONF. Then it installs world,
+# which is the command line of FreeBSD's own GCC CI jobs with our SRCCONF and the shims in place of
+# the package's CROSS_TOOLCHAIN file. The shims run the same amd64-gcc15 with the same arguments, and
+# write a record of each call to compile.jsonl. Then it installs world,
 # kernel and distribution into a staging tree, adds the image changes of conf/freebsd/image and rb-rc,
-# and makes a GPT image with makefs and mkimg. The image and the build record are the artifacts.
+# and makes a GPT image with makefs and mkimg. rb census and rb demands read compile.jsonl. The image,
+# the build record and compile.jsonl.xz are the artifacts.
 #
 # The boot job boots the image twice, with 2 vCPUs and 8 GB as FreeBSD's CI test VM has: by BIOS for
 # the boot suite only, and by UEFI for the boot suite, the smoke suite and kyua over /usr/tests. It
@@ -63,11 +67,14 @@ env:
   RB_STOP: ${{ inputs.stop || 'all' }}
   RB_CACHE: /mnt/rb-cache
   RB_VM_DIR: /mnt/rb-builder
-  # The command environment of the scripts in the builder VM.
+  # The command environment of the scripts in the builder VM. RB_PIN_NAME is the pin's name in
+  # pins.toml, for rb.
   VM_ENV: >-
     RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
-    RB_SRCCONF=/root/harness/conf/freebsd/${{ inputs.conf || 'graded' }}.conf RB_TOOLCHAIN=amd64-gcc15
+    RB_SRCCONF=/root/harness/conf/freebsd/${{ inputs.conf || 'graded' }}.conf RB_TOOLCHAIN=/build/toolchain/ref.mk
     RB_HARNESS=/root/harness RB_DESTDIR=/build/destdir RB_IMAGE=/build/image/freebsd.img
+    RB_CONF=${{ inputs.conf || 'graded' }} RB_COMPILE_JSONL=/build/out/compile.jsonl
+    RB_PIN_NAME=${{ (inputs.pin || '15.1-release') == 'main' && 'freebsd-main' || 'freebsd-15.1' }}
 
 jobs:
   build:
@@ -131,10 +138,14 @@ jobs:
         if: env.RB_HIT != 'true'
         run: |
           scripts/freebsd/builder.sh up
-          tar -cf - conf scripts | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
+          tar --exclude=./.git --exclude=./target -cf - . \
+            | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
       - name: provision
         if: env.RB_HIT != 'true'
         run: scripts/freebsd/builder.sh ssh 'sh /root/harness/scripts/freebsd/provision.sh /root/out'
+      - name: rb, rb-cc and G's shims
+        if: env.RB_HIT != 'true' && env.RB_STOP != 'provision'
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out ref"
       - name: fetch the source of ${{ env.RB_PIN }}
         if: env.RB_HIT != 'true' && env.RB_STOP != 'provision'
         run: |
@@ -157,6 +168,14 @@ jobs:
           mkdir -p image
           scripts/freebsd/builder.sh get /build/image/freebsd.img.zst image/freebsd.img.zst
           ls -l image
+      - name: rb census and rb demands
+        if: always() && env.RB_HIT != 'true' && env.RB_STOP != 'provision'
+        continue-on-error: true
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/census.sh /root/out"
+          mkdir -p compile
+          scripts/freebsd/builder.sh get /build/out/compile.jsonl.xz compile/compile.jsonl.xz
+          ls -l compile
       - name: copy the build record out
         if: always() && env.RB_HIT != 'true'
         run: |
@@ -183,6 +202,13 @@ jobs:
           if [ -f record/toolchain.txt ]; then
             { echo; echo '```'; sed -n '/^# packages/,/^$/p;/--version/,+1p' record/toolchain.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f record/compile-jsonl.txt ]; then
+            { echo; echo '### compile.jsonl'; echo; echo '```'; cat record/compile-jsonl.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            for f in census demands; do
+              [ -f "record/$f.txt" ] || continue
+              { echo; echo "### rb $f"; echo; echo '```'; head -80 "record/$f.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            done
+          fi
           for f in record/*-error.txt; do
             [ -f "$f" ] || continue
             { echo; echo "First error in $(basename "$f" -error.txt):"; echo; echo '```'; tail -40 "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -194,6 +220,14 @@ jobs:
           name: freebsd-build-${{ env.RB_PIN }}-${{ env.RB_CONF }}
           path: record
           if-no-files-found: ignore
+      - name: upload compile.jsonl
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: freebsd-compile-${{ env.RB_PIN }}-${{ env.RB_CONF }}
+          path: compile
+          if-no-files-found: ignore
+          compression-level: 0
       - name: upload the image
         if: env.RB_STOP != 'provision' && env.RB_STOP != 'build'
         uses: actions/upload-artifact@v7.0.1
