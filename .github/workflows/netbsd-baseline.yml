@@ -1,0 +1,188 @@
+# The three-run baseline of NetBSD trunk amd64 graded (plan 12.5 and 16.1), from the G image of one
+# netbsd-g run. Nothing is built here.
+#
+# The atf job boots the GENERIC serial image of the netbsd-g run given as run_id, with the rb of
+# that run, once per run and shard: the ATF suite in the three shards of netbsd-g, each boot with
+# the boot, smoke and tests suites. The baseline job joins the three shards of each run with + and
+# gives the runs to rb baseline --from, then compares the counts with the published bare-metal run.
+#
+# Run it after the image job of the netbsd-g run has finished. The image artifact is kept 7 days.
+
+name: netbsd-baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: The netbsd-g run whose GENERIC image and rb are used
+        type: string
+        required: true
+      runs:
+        description: How many runs
+        type: choice
+        options: ["3", "1"]
+        default: "3"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  atf:
+    name: run ${{ matrix.run }} ATF ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        run: ${{ fromJSON(inputs.runs == '3' && '[1, 2, 3]' || '[1]') }}
+        shard: ["only:net", "only:lib", "except:net,lib"]
+        include:
+          - shard: "only:net"
+            tests: --tests-only net
+          - shard: "only:lib"
+            tests: --tests-only lib
+          - shard: "except:net,lib"
+            tests: --tests-except net,lib
+    env:
+      SHARD: ${{ matrix.shard }}
+      RUN: ${{ matrix.run }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-amd64-serial-image
+          path: ${{ runner.temp }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: shard name
+        run: echo "SHARD_NAME=$(echo "$SHARD" | tr ':,' '--')" >> "$GITHUB_ENV"
+      - name: rb boot with the tests suite
+        run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
+          truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
+          # shellcheck disable=SC2086
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/atf-$SHARD_NAME" --suite boot,smoke,tests $TESTS --timeout 18000 \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          TESTS: ${{ matrix.tests }}
+      - name: counts
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/atf-$SHARD_NAME"
+          shopt -s nullglob
+          tps=("$out"/results/tests/atf/*.tps)
+          if [ ${#tps[@]} -gt 0 ]; then
+            python3 scripts/netbsd/atf-counts.py count --out "$out/shard.counts" \
+              --cases "$out/shard.cases.tsv" --set "shard=$SHARD" --set "run=$RUN" "${tps[@]}"
+          fi
+          {
+            echo "### Run $RUN, ATF $SHARD"
+            echo
+            echo '```'
+            cat "$out/results/tests/atf/status" "$out/shard.counts" 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP"/netbsd-amd64-serial.img
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-baseline-run-${{ matrix.run }}-${{ env.SHARD_NAME }}
+          path: ${{ runner.temp }}/atf-${{ env.SHARD_NAME }}
+          retention-days: 30
+
+  baseline:
+    name: rb baseline
+    needs: atf
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: netbsd-baseline-run-*
+          path: runs
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-amd64-serial-image
+          path: ${{ runner.temp }}
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: rb baseline
+        run: |
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
+          from=""
+          for n in $(seq 1 "$RUNS"); do
+            shards=$(find runs -maxdepth 1 -name "netbsd-baseline-run-$n-*" | sort | paste -sd+)
+            from="$from${from:+,}$shards"
+          done
+          echo "from: $from"
+          mkdir -p out
+          status=0
+          "$RUNNER_TEMP/rb/rb" baseline netbsd-trunk --row amd64 --conf graded --from "$from" \
+            --image "$RUNNER_TEMP/netbsd-amd64-serial.img" --dir out/baselines > out/baseline.md || status=$?
+          python3 -I scripts/baseline/netbsd-gap.py out/baselines \
+            results/netbsd/published/amd64-baremetal-2026.10.04.03.28.10.counts > out/gap.md || true
+          for n in $(seq 1 "$RUNS"); do
+            python3 scripts/netbsd/atf-counts.py count --out "out/run-$n.counts" --set "run=$n" \
+              runs/netbsd-baseline-run-"$n"-*/results/tests/atf/*.tps || true
+          done
+          {
+            echo "Image and rb from netbsd-g run $RUN_ID."
+            echo
+            cat out/baseline.md
+            echo
+            echo "rb baseline exited with $status."
+            cat out/gap.md
+            echo
+            echo '```'
+            python3 scripts/netbsd/atf-counts.py compare \
+              results/netbsd/published/amd64-baremetal-2026.10.04.03.28.10.counts out/run-*.counts || true
+            echo '```'
+            echo
+            echo "| run | shard | result | seconds |"
+            echo "| --- | --- | --- | --- |"
+            for d in runs/*/; do
+              python3 -c 'import json,sys; b=json.load(open(sys.argv[1]+"boot.json")); print(f"| {sys.argv[2]} | {b[\"result\"]} | {b[\"seconds\"]:.0f} |")' \
+                "$d" "$(basename "$d" | sed 's/^netbsd-baseline-run-\([0-9]\)-/\1 | /')" || true
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          RUNS: ${{ inputs.runs }}
+          RUN_ID: ${{ inputs.run_id }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-baseline
+          path: out
+          retention-days: 90
