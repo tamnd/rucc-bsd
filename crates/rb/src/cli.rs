@@ -45,6 +45,34 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "baseline" => Accepts {
+            positional: true,
+            values: &[
+                "row",
+                "conf",
+                "image",
+                "from",
+                "runs",
+                "dir",
+                "work",
+                "system",
+                "suite",
+                "firmware",
+                "tests-only",
+                "tests-except",
+                "boot-timeout",
+                "timeout",
+                "reboots",
+                "spare-disks",
+                "disk-size",
+                "cpus",
+                "memory",
+                "qemu",
+                "ovmf-code",
+                "ovmf-vars",
+            ],
+            switches: &["dry-run"],
+        },
         "boot" => Accepts {
             positional: false,
             values: &[
@@ -109,6 +137,14 @@ pub const USAGE: &str = "\
 rb: build pinned FreeBSD and NetBSD trees with rucc and with a reference GCC
 
 usage:
+  rb baseline PIN --conf C (--image IMG | --from DIR,DIR,DIR) [--row ROW] [--runs N] [--dir DIR]
+          [--work DIR] [--system freebsd|netbsd] [--suite boot,smoke,tests] [the options of rb boot]
+      Boot G's image N times, 3 by default, each on a fresh overlay, and write the baseline to
+      DIR/<system>/<row>/<version>/<conf>. DIR is baselines/ by default. The baseline has each
+      case's result in each run, the cases that passed in every run, the counts per run, the
+      kernel messages and the image's SHA-256. The boots go to work/baseline/... and run every
+      suite by default. With --from, the runs are the output directories of earlier rb boot
+      commands, and nothing boots. Exits 1 when a run did not pass.
   rb boot --image IMG --out DIR [--suite boot,smoke,tests] [--row ROW] [--firmware ovmf|seabios]
           [--tests-only DIR,...] [--tests-except DIR,...] [--boot-timeout SECS] [--timeout SECS]
           [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
