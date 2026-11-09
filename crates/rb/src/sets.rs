@@ -29,7 +29,8 @@ pub fn run(
     let sets = Sets::load(&repo.root)?;
     let old = PinsFile::load(&repo.root)?;
     let time = as_of.map_or_else(now, str::to_string);
-    let Expanded { file, notes } = expand(&sets, web, &time, as_of, old.as_ref())?;
+    let good = rb_pins::good::from_baselines(&repo.root, &time)?;
+    let Expanded { file, notes } = expand(&sets, web, &time, as_of, old.as_ref(), &good)?;
     let up_to_date = old.as_ref().is_some_and(|o| o.same_pins(&file));
 
     let mut report = table(&file);
