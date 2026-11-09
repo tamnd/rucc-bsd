@@ -1,0 +1,27 @@
+# The first G run after the rump fix in e89b13157d, and the baseline for R on this pin. Smoke passed 11 of 12 checks: the module check failed because filemon is obsolete on trunk.
+label=G
+system=netbsd
+pin=trunk
+commit=3c50f59789893ab1f71051686347e79c7b2e8327
+row=amd64
+cc=gcc-in-tree
+gcc=14.4.0
+kernel=GENERIC
+image=live-image
+host=github-ubuntu-24.04-kvm
+vm=2-vcpu-8g
+run=https://github.com/tamnd/rucc-bsd/actions/runs/42559922124
+date=2026-11-09
+dirs=atf bin compat crypto dev fs games include ipf kernel lib libexec modules net rump sbin share sys usr.bin usr.sbin 
+programs=1039
+broken_programs=0
+cases=11623
+passed=10897
+failed=6
+skipped=580
+expected_failures=140
+expected_failure=111
+expected_death=0
+expected_exit=0
+expected_signal=29
+expected_timeout=0

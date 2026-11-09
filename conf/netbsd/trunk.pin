@@ -2,9 +2,9 @@
 # The scripts under scripts/netbsd read this file with the shell. When pins.toml has a NetBSD entry,
 # rb writes this file from it.
 NB_PIN_NAME=trunk
-NB_PIN_SHORT=36eddebcc
-NB_PIN_COMMIT=36eddebcc36cb0775aa2962005b9c05419a6ff01
-NB_PIN_DATE=2026-11-04
+NB_PIN_SHORT=3c50f5978
+NB_PIN_COMMIT=3c50f59789893ab1f71051686347e79c7b2e8327
+NB_PIN_DATE=2026-11-08
 NB_PIN_REPO=NetBSD/src
 # The in-tree GCC that build.sh tools builds at this commit, and so the persona rucc claims (04.3).
 NB_PIN_GCC=14.4.0
