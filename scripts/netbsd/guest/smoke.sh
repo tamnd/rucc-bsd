@@ -38,8 +38,9 @@ dhcp() {
 	ifconfig -a && ifconfig vioif0 | grep -q 'inet '
 }
 
+# GENERIC has ext2fs and most file systems built in, so the check loads filemon, which it does not.
 module() {
-	modstat && modload ext2fs && modstat ext2fs && modunload ext2fs
+	modstat && modload filemon && modstat filemon && modunload filemon
 }
 
 check uname uname -a
