@@ -183,6 +183,13 @@ jobs:
             NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh "kernel-$CC_NAME-k" -- \
               "$NB_ROOT/tools-r/bin/nbmake-amd64" -k -j "$(nproc)" -C "$dir" || true
           fi
+      # A link whose nbctfmerge failed leaves netbsd as the plain ld output. This finds why and
+      # does the steps after nbctfmerge, so the kernel can still be booted.
+      - name: nbctfmerge after the link
+        if: always() && matrix.cc == 'rucc'
+        run: |
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/ctfmerge-check.sh GENERIC \
+            "$NB_ROOT/logs/kernel-$CC_NAME.log" >> "$GITHUB_STEP_SUMMARY"
       - name: summary
         if: always()
         run: |
@@ -205,7 +212,7 @@ jobs:
             scripts/netbsd/r-report.sh "$NB_ROOT/logs/kernel-$CC_NAME.log" "$NB_ROOT/logs/kernel-$CC_NAME-k.log"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: the kern-GENERIC set from the rucc kernel
-        if: matrix.cc == 'rucc' && inputs.g_run != ''
+        if: always() && matrix.cc == 'rucc' && inputs.g_run != ''
         run: |
           kernel="$NB_ROOT/obj/sys/arch/amd64/compile/GENERIC/netbsd"
           if [ ! -f "$kernel" ]; then
@@ -216,7 +223,7 @@ jobs:
           mkdir -p "$NB_ROOT/r-kernel"
           cp "$NB_ROOT"/release/amd64/binary/sets/kern-GENERIC.* "$kernel" "$NB_ROOT/r-kernel/"
       - uses: actions/upload-artifact@v7.0.1
-        if: matrix.cc == 'rucc' && inputs.g_run != ''
+        if: always() && matrix.cc == 'rucc' && inputs.g_run != ''
         with:
           name: netbsd-r-kernel
           path: /mnt/nb/r-kernel
@@ -252,7 +259,9 @@ jobs:
   image:
     name: rb image with the rucc kernel
     needs: [rb, kernel]
-    if: inputs.g_run != ''
+    # The kernel job fails when any step of build.sh fails, also after the link. The kernel
+    # artifact is there when a kernel linked, and the download below fails when it is not.
+    if: always() && inputs.g_run != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
