@@ -473,11 +473,13 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/download-artifact@v8.0.1
+        if: always()
         with:
           name: rb-linux-x86_64
           path: ${{ runner.temp }}/rb
         continue-on-error: true
       - name: a one-run baseline
+        if: always()
         run: |
           # The run is in shards: the two boots of the boot job and the three ATF boots. rb
           # baseline joins them with + into one run. It writes to out/baselines, not baselines/.
