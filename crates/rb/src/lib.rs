@@ -6,6 +6,7 @@
 
 pub mod baseline;
 pub mod boot;
+pub mod build;
 pub mod cases;
 pub mod census;
 pub mod cli;

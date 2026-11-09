@@ -149,6 +149,14 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
             ],
             switches: &["ungraded"],
         },
+        "build" => Accepts {
+            positional: true,
+            values: &[
+                "row", "cc", "root", "src", "targets", "jobs", "conf", "kernconf", "rucc", "log",
+                "shim", "noise",
+            ],
+            switches: &["no-shim", "ungraded", "dry-run"],
+        },
         "probes" => Accepts {
             positional: true,
             values: &["row", "dir", "g", "r", "from", "work", "details"],
@@ -188,6 +196,21 @@ usage:
       sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
       DIR/boot.json. ROW is amd64 by default, and the firmware is the row's test firmware.
       Exits 1 when the boot did not pass.
+  rb build PIN --cc rucc|ref --root DIR [--row ROW] [--targets T,...] [--src DIR] [--jobs N]
+          [--conf CONF] [--kernconf NAME] [--rucc PATH] [--log FILE] [--shim PATH] [--noise N]
+          [--no-shim] [--ungraded] [--dry-run]
+      Build the pin for the row with R's or G's compiler, as the workflows do. The tree is DIR/src
+      or --src, and the build writes DIR/obj, DIR/destdir, DIR/release and DIR/logs. First rb makes
+      DIR/toolchain-<cc> as rb toolchain does and runs its checks; the compile records go to
+      DIR/logs/compile-<cc>.jsonl or FILE. For NetBSD each target is one build.sh run with the
+      TOOLDIR of the shim, -U and -u; the TOOLDIR of build.sh tools is DIR/tools, and the target
+      tools builds it. The targets are distribution, kernel=GENERIC, releasekernel=GENERIC and
+      sets by default. For FreeBSD the targets are world and kernel by default, run by make with
+      CROSS_TOOLCHAIN set to the .mk file of rb toolchain and SRCCONF=conf/freebsd/CONF.conf,
+      graded by default; another target, such as installworld, gets DESTDIR=DIR/destdir.
+      --no-shim builds G with the reference alone, as the B0 workflows do. Each target's output
+      goes to DIR/logs/<target>.log and a line to DIR/logs/phases.tsv. --dry-run prints the
+      commands. Exits 1 when a check or a target fails.
   rb census LOG [--objdir DIR] [--skip PATH,...] [--objects FILE] [--limit N]
       Say which compiler made each object of one build, from the compile.jsonl that rb-cc,
       rb-c++, rb-cpp and rb-as wrote. With --objdir, also walk the object tree, and count every
