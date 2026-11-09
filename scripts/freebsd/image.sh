@@ -15,6 +15,13 @@
 # 3. makefs for the root file system, an ESP with loader.efi, and mkimg with pmbr, gptboot, the ESP,
 #    swap and root. These are the tools and the layout of release/tools/vmimage.subr. A vm-image
 #    target on main needs a pkgbase repository, so rb uses the tools directly (plan 12.3).
+#
+# Two builds of one pin must give the same image (plan 16.1). The time of the image is the time of
+# the tree's Makefile, which is the commit time of a git pin and the build time of a release. makefs
+# -T and mkimg -t use it, and SOURCE_DATE_EPOCH has it for pkg. boot/entropy comes from it, not from
+# /dev/random. pkg's database gets it as the install time of each package. RB_OUT gets
+# install.manifest after step 1 and staging.manifest after step 2: one line per file with its mode,
+# owner, size and SHA-256, and one line per link with its target. A second build compares them.
 set -eu
 : "${RB_JOBS:=$(sysctl -n hw.ncpu)}"
 : "${RB_IMAGE_SIZE:=10g}"
@@ -26,6 +33,15 @@ work=$(dirname "$RB_IMAGE")
 mkdir -p "$RB_OUT" "$work"
 
 now() { date +%s; }
+epoch=$(stat -f %m "$RB_SRC/Makefile")
+export SOURCE_DATE_EPOCH="$epoch"
+manifest() {
+	(
+		cd "$1" || exit 1
+		find . -print0 | sort -z | xargs -0 stat -f '%Sp %Su %Sg %z %N%SY'
+		find . -type f -print0 | sort -z | xargs -0 sha256 -r
+	) > "$2" || echo "the manifest of $1 is not complete" >&2
+}
 phase_done() {
 	printf '%s\t0\t%s\t%s\t%s\n' "$1" "$(($(now) - $2))" "$(du -sk "$3" | cut -f1)" \
 		"$(df -k "$RB_OBJ" | awk 'NR == 2 { print $3 }')" >> "$RB_OUT/phases.tsv"
@@ -42,6 +58,7 @@ if ! make -C "$RB_SRC" -j"$RB_JOBS" installworld installkernel distribution DEST
 	tail -60 "$RB_OUT/install.log"
 	exit 1
 fi
+manifest "$d" "$RB_OUT/install.manifest"
 phase_done install "$start" "$d"
 
 # 2. The image changes.
@@ -62,7 +79,7 @@ cat "$conf/kyua.conf" >> "$d/etc/kyua/kyua.conf"
 install -m 555 "$guest/rb" "$d/etc/rc.d/rb"
 # boot2 and the BIOS loader use the serial console too, so a BIOS boot that stops early shows why.
 echo '-S115200 -Dh' > "$d/boot.config"
-dd if=/dev/random of="$d/boot/entropy" bs=4k count=1 2>/dev/null
+for i in $(jot 32); do sha512 -q -s "rb-entropy $epoch $i"; done | head -c 4096 > "$d/boot/entropy"
 
 # The test packages, installed with the image's own pkg in a chroot, as freebsd-ci does.
 cp /etc/resolv.conf "$d/etc/resolv.conf"
@@ -91,9 +108,14 @@ cat > "$d/usr/local/etc/rb-pkg/rb.conf" <<'EOF'
 rb: { url: "file:///var/db/rb-repo", signature_type: "none", enabled: yes }
 EOF
 chroot "$d" pkg clean -ay >> "$RB_OUT/packages.log" 2>&1
+# pkg shell opens the local database when it has no file argument, and reads SQL on its input.
+echo "UPDATE packages SET time = $epoch; VACUUM;" | chroot "$d" pkg shell >> "$RB_OUT/packages.log" 2>&1 ||
+	echo "pkg shell failed, so the install times stay" >> "$RB_OUT/packages.log"
+chroot "$d" pkg query '%t' | sort | uniq -c >> "$RB_OUT/packages.log"
 umount "$d/dev"
 trap - EXIT
 rm -f "$d/etc/resolv.conf"
+manifest "$d" "$RB_OUT/staging.manifest"
 phase_done overlay "$start" "$d"
 
 # 3. The image.
@@ -101,12 +123,15 @@ start=$(now)
 rm -rf "$work/esp" "$work/esp.img" "$work/root.ufs" "$RB_IMAGE"
 mkdir -p "$work/esp/EFI/BOOT"
 cp "$d/boot/loader.efi" "$work/esp/EFI/BOOT/bootx64.efi"
-makefs -t msdos -o fat_type=32 -o sectors_per_cluster=1 -o volume_label=EFISYS -s 64m \
+makefs -T "$epoch" -t msdos -o volume_id=0x52420001 -o fat_type=32 -o sectors_per_cluster=1 \
+	-o volume_label=EFISYS -s 64m \
 	"$work/esp.img" "$work/esp" > /dev/null
-makefs -B little -t ffs -Z -s "$RB_IMAGE_SIZE" -f 200000 \
+makefs -T "$epoch" -B little -t ffs -Z -s "$RB_IMAGE_SIZE" -f 200000 \
 	-o label=rootfs,version=2,softupdates=1,bsize=32768,fsize=4096 \
 	"$work/root.ufs" "$d" > "$RB_OUT/makefs.log"
-mkimg -s gpt -f raw \
+esp_sha256=$(sha256 -q "$work/esp.img")
+root_sha256=$(sha256 -q "$work/root.ufs")
+mkimg -t "$epoch" -s gpt -f raw \
 	-b "$d/boot/pmbr" \
 	-p freebsd-boot/bootfs:="$d/boot/gptboot" \
 	-p efi/efiboot0:="$work/esp.img" \
@@ -118,6 +143,10 @@ zstd -q -T0 -f -9 "$RB_IMAGE" -o "$RB_IMAGE.zst"
 printf 'image\t0\t%s\t%s\t%s\n' "$(($(now) - start))" "$(du -k "$RB_IMAGE.zst" | cut -f1)" \
 	"$(df -k "$RB_OBJ" | awk 'NR == 2 { print $3 }')" >> "$RB_OUT/phases.tsv"
 {
+	echo "epoch $epoch"
+	echo "esp_sha256 $esp_sha256"
+	echo "root_sha256 $root_sha256"
+	echo "raw_sha256 $(sha256 -q "$RB_IMAGE")"
 	echo "raw_bytes $(stat -f %z "$RB_IMAGE")"
 	echo "raw_allocated_kb $(du -k "$RB_IMAGE" | cut -f1)"
 	echo "zst_bytes $(stat -f %z "$RB_IMAGE.zst")"
