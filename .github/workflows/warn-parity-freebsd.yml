@@ -1,0 +1,101 @@
+# Scratch, for tamnd/rucc#4095: FreeBSD 15.1 sources built in a FreeBSD 15.1 VM by gcc15, the
+# FreeBSD reference, with rucc run beside it on every C unit through scratch/warn/shim-dual.sh.
+# Each directory is built with make in /usr/src, so the flags are those of the tree's bsd.sys.mk
+# for gcc at the default WARNS.
+
+name: warn-parity-freebsd
+
+on:
+  push:
+    branches: [scratch/warn-parity-freebsd]
+
+permissions:
+  contents: read
+
+jobs:
+  freebsd:
+    name: freebsd 15.1, gcc15 and rucc
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: size the VM
+        id: size
+        run: |
+          echo "cpu=$(nproc)" >> "$GITHUB_OUTPUT"
+          total=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
+          echo "mem=$((total - 2048))" >> "$GITHUB_OUTPUT"
+      - name: start FreeBSD
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          release: "15.1"
+          cpu: ${{ steps.size.outputs.cpu }}
+          mem: ${{ steps.size.outputs.mem }}
+          prepare: |
+            set -e
+            pkg install -y bash curl git gcc15 python3
+            curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+      - name: rucc from source
+        shell: freebsd {0}
+        run: |
+          set -e
+          . /root/.cargo/env
+          git clone -q https://github.com/tamnd/rucc /var/tmp/rucc-src
+          cd /var/tmp/rucc-src
+          git checkout -q main
+          git rev-parse HEAD
+          CARGO_TARGET_DIR=/var/tmp/target cargo build -q --release -p rucc --bin rucc
+          /var/tmp/target/release/rucc --version
+          gcc15 --version | head -1
+      - name: the source tree
+        shell: freebsd {0}
+        run: |
+          set -e
+          fetch -q -o /var/tmp/src.txz https://download.freebsd.org/releases/amd64/15.1-RELEASE/src.txz
+          tar -C / -xf /var/tmp/src.txz
+          ls /usr/src | head -40
+      - name: the dual compiler
+        shell: freebsd {0}
+        run: |
+          set -e
+          mkdir -p /var/tmp/warn/u
+          sed -e 's|@RUCC@|/var/tmp/target/release/rucc|' -e 's|@DIR@|/var/tmp/warn|' \
+            -e 's|--target=x86_64--netbsd|--target=x86_64-unknown-freebsd15.1|' \
+            -e 's|sysroot=--sysroot=@SYSROOT@|sysroot=|' -e 's|@GNUC@|15.2.0|' \
+            scratch/warn/shim-dual.sh > /usr/local/bin/dualcc
+          sed -i '' -e 's|^ref="$0.ref"|ref=/usr/local/bin/gcc15|' /usr/local/bin/dualcc
+          chmod 755 /usr/local/bin/dualcc
+          head -12 /usr/local/bin/dualcc
+          /usr/local/bin/dualcc --version | head -1
+      - name: build
+        timeout-minutes: 240
+        shell: freebsd {0}
+        run: |
+          export MAKEOBJDIRPREFIX=/var/tmp/obj
+          jobs=$(sysctl -n hw.ncpu)
+          for d in lib/libc lib/libutil lib/libmd lib/libcrypt bin sbin usr.bin libexec usr.sbin; do
+            start=$(date +%s)
+            make -C /usr/src/$d -k -j"$jobs" CC=/usr/local/bin/dualcc MK_TESTS=no obj > /var/tmp/warn/obj-${d%%/*}-${d##*/}.log 2>&1
+            make -C /usr/src/$d -k -j"$jobs" CC=/usr/local/bin/dualcc MK_TESTS=no all > /var/tmp/warn/build-${d%%/*}-${d##*/}.log 2>&1
+            echo "$d: exit $?, $(( $(date +%s) - start )) s, $(wc -l < /var/tmp/warn/units.tsv) units so far"
+          done
+          grep -h -- '-Werror' /var/tmp/warn/build-bin-bin.log | head -2
+      - name: compare
+        if: always()
+        shell: freebsd {0}
+        run: |
+          python3 scratch/warn/compare.py /var/tmp/warn /var/tmp/rucc-src/crates/rucc-diag/src/named.rs \
+            /var/tmp/warn/summary.md /var/tmp/warn/details.txt
+          cat /var/tmp/warn/summary.md
+          mkdir -p out
+          tar -C /var/tmp -cJf out/warn.tar.xz warn
+          cp /var/tmp/warn/summary.md /var/tmp/warn/details.txt out/
+      - name: summary
+        if: always()
+        run: cat out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: warn-parity-freebsd
+          path: out
+          retention-days: 14
