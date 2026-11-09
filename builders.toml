@@ -27,7 +27,9 @@ memory_gb = 12
 build_disk_gb = 100
 
 # The NetBSD host: build.sh cross-builds from any POSIX host and builds its own reference GCC.
-# The digest is the index digest of debian:13 on Docker Hub, read on 8 November 2026.
+# The digest is the index digest of debian:13 on Docker Hub, read on 8 November 2026. The container
+# is provision/builders/netbsd-host/Dockerfile on that base. The netbsd-host workflow builds it and
+# pushes it to ghcr.io/tamnd/rucc-bsd-netbsd-host.
 [builder.netbsd-host]
 system = "netbsd"
 kind = "container"

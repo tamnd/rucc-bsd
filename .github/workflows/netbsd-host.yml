@@ -1,0 +1,262 @@
+# The NetBSD build.sh container (plan 14.6), and two G builds of NetBSD trunk in it (plan 16.1).
+#
+# The container job builds provision/builders/netbsd-host, the netbsd-host of builders.toml: debian:13
+# at the recorded digest, with a host C and C++ compiler and the tools that build.sh needs. It
+# prints the image ID and the package versions. On a manual run it pushes the image to
+# ghcr.io/<owner>/rucc-bsd-netbsd-host and hands it to the build jobs as an artifact.
+#
+# On a manual run, each build job builds the pinned tree in the container from nothing: build.sh
+# tools, distribution, the GENERIC kernel, releasekernel and the sets, all with -P (MKREPRO), with
+# MKREPRO_TIMESTAMP the commit time of the pin. G's compiler runs through the rb-cc shims of
+# rb toolchain netbsd-trunk --cc ref, which write compile.jsonl. After the build, the first job
+# runs rb census and rb demands over it. Each job writes a manifest of the sets and the kernels, and
+# the compare job compares the two manifests. With rebuild off there is one build job and no compare.
+#
+# The work is under /mnt/nb, the runner's larger disk, as in netbsd-g.
+
+name: netbsd-host
+
+on:
+  pull_request:
+    paths:
+      - provision/builders/netbsd-host/**
+      - .github/workflows/netbsd-host.yml
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Build twice and compare the two builds
+        type: boolean
+        default: true
+      shims:
+        description: Run G through the rb-cc shims and write compile.jsonl
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  NB_ROOT: /mnt/nb
+
+jobs:
+  container:
+    name: the netbsd-host container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: docker build
+        run: |
+          docker build -t netbsd-host provision/builders/netbsd-host
+          id=$(docker image inspect -f '{{.Id}}' netbsd-host)
+          {
+            echo "### The netbsd-host container"
+            echo
+            echo "Image ID: \`$id\`"
+            echo
+            echo '```'
+            docker run --rm netbsd-host bash -c 'cat /etc/debian_version; gcc --version | head -1; grep -E "^(gcc|g\+\+|libc6|make|zlib1g-dev|git|python3) " /etc/rb-packages.txt'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p container
+          docker run --rm netbsd-host cat /etc/rb-packages.txt > container/packages.txt
+          echo "$id" > container/image-id.txt
+      - name: push to ghcr.io
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        run: |
+          name="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/rucc-bsd-netbsd-host"
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag netbsd-host "$name:${GITHUB_SHA::12}"
+          docker push -q "$name:${GITHUB_SHA::12}"
+          digest=$(docker image inspect -f '{{index .RepoDigests 0}}' "$name:${GITHUB_SHA::12}")
+          echo "$digest" > container/repo-digest.txt
+          echo "Pushed \`$digest\`." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: save the image
+        if: github.event_name == 'workflow_dispatch'
+        run: docker save netbsd-host | zstd -q -T0 -o container/netbsd-host.tar.zst
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: netbsd-host-container
+          path: container
+          compression-level: 0
+          retention-days: 7
+
+  rb:
+    name: cargo build rb and rb-cc
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb -p rb-shim --bin rb-cc
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rb-and-rb-cc
+          path: |
+            target/release/rb
+            target/release/rb-cc
+          retention-days: 7
+
+  build:
+    name: build ${{ matrix.build }}
+    needs: [container, rb]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJSON(inputs.rebuild && '[1, 2]' || '[1]') }}
+    env:
+      BUILD: ${{ matrix.build }}
+      SHIMS: ${{ inputs.shims }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+          mkdir -p "$NB_ROOT/out" "$NB_ROOT/rb/bin"
+          df -h / /mnt
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-host-container
+          path: ${{ runner.temp }}/container
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-and-rb-cc
+          path: /mnt/nb/rb/bin
+      - name: load the container
+        run: |
+          zstd -dc "$RUNNER_TEMP/container/netbsd-host.tar.zst" | docker load
+          chmod +x "$NB_ROOT"/rb/bin/*
+          cp "$RUNNER_TEMP/container/image-id.txt" "$RUNNER_TEMP/container/packages.txt" "$NB_ROOT/out/"
+      - name: fetch the pinned tree
+        run: |
+          scripts/netbsd/fetch.sh
+          echo "MKREPRO_TIMESTAMP=$(git -C "$NB_ROOT/src" log -1 --format=%ct)" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: build.sh tools
+        run: provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh tools -P tools
+      - name: G's TOOLDIR with the rb-cc shims
+        if: env.SHIMS == 'true'
+        run: |
+          provision/builders/netbsd-host/run.sh "$NB_ROOT/rb/bin/rb" toolchain netbsd-trunk --dir "$NB_ROOT/tools-g" \
+            --cc ref --tools "$NB_ROOT/tools" --log "$NB_ROOT/out/compile.jsonl" --shim "$NB_ROOT/rb/bin/rb-cc" \
+            | tee "$NB_ROOT/out/toolchain.txt"
+          echo "NB_TOOLDIR=$NB_ROOT/tools-g" >> "$GITHUB_ENV"
+      - name: build.sh distribution
+        run: provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh distribution -P -u distribution
+      - name: build.sh kernel=GENERIC
+        run: |
+          provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh kernel -P -u kernel=GENERIC
+          provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh releasekernel -P -u releasekernel=GENERIC
+      - name: build.sh sets
+        run: |
+          provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh sets -P -u sets
+          provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh kernset -- scripts/netbsd/kernset.sh GENERIC
+      - name: the manifest of the sets
+        if: always()
+        run: python3 -I provision/builders/netbsd-host/sets-manifest.py "$NB_ROOT/release" "$NB_ROOT/out/sets.manifest"
+      - name: rb census and rb demands
+        if: always() && env.SHIMS == 'true' && matrix.build == 1
+        continue-on-error: true
+        run: |
+          out="$NB_ROOT/out"
+          log="$out/compile.jsonl"
+          echo "compile.jsonl: $(wc -l < "$log") records, $(stat -c %s "$log") bytes" | tee "$out/compile-jsonl.txt"
+          start=$(date +%s)
+          provision/builders/netbsd-host/run.sh "$NB_ROOT/rb/bin/rb" census "$log" --objdir "$NB_ROOT/obj" \
+            --objects "$out/census-objects.tsv" > "$out/census.txt" 2>&1 || echo "rb census failed" >> "$out/census.txt"
+          echo "rb census: $(($(date +%s) - start))s" | tee -a "$out/compile-jsonl.txt"
+          start=$(date +%s)
+          provision/builders/netbsd-host/run.sh "$NB_ROOT/rb/bin/rb" demands "$log" --pin netbsd-trunk --row amd64 \
+            --conf graded --write --jobs "$(nproc)" > "$out/demands.txt" 2>&1 || echo "rb demands failed" >> "$out/demands.txt"
+          echo "rb demands: $(($(date +%s) - start))s" | tee -a "$out/compile-jsonl.txt"
+          cp demands.toml "$out/" || true
+          mkdir -p "$NB_ROOT/compile"
+          xz -T0 -c "$log" > "$NB_ROOT/compile/compile.jsonl.xz"
+          echo "compile.jsonl.xz: $(stat -c %s "$NB_ROOT/compile/compile.jsonl.xz") bytes" | tee -a "$out/compile-jsonl.txt"
+          rm -f "$log"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### Build $BUILD in the netbsd-host container"
+            echo
+            echo "MKREPRO_TIMESTAMP=$MKREPRO_TIMESTAMP. Times are wall clock on one ubuntu-24.04 runner ($(nproc) vCPUs)."
+            echo
+            scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"
+            for f in toolchain compile-jsonl census demands; do
+              [ -f "$NB_ROOT/out/$f.txt" ] || continue
+              echo
+              echo "#### $f"
+              echo
+              echo '```'
+              head -60 "$NB_ROOT/out/$f.txt"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp "$NB_ROOT/logs/phases.tsv" "$NB_ROOT/out/" || true
+          xz -T0 "$NB_ROOT"/logs/*.log || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-host-build-${{ matrix.build }}
+          path: |
+            /mnt/nb/out
+            /mnt/nb/logs
+          retention-days: 30
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-host-compile
+          path: /mnt/nb/compile
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 30
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-host-sets-${{ matrix.build }}
+          path: /mnt/nb/release/amd64/binary
+          if-no-files-found: ignore
+          compression-level: 0
+          retention-days: 5
+
+  compare:
+    name: compare the two builds
+    needs: build
+    if: always() && inputs.rebuild && needs.build.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: netbsd-host-build-*
+          path: builds
+      - name: compare
+        run: |
+          status=0
+          python3 -I provision/builders/netbsd-host/sets-compare.py builds/netbsd-host-build-1/out/sets.manifest \
+            builds/netbsd-host-build-2/out/sets.manifest --out compare > /dev/null || status=$?
+          cat compare/compare.md >> "$GITHUB_STEP_SUMMARY"
+          echo "sets-compare.py exited with $status." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-host-compare
+          path: compare
+          if-no-files-found: ignore
+          retention-days: 90
