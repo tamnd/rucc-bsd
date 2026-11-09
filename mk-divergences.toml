@@ -1,0 +1,14 @@
+# The differences between R's and G's configuration that are correct (plan 05.5 and 02.2).
+#
+# rb mk-diff reads the entries with a variable, and rb flags-diff reads the entries with a flag.
+# A `*` in a name matches any text. `system` and `point` limit an entry to one system or to one
+# point of rb mk-diff. Every entry has a reason. A difference caused by rucc answering a probe
+# wrongly is a bug, and it never gets an entry here.
+
+[[divergence]]
+variable = "*COMPILER_RESOURCE_DIR"
+reason = "Each compiler has its own resource directory, from -print-resource-dir or -print-file-name=include."
+
+[[divergence]]
+variable = "*COMPILER_ABSOLUTE_PATH"
+reason = "The path of the compiler itself. rb mk-diff replaces the toolchain directory, but a compiler found on PATH keeps its own path."

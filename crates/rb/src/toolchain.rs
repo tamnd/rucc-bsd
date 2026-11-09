@@ -248,7 +248,7 @@ fn rucc_check(label: &str, rucc: &Path, pin: Option<&RuccPin>, ungraded: bool) -
 
 /// Read the lines of a make file as `NAME=value` pairs, in order. Comments and blank lines and
 /// `?=` defaults are left out.
-fn assignments(text: &str) -> Vec<(String, String)> {
+pub(crate) fn assignments(text: &str) -> Vec<(String, String)> {
     text.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
@@ -263,7 +263,7 @@ fn assignments(text: &str) -> Vec<(String, String)> {
 }
 
 /// Expand `${NAME}` from the `NAME?=value` lines of the same file.
-fn expand(text: &str, value: &str) -> String {
+pub(crate) fn expand(text: &str, value: &str) -> String {
     let mut out = value.to_string();
     for line in text.lines() {
         if let Some((k, v)) = line.split_once("?=") {
