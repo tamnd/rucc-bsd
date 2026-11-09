@@ -1,33 +1,39 @@
-# R for the FreeBSD 15.1 amd64 kernel (milestone B5): the GENERIC kernel and its modules of the
-# pinned tree, compiled with rucc in the C compiler slot through rb-cc. The world, the image and the
-# tests come later. The pin, the builder VM and the paths are those of freebsd-g.yml.
+# R for FreeBSD 15.1 amd64 (milestones B5 and B6): the pinned tree compiled with rucc in the C
+# compiler slot through rb-cc. The pin, the builder VM and the paths are those of freebsd-g.yml.
+# The input target picks the kernel (the GENERIC kernel and its modules, the default) or the world.
 #
 # The builder VM builds rb, rb-cc and rucc with rustup's Rust, and rb toolchain writes the shims,
-# ref.mk and rucc.mk in /build/toolchain (scripts/freebsd/rb-tools.sh). make kernel-toolchain builds
-# the host tools with the package's CROSS_TOOLCHAIN file, because the C compiler slot does not build
-# them. Then the job builds the kernel three ways:
-#   rucc     make -k buildkernel with rucc.mk. XCC is the rb-cc-rucc shim, which runs rucc with the
-#            persona of the pin. XCXX and XCPP stay the reference. This build may fail until B5 is
-#            done. It shows the first unit that stops make.
-#   ref      make buildkernel with ref.mk, the control. XCC is the rb-cc-ref shim, which runs
-#            amd64-gcc15 with the arguments unchanged. This build must succeed, or the shims are
-#            broken and the rucc result means nothing.
-#   replay   every unit of the ref build compiled again with rb-cc-rucc, in its own directory and
-#            with its own arguments, after the ref build made the generated headers. The objects go
-#            to the same paths under /build/replay (scripts/freebsd/replay.py). So every unit gets a
-#            rucc result, also the units that a failure stops make before.
+# ref.mk and rucc.mk in /build/toolchain (scripts/freebsd/rb-tools.sh). For the kernel, make
+# kernel-toolchain builds the host tools with the package's CROSS_TOOLCHAIN file, because the C
+# compiler slot does not build them. Then the job builds the target these ways:
+#   rucc     make -k buildkernel with rucc.mk (kernel only). XCC is the rb-cc-rucc shim, which runs
+#            rucc with the persona of the pin. XCXX and XCPP stay the reference. This build may fail
+#            until B5 is done. It shows the first unit that stops make.
+#   ref      make buildkernel or buildworld with ref.mk, the control. XCC is the rb-cc-ref shim,
+#            which runs amd64-gcc15 with the arguments unchanged. This build must succeed, or the
+#            shims are broken and the rucc result means nothing.
+#   replay   every unit of the C compiler slot of the ref build compiled again with rb-cc-rucc, in
+#            its own directory and with its own arguments, after the ref build made the generated
+#            headers. The objects go to the same paths under /build/replay
+#            (scripts/freebsd/replay.py). So every unit gets a rucc result, also the units that a
+#            failure stops make before. A unit stops after 300 seconds.
 #
-# Then the job compares the builds with rb in the builder VM. rb mk-diff compares the make
-# variables that depend on the compiler with ref.mk and with rucc.mk. rb flags-diff compares the
-# command line of each unit that both the ref and the rucc build made. rb warnings compares the
-# diagnostics of each unit of the ref build and of the replay, and rb sections-diff and rb
-# symbols-diff compare their objects. The reports go in the step summary and in the artifact. None
-# of them fails the run.
+# For the kernel, the job then compares the builds with rb in the builder VM. rb mk-diff compares
+# the make variables that depend on the compiler with ref.mk and with rucc.mk. rb flags-diff
+# compares the command line of each unit that both the ref and the rucc build made. rb warnings
+# compares the diagnostics of each unit of the ref build and of the replay, and rb sections-diff and
+# rb symbols-diff compare their objects. None of them fails the run.
+#
+# When the replay of the kernel has no failed unit and no stopped unit, the job builds the kernel
+# with rucc.mk (no -k), puts it into the image of the last good freebsd-g run in place of the G
+# kernel (scripts/freebsd/r-image.sh), and the boot job boots that image by BIOS and by UEFI with
+# the smoke suite and kyua, as freebsd-g does. The input boot changes this: ref puts the control
+# kernel into the image, which tests the steps, and none boots nothing.
 #
 # scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
-# and the step summary shows the groups of the rucc build and of the replay. rucc is built from the
-# head of tamnd/rucc main, or from the branch or commit a manual run names. It is not the pinned
-# release, so the run is ungraded, and the step summary names the commit.
+# and the step summary shows the groups. rucc is built from the head of tamnd/rucc main, or from the
+# branch or commit a manual run names. It is not the pinned release, so the run is ungraded, and the
+# step summary names the commit.
 
 name: freebsd-r
 
@@ -39,6 +45,7 @@ on:
       - scripts/freebsd/build.sh
       - scripts/freebsd/r-report.py
       - scripts/freebsd/replay.py
+      - scripts/freebsd/r-image.sh
   workflow_dispatch:
     inputs:
       rucc:
@@ -49,6 +56,14 @@ on:
         description: The kernel configuration
         required: false
         default: GENERIC
+      target:
+        description: kernel or world
+        required: false
+        default: kernel
+      boot:
+        description: "The kernel to boot: auto (rucc when the replay is clean), ref or none"
+        required: false
+        default: auto
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
@@ -56,9 +71,11 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 env:
   RB_PIN: 15.1-release
+  RB_TARGET: ${{ inputs.target || 'kernel' }}
   RB_CACHE: /mnt/rb-cache
   RB_VM_DIR: /mnt/rb-builder
   VM_ENV: >-
@@ -68,10 +85,12 @@ env:
     RB_COMPILE_JSONL=/build/out/compile.jsonl
 
 jobs:
-  kernel:
-    name: ${{ inputs.kernconf || 'GENERIC' }} kernel with rucc
+  build:
+    name: ${{ inputs.target == 'world' && 'world' || inputs.kernconf || 'GENERIC' }} with rucc
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 355
+    outputs:
+      side: ${{ steps.boot.outputs.side }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
@@ -124,19 +143,21 @@ jobs:
       - name: rb, rb-cc, rucc and the shims
         run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
       - name: make kernel-toolchain
+        if: env.RB_TARGET == 'kernel'
         run: scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=amd64-gcc15 sh /root/harness/scripts/freebsd/build.sh toolchain"
       - name: make -k buildkernel with rucc
+        if: env.RB_TARGET == 'kernel'
         continue-on-error: true
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_MAKEFLAGS=-k \
             RB_PHASE=kernel-rucc RB_COMPILE_LOG=/build/out/compile-rucc.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
-      - name: make buildkernel with ref, the control
+      - name: make build${{ env.RB_TARGET }} with ref, the control
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk \
-            RB_PHASE=kernel-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
+            RB_PHASE=$RB_TARGET-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh $RB_TARGET"
       - name: compile every unit of the ref build with rucc
-        # A unit stops after 300 s. The step stops after 120 minutes, and the steps after it still run.
-        timeout-minutes: 120
+        # A unit stops after 300 s. The step stops after its limit, and the steps after it still run.
+        timeout-minutes: ${{ (inputs.target || 'kernel') == 'world' && 200 || 120 }}
         continue-on-error: true
         run: |
           mkdir -p compile replay
@@ -150,8 +171,37 @@ jobs:
           scripts/freebsd/builder.sh ssh 'export RB_COMPILE_LOG=/build/out/compile-replay.jsonl;
             for f in /root/replay/replay-*.sh; do sh "$f" & done; wait'
           echo "replay: $(($(date +%s) - start))s" | tee -a record/replay.txt
-      - name: compare the builds with rb
+      - name: the result of the replay
+        id: replay
         if: always()
+        run: |
+          # Clean means: every unit of the replay has a record, and none failed or was stopped.
+          scripts/freebsd/builder.sh get /build/out/compile-replay.jsonl compile/compile-replay.jsonl || true
+          scripts/freebsd/builder.sh get /root/out/replay-timeouts.txt record/replay-timeouts.txt || true
+          units=$(awk 'NR == 1 { print $1 }' record/replay.txt 2>/dev/null || true)
+          python3 -I - "${units:-0}" compile/compile-replay.jsonl record/replay-timeouts.txt <<'EOF' | tee -a record/replay.txt
+          import json, os, sys
+          units, log, stopped = int(sys.argv[1]), sys.argv[2], sys.argv[3]
+          ran = failed = 0
+          if os.path.exists(log):
+              for line in open(log, encoding="utf-8", errors="replace"):
+                  try:
+                      r = json.loads(line)
+                  except ValueError:
+                      continue
+                  if r.get("slot") not in (None, "cc") or r.get("probe"):
+                      continue
+                  ran += 1
+                  failed += r.get("exit") != 0 or bool(r.get("signal"))
+          n = sum(1 for _ in open(stopped)) if os.path.exists(stopped) else 0
+          clean = units > 0 and ran == units and failed == 0 and n == 0
+          print(f"replay result: {units} units, {ran} ran, {failed} failed, {n} stopped, clean={str(clean).lower()}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"clean={str(clean).lower()}\n")
+          EOF
+          rm -f compile/compile-replay.jsonl
+      - name: compare the builds with rb
+        if: always() && env.RB_TARGET == 'kernel'
         continue-on-error: true
         run: |
           # The ref objects are under /build/obj and the replay objects are at the same paths under
@@ -169,6 +219,45 @@ jobs:
             done'
         env:
           KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
+      - name: the kernel to boot
+        id: boot
+        if: always() && env.RB_TARGET == 'kernel'
+        run: |
+          case "$MODE" in
+          ref) side=ref ;;
+          none) side=none ;;
+          *) if [ "$CLEAN" = true ]; then side=rucc; else side=none; fi ;;
+          esac
+          echo "side=$side" >> "$GITHUB_OUTPUT"
+          echo "RB_SIDE=$side" >> "$GITHUB_ENV"
+          echo "boot: $MODE, replay clean: ${CLEAN:-false}, kernel to boot: $side" | tee -a record/replay.txt
+        env:
+          MODE: ${{ inputs.boot || 'auto' }}
+          CLEAN: ${{ steps.replay.outputs.clean }}
+      - name: make buildkernel with rucc, for the image
+        if: env.RB_SIDE == 'rucc'
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+            RB_PHASE=kernel-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
+      - name: the image of the last good freebsd-g run
+        if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref'
+        run: |
+          id=$(gh run list -R "$GITHUB_REPOSITORY" -w freebsd-g.yml -b main -s success -L 1 --json databaseId -q '.[0].databaseId')
+          echo "The image has the world of freebsd-g run $id and the kernel of $RB_SIDE." | tee record/g-image.txt >> "$GITHUB_STEP_SUMMARY"
+          gh run download "$id" -R "$GITHUB_REPOSITORY" -n "freebsd-image-$RB_PIN-graded" -D g-image
+          scripts/freebsd/builder.sh ssh 'mkdir -p /build/image'
+          scripts/freebsd/builder.sh put g-image/freebsd.img.zst /build/image/g.img.zst
+          rm -rf g-image
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: put the kernel into the image
+        if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref'
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/$RB_SIDE.mk RB_IMAGE=/build/image/r.img \
+            sh /root/harness/scripts/freebsd/r-image.sh /build/image/g.img.zst"
+          mkdir -p image
+          scripts/freebsd/builder.sh get /build/image/r.img.zst image/freebsd.img.zst
+          ls -l image
       - name: copy the record out
         if: always()
         run: |
@@ -183,7 +272,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "### ${KERNCONF} kernel with rucc"
+            echo "### The FreeBSD $RB_TARGET with rucc"
             echo
             if [ -f record/phases.tsv ]; then
               echo '```'
@@ -199,8 +288,9 @@ jobs:
               echo "units stopped by the timeout: $(wc -l < record/replay-timeouts.txt)"
               head -40 record/replay-timeouts.txt
             fi
+            cat record/r-image.txt 2>/dev/null || true
             echo '```'
-            for run in replay rucc; do
+            for run in replay rucc r; do
               f=compile/compile-$run.jsonl.xz
               [ -f "$f" ] || continue
               echo
@@ -227,13 +317,81 @@ jobs:
               echo '```'
             done
           } >> "$GITHUB_STEP_SUMMARY"
-        env:
-          KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: freebsd-r-kernel
+          name: freebsd-r-${{ env.RB_TARGET }}
           path: |
             record
             compile
+          retention-days: 14
+      - name: upload the image
+        if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: freebsd-r-image
+          path: image/freebsd.img.zst
+          compression-level: 0
+          retention-days: 7
+
+  boot:
+    name: boot the kernel of ${{ needs.build.outputs.side }}
+    needs: build
+    if: always() && (needs.build.outputs.side == 'rucc' || needs.build.outputs.side == 'ref')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils ovmf zstd
+      - name: download the image and the build record
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: freebsd-r-*
+          path: artifacts
+      - name: unpack the image
+        run: |
+          sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
+          zstd -d -q artifacts/freebsd-r-image/freebsd.img.zst -o /mnt/rb/freebsd.img
+          ls -ls /mnt/rb/freebsd.img
+      - name: boot by BIOS, boot suite
+        run: scripts/freebsd/boot.sh /mnt/rb/freebsd.img bios boot boots/bios
+        env:
+          RB_RUN_LIMIT: 900
+      - name: boot by UEFI, boot, smoke and kyua
+        if: always()
+        run: scripts/freebsd/boot.sh /mnt/rb/freebsd.img uefi "boot smoke kyua" boots/uefi
+        env:
+          RB_RUN_LIMIT: 14400
+      - name: summary
+        if: always()
+        run: |
+          b=artifacts/freebsd-r-kernel/record
+          cp "$b/r-image.txt" "$b/image.txt" 2>/dev/null || true
+          python3 -I scripts/freebsd/published.py FreeBSD-stable-15-amd64-test published.json || true
+          python3 -I scripts/freebsd/summarize.py --build "$b" --boot bios=boots/bios --boot uefi=boots/uefi \
+            --published published.json --conf graded --side "R, the kernel of $SIDE and the world of G" --out summary
+          cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
+          for b in bios uefi; do
+            { echo; echo "Console of the $b boot, last 30 lines:"; echo; echo '```'; tail -30 "boots/$b/console.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+          done
+        env:
+          SIDE: ${{ needs.build.outputs.side }}
+      - name: upload the results
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: freebsd-r-results
+          path: |
+            boots
+            summary
+            published.json
           retention-days: 14
