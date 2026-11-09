@@ -23,6 +23,17 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
+        "boot" => {
+            let repo = rb::repo::Repo::find()?;
+            let rows = rb_pins::places::Rows::load(&repo.root)?;
+            let (report, passed) = rb::boot::cli::run(args, &rows)?;
+            print!("{report}");
+            Ok(if passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            })
+        }
         "census" => census(args),
         "demands" => demands(args),
         "fetch" => {

@@ -139,6 +139,7 @@ dependencies = [
  "rb-image",
  "rb-pins",
  "serde",
+ "serde_json",
  "toml",
 ]
 

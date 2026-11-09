@@ -295,6 +295,46 @@ fn safe(path: &str) -> bool {
         .all(|c| matches!(c, Component::Normal(_)))
 }
 
+/// Read the archive at the start of a disk or a file, reading only as far as the archive goes. A
+/// results disk is a gigabyte or more, and the archive on it is usually a few megabytes.
+pub fn read_disk(path: &Path) -> Result<Vec<Entry>, String> {
+    use std::io::Read as _;
+    let err = |e: std::io::Error| format!("{}: {e}", path.display());
+    let mut file = std::fs::File::open(path).map_err(err)?;
+    let mut bytes = Vec::new();
+    let mut pax_size: Option<u64> = None;
+    loop {
+        let mut h = [0u8; BLOCK];
+        match file.read_exact(&mut h) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(err(e)),
+        }
+        bytes.extend_from_slice(&h);
+        if h.iter().all(|&b| b == 0) || !checksum_ok(&h) {
+            break;
+        }
+        let flag = h[156];
+        let size = match pax_size.take() {
+            Some(s) if !matches!(flag, b'x' | b'g' | b'L') => s,
+            _ => number(&h[124..136])?,
+        };
+        let size = usize::try_from(size).map_err(|_| "entry too large".to_string())?;
+        let start = bytes.len();
+        bytes.resize(start + size.next_multiple_of(BLOCK), 0);
+        if let Err(e) = file.read_exact(&mut bytes[start..]) {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                break;
+            }
+            return Err(err(e));
+        }
+        if flag == b'x' {
+            pax_size = pax(&bytes[start..start + size], "size").and_then(|s| s.parse().ok());
+        }
+    }
+    read(&bytes)
+}
+
 /// Write the files and directories of an archive under `dest`. Other entries are left out, and
 /// so is any path that would leave `dest`. Returns the files written.
 pub fn unpack(entries: &[Entry], dest: &Path) -> Result<Vec<PathBuf>, String> {
@@ -359,6 +399,29 @@ mod tests {
         assert_eq!(got[0].path, "a");
         assert!(read(&[0u8; 4096]).unwrap().is_empty());
         assert!(read(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn reads_a_disk_only_to_the_end_of_the_archive() {
+        let dir = std::env::temp_dir().join(format!("rb-ustar-disk-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let disk = dir.join("disk");
+        let entries = vec![
+            Entry::dir("smoke"),
+            Entry::file("smoke/counts", 0o644, "5/6\n"),
+            Entry::file("big", 0o644, vec![7u8; 3000]),
+        ];
+        let mut bytes = write(&entries).unwrap();
+        bytes.extend_from_slice(b"old results after the end");
+        std::fs::write(&disk, &bytes).unwrap();
+        let file = std::fs::OpenOptions::new().write(true).open(&disk).unwrap();
+        file.set_len(64 << 20).unwrap();
+        assert_eq!(read_disk(&disk).unwrap(), entries);
+        std::fs::write(&disk, vec![0u8; 4096]).unwrap();
+        assert!(read_disk(&disk).unwrap().is_empty());
+        std::fs::write(&disk, b"short").unwrap();
+        assert!(read_disk(&disk).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
