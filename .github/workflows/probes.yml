@@ -1,0 +1,184 @@
+# rb probes for FreeBSD main and NetBSD trunk on amd64 (milestone B2, plan 05.3).
+#
+# rb probes asks G's and R's C compilers the questions a build asks, without building, and says for
+# each whether they answer the same. This workflow runs it for the two pins of the B2 exit
+# criterion. rucc is built from the head of tamnd/rucc main, or from the branch or commit a manual
+# run names, so the run is ungraded.
+#
+# freebsd  The builder VM of freebsd-g.yml installs amd64-gcc15. rb-tools.sh builds rb, rb-cc and
+#          rucc, and rb toolchain freebsd-main writes the ref and rucc shims in /build/toolchain.
+#          rb probes asks the fixed probes, and with --from every C compiler probe of the
+#          compile.jsonl of the last freebsd-g build of main. The directories of those probes are
+#          made empty first, because the probes only need them to exist.
+# netbsd   The G TOOLDIR of netbsd-g.yml comes from the cache that netbsd-r.yml fills.
+#          overlay.sh makes the R TOOLDIR with rucc in the C compiler slot. rb probes asks the
+#          fixed probes of G's and R's x86_64--netbsd-gcc. NetBSD's build records no probes.
+#
+# Each job writes the report to the step summary and to an artifact. A probe that differs does not
+# fail the run, because the run is there to find them.
+
+name: probes
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/probes.yml
+      - crates/rb/src/probes.rs
+  workflow_dispatch:
+    inputs:
+      rucc:
+        description: A branch or commit of tamnd/rucc
+        required: false
+        default: main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RB_CACHE: /mnt/rb-cache
+  RB_VM_DIR: /mnt/rb-builder
+  NB_ROOT: /mnt/nb
+  VM_ENV: >-
+    RB_OUT=/root/out RB_JOBS=4 RB_HARNESS=/root/harness RB_PIN_NAME=freebsd-main
+    RB_COMPILE_JSONL=/build/out/compile.jsonl
+
+jobs:
+  freebsd:
+    name: FreeBSD main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: free disk
+        run: |
+          sudo mkdir -p "$RB_CACHE" "$RB_VM_DIR"
+          sudo chown "$USER" "$RB_CACHE" "$RB_VM_DIR"
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils sshpass zstd
+      - name: cache the builder image
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/FreeBSD-*.raw.xz
+          key: freebsd-builder-${{ hashFiles('conf/freebsd/builder.conf') }}
+      - name: the commit of tamnd/rucc and the probes of the last G build of main
+        run: |
+          sha=$(gh api "repos/tamnd/rucc/commits/$REF" -q .sha)
+          echo "RUCC_COMMIT=$sha" >> "$GITHUB_ENV"
+          echo "rucc built in the VM from tamnd/rucc $REF, commit $sha. The run is ungraded." >> "$GITHUB_STEP_SUMMARY"
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=freebsd-compile-main-graded&per_page=1" \
+            -q '.artifacts[] | select(.expired | not) | .workflow_run.id')
+          mkdir -p g
+          if [ -n "$run" ]; then
+            gh run download "$run" -R "$GITHUB_REPOSITORY" -n freebsd-compile-main-graded -D g
+            xz -d g/compile.jsonl.xz
+            echo "The probes of the build: compile.jsonl of freebsd-g run $run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.rucc || 'main' }}
+      - name: boot the builder VM
+        run: |
+          scripts/freebsd/builder.sh up
+          tar --exclude=./.git --exclude=./target -cf - . \
+            | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
+      - name: provision
+        run: scripts/freebsd/builder.sh ssh 'sh /root/harness/scripts/freebsd/provision.sh /root/out'
+      - name: rb, rb-cc, rucc and the shims
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
+      - name: rb probes freebsd-main
+        run: |
+          mkdir -p out
+          from=
+          if [ -f g/compile.jsonl ]; then
+            scripts/freebsd/builder.sh put g/compile.jsonl /root/out/compile-g.jsonl
+            python3 -I -c '
+          import json, sys
+          dirs = set()
+          for line in open(sys.argv[1], errors="replace"):
+              try:
+                  r = json.loads(line)
+              except ValueError:
+                  continue
+              if r.get("probe") and r.get("slot") in (None, "cc"):
+                  dirs.add(r["cwd"])
+                  for a in r["argv"]:
+                      if a.startswith("--sysroot="):
+                          dirs.add(a[len("--sysroot="):])
+          print("\n".join(sorted(dirs)))' g/compile.jsonl > out/dirs.txt
+            scripts/freebsd/builder.sh ssh 'xargs mkdir -p' < out/dirs.txt
+            from="--from /root/out/compile-g.jsonl"
+          fi
+          scripts/freebsd/builder.sh ssh "cd /root/harness && /build/rb/bin/rb probes freebsd-main \
+            --dir /build/toolchain $from --work /root/out/probes --all --details 40" > out/probes.txt 2>&1 || true
+          cat out/probes.txt
+          { echo '### rb probes freebsd-main'; echo; echo '```'; cat out/probes.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          scripts/freebsd/builder.sh get /root/out/rb-tools.txt out/rb-tools.txt || true
+      - name: power off
+        if: always()
+        run: scripts/freebsd/builder.sh down || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: probes-freebsd-main
+          path: out
+
+  netbsd:
+    name: NetBSD trunk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rb, and rucc from source
+        run: |
+          cargo build -q --release --locked -p rb --bin rb
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$REF"
+          cargo build -q --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "$RUNNER_TEMP/rucc-src/target/release" >> "$GITHUB_PATH"
+          echo "rucc built from tamnd/rucc $REF, commit $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD). The run is ungraded." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.rucc || 'main' }}
+      - name: the R TOOLDIR
+        run: scripts/netbsd/overlay.sh rucc
+      - name: rb probes netbsd-trunk
+        run: |
+          mkdir -p out "$NB_ROOT/destdir"
+          export RB_SHIM_LOG=
+          target/release/rb probes netbsd-trunk --g "$NB_ROOT/tools/bin/x86_64--netbsd-gcc" \
+            --r "$NB_ROOT/tools-r/bin/x86_64--netbsd-gcc" --work "$RUNNER_TEMP/probes" --all --details 40 \
+            > out/probes.txt 2>&1 || true
+          cat out/probes.txt
+          { echo '### rb probes netbsd-trunk'; echo; echo '```'; cat out/probes.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: probes-netbsd-trunk
+          path: out
