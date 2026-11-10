@@ -13,9 +13,9 @@
 //! - `kernel`: a kernel build directory, when one is given. Its `opt_*.h` files are read too, and
 //!   each one is a point of its own.
 //!
-//! Each value has the side's toolchain directory replaced by `<toolchain>`, and the shim names
-//! `rb-cc-ref` and `rb-cc-rucc` replaced by `rb-cc`, so that the compiler's own path is not a
-//! difference.
+//! Each value has the side's toolchain directory replaced by `<toolchain>`, the side's FreeBSD
+//! `MAKEOBJDIRPREFIX` replaced by `<obj>`, and the shim names `rb-cc-ref` and `rb-cc-rucc` replaced
+//! by `rb-cc`, so that the paths rb gives each side are not a difference.
 
 use crate::divergences::Divergences;
 use std::collections::BTreeMap;
@@ -159,8 +159,11 @@ pub fn defines(text: &str) -> Vec<(String, String)> {
 
 /// A value with the side's own names taken out.
 #[must_use]
-pub fn normalize(value: &str, toolchain: &str) -> String {
+pub fn normalize(value: &str, toolchain: &str, obj: &str) -> String {
     let mut out = value.trim().to_string();
+    if !obj.is_empty() {
+        out = out.replace(obj, "<obj>");
+    }
     if !toolchain.is_empty() {
         out = out.replace(toolchain, "<toolchain>");
     }
@@ -181,6 +184,8 @@ pub struct Maker {
     pub env: Vec<(String, String)>,
     /// The toolchain directory, which [`normalize`] takes out of values.
     pub toolchain: String,
+    /// The object directory prefix, which [`normalize`] takes out of values.
+    pub obj: String,
 }
 
 /// What a FreeBSD build needs besides the `CROSS_TOOLCHAIN` file.
@@ -227,6 +232,7 @@ impl Maker {
             .and_then(Path::parent)
             .map(|p| p.display().to_string())
             .unwrap_or_default();
+        let obj = absolute(place.obj).display().to_string();
         Ok(Self {
             system: "freebsd".into(),
             argv: vec![
@@ -240,8 +246,9 @@ impl Maker {
                 format!("SRCCONF={}", place.srcconf.display()),
             ],
             below,
-            env: vec![("MAKEOBJDIRPREFIX".into(), place.obj.display().to_string())],
+            env: vec![("MAKEOBJDIRPREFIX".into(), obj.clone())],
             toolchain,
+            obj,
         })
     }
 
@@ -261,6 +268,7 @@ impl Maker {
             below: Vec::new(),
             env: Vec::new(),
             toolchain: absolute(tooldir).display().to_string(),
+            obj: String::new(),
         })
     }
 
@@ -321,7 +329,7 @@ impl Maker {
         for (name, value) in names.iter().zip(lines) {
             dump.insert(
                 (point.to_string(), name.clone()),
-                normalize(value, &self.toolchain),
+                normalize(value, &self.toolchain, &self.obj),
             );
         }
         Ok(())
@@ -625,11 +633,20 @@ mod tests {
         assert_eq!(
             normalize(
                 " /r/tools/bin/x86_64-unknown-freebsd15.1-rb-cc-rucc ",
-                "/r/tools"
+                "/r/tools",
+                ""
             ),
             "<toolchain>/bin/x86_64-unknown-freebsd15.1-rb-cc"
         );
-        assert_eq!(normalize("gcc", ""), "gcc");
+        assert_eq!(
+            normalize(
+                "-ffile-prefix-map=/w/obj-R/src=/usr/obj -g",
+                "/r/tools",
+                "/w/obj-R"
+            ),
+            "-ffile-prefix-map=<obj>/src=/usr/obj -g"
+        );
+        assert_eq!(normalize("gcc", "", ""), "gcc");
     }
 
     #[test]
@@ -650,6 +667,11 @@ mod tests {
         };
         let m = Maker::freebsd(&mk, Path::new("/src"), &place).unwrap();
         assert_eq!(m.toolchain, "/t");
+        assert_eq!(m.obj, "/w/obj");
+        assert_eq!(
+            m.env,
+            vec![("MAKEOBJDIRPREFIX".to_string(), "/w/obj".to_string())]
+        );
         let names = vec!["X_COMPILER_TYPE".to_string()];
         let top = m.command(Path::new("/src"), true, &names).join(" ");
         assert_eq!(
