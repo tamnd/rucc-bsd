@@ -69,6 +69,20 @@ The two objects must be identical, section by section and symbol by symbol, and 
 
 **Why not drop the reader.** It may be the right answer. Nobody has measured what the assembler path costs per file against the reader. A file-scope block in every file, which is the BSDs' case through `__RCSID` and `__FBSDID`, would send every file down the slower path. B1 measures both ways on NetBSD's userland. If the reader saves less than 1% of build time, it is removed rather than fixed.
 
+**The decision: the reader is removed on ELF.** B1 measured the reader on NetBSD's userland in run 42644075064 of the `reader-cost` workflow, with `rucc 0.30.15`:
+
+| | units | CPU s, reader on | CPU s, reader off | off minus on |
+|---|---|---|---|---|
+| every unit | 55896 | 3862.3 | 3864.1 | +1.8 (0.05%) |
+| units with file-scope asm | 22149 | 1158.2 | 1157.7 | -0.5 (-0.01% of every unit) |
+
+- The G build has 56185 distinct C units. rucc compiled 55896 of them with the reader on and off, and 289 failed in both.
+- The most that any reader can save is what the assembler path costs. For the 21739 units with file-scope asm that compiled with the reader off, the blocks cost 97.4 s. That is 9.13% of the time of those units and 2.52% of the time of every unit. The reader got none of it, because the time with the reader on and off is the same.
+- With the reader off, 4 objects of 22149 changed. They are the `.symver` helpers in `tests/libexec/ld.elf_so`. No object without file-scope asm changed.
+- The reader was also not exact. A label in a data block, such as `table:` after `.data`, became an `STT_OBJECT` with a size, where GNU as gives `STT_NOTYPE` and no size.
+
+The reader saves less than 1% of build time, so it is removed rather than fixed (tamnd/rucc#4250). On ELF every file-scope block now goes to the assembler path, and the rule and the table above no longer apply. Off ELF there is no assembler path, so the reader stays there. `-frucc-asm-reader=on` and `-frucc-asm-reader=off` are still accepted and change nothing, so the test above still runs and its two objects are identical.
+
 ## 07.4 Boot code assembly
 
 The boot blocks are the only assembly here where the byte layout is checked by hardware:
