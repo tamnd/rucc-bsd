@@ -3,8 +3,8 @@
 #
 #   r-image.sh G_IMAGE_ZST
 #
-# Environment: RB_SRC, RB_OBJ, RB_SRCCONF, RB_TOOLCHAIN, RB_KERNCONF and RB_OUT as for build.sh,
-# and RB_IMAGE, the raw image to write. RB_IMAGE.zst is the result.
+# Environment: RB_SRC, RB_OBJ, RB_SRCCONF, RB_TOOLCHAIN, RB_KERNCONF, RB_HARNESS and RB_OUT as for
+# build.sh, and RB_IMAGE, the raw image to write. RB_IMAGE.zst is the result.
 #
 # G_IMAGE_ZST is freebsd.img.zst of a freebsd-g run: G world, G kernel and the test packages. The
 # script attaches a copy of it with mdconfig, mounts its root file system, removes the G kernel and
@@ -17,6 +17,12 @@ export MAKEOBJDIRPREFIX="$RB_OBJ"
 work=$(dirname "$RB_IMAGE")
 mnt="$work/mnt"
 mkdir -p "$RB_OUT" "$work" "$mnt"
+# A kernel configuration of rucc-bsd, such as RB-TEST (plan 12.2), is in conf/freebsd/kernel of
+# the harness. make finds it by KERNCONFDIR, and the configurations of the tree in sys/amd64/conf.
+kernconfdir=
+if [ -f "${RB_HARNESS:-}/conf/freebsd/kernel/${RB_KERNCONF:-GENERIC}" ]; then
+	kernconfdir="$RB_HARNESS/conf/freebsd/kernel"
+fi
 start=$(date +%s)
 
 zstd -d -q -f --sparse "$g" -o "$RB_IMAGE"
@@ -26,7 +32,8 @@ part=$(gpart show -p "$md" | awk '$4 == "freebsd-ufs" { print $3; exit }')
 mount "/dev/$part" "$mnt"
 rm -rf "$mnt/boot/kernel" "$mnt/boot/kernel.old" "$mnt/usr/lib/debug/boot/kernel"
 if ! make -C "$RB_SRC" installkernel DESTDIR="$mnt" TARGET=amd64 TARGET_ARCH=amd64 \
-	KERNCONF="${RB_KERNCONF:-GENERIC}" CROSS_TOOLCHAIN="$RB_TOOLCHAIN" __MAKE_CONF=/dev/null \
+	KERNCONF="${RB_KERNCONF:-GENERIC}" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
+	CROSS_TOOLCHAIN="$RB_TOOLCHAIN" __MAKE_CONF=/dev/null \
 	SRCCONF="$RB_SRCCONF" > "$RB_OUT/r-install.log" 2>&1; then
 	tail -60 "$RB_OUT/r-install.log"
 	exit 1

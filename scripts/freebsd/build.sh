@@ -10,7 +10,8 @@
 #   RB_TOOLCHAIN the CROSS_TOOLCHAIN name, amd64-gcc15, or the path of a .mk file of rb toolchain
 #   RB_OUT       where logs and phases.tsv go
 #   RB_JOBS      make -j
-#   RB_KERNCONF  the kernel configuration, GENERIC by default
+#   RB_KERNCONF  the kernel configuration, GENERIC by default, of the tree or of conf/freebsd/kernel
+#   RB_HARNESS   this repository, copied into the VM
 #   RB_MAKEFLAGS more make flags, such as -k
 #   RB_PHASE     the name of the phase in the logs, the argument by default
 #
@@ -21,6 +22,12 @@ set -u
 phase=$1
 : "${RB_JOBS:=$(sysctl -n hw.ncpu)}"
 : "${RB_KERNCONF:=GENERIC}"
+# A kernel configuration of rucc-bsd, such as RB-TEST (plan 12.2), is in conf/freebsd/kernel of
+# the harness. make finds it by KERNCONFDIR, and the configurations of the tree in sys/amd64/conf.
+kernconfdir=
+if [ -f "${RB_HARNESS:-}/conf/freebsd/kernel/${RB_KERNCONF:-GENERIC}" ]; then
+	kernconfdir="$RB_HARNESS/conf/freebsd/kernel"
+fi
 mkdir -p "$RB_OUT" "$RB_OBJ"
 export MAKEOBJDIRPREFIX="$RB_OBJ"
 
@@ -46,7 +53,7 @@ echo "$phase: make -j$RB_JOBS ${RB_MAKEFLAGS:+$RB_MAKEFLAGS }$target CROSS_TOOLC
 {
 	# shellcheck disable=SC2086
 	make -C "$RB_SRC" -j"$RB_JOBS" ${RB_MAKEFLAGS:-} "$target" \
-		TARGET=amd64 TARGET_ARCH=amd64 KERNCONF="$RB_KERNCONF" \
+		TARGET=amd64 TARGET_ARCH=amd64 KERNCONF="$RB_KERNCONF" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
 		CROSS_TOOLCHAIN="$RB_TOOLCHAIN" \
 		__MAKE_CONF=/dev/null SRCCONF="$RB_SRCCONF" 2>&1
 	echo $? > "$RB_OUT/$phase.status"
