@@ -16,6 +16,9 @@ DIAG = re.compile(
     r"^(?P<file>[^:\s][^:]*):(?P<line>\d+):(?:(?P<col>\d+):)? "
     r"(?P<kind>warning|error|fatal error): (?P<msg>.*?)(?: \[(?P<opt>-W[^\]]+|[EW]\d{4})\])?$"
 )
+# GCC puts a warning on a token that a macro body spelled at that place in the body, and then
+# says where the macro was expanded, one note for each expansion: "in expansion of macro".
+EXPANDED = re.compile(r"^(?P<file>[^:\s][^:]*):(?P<line>\d+):(?:\d+:)? note: in expansion of macro ")
 DRIVER = re.compile(r"^(?P<prog>[\w.+-]+): (?P<kind>warning|error|fatal error): (?P<msg>.*?)(?: \[(?P<opt>-W[^\]]+|[EW]\d{4})\])?$")
 CODES = {}
 
@@ -52,7 +55,11 @@ def read(path):
     for line in text.splitlines():
         m = DIAG.match(line)
         if m:
-            diags.append((os.path.basename(m["file"]), int(m["line"]), m["kind"], option(m["opt"]), m["msg"], line))
+            diags.append((os.path.basename(m["file"]), int(m["line"]), m["kind"], option(m["opt"]), m["msg"], line, []))
+            continue
+        m = EXPANDED.match(line)
+        if m and diags:
+            diags[-1][6].append((os.path.basename(m["file"]), int(m["line"])))
             continue
         m = DRIVER.match(line)
         if m:
@@ -90,13 +97,16 @@ def main():
         status = int(open(os.path.join(rec, "status")).read().strip() or 0)
         gd, _ = read(os.path.join(rec, "gcc"))
         rd, rdrv = read(os.path.join(rec, "rucc"))
-        gkeys = {(f, l, o) for f, l, k, o, m, t in gd if o}
-        gfiles = {(f, l) for f, l, k, o, m, t in gd}
+        # A GCC warning in a macro body is also at each place the macro was expanded, which is
+        # where rucc puts it.
+        at = lambda f, l, x: [(f, l)] + x
+        gkeys = {(af, al, o) for f, l, k, o, m, t, x in gd if o for af, al in at(f, l, x)}
+        gfiles = {p for f, l, k, o, m, t, x in gd for p in at(f, l, x)}
         # A GCC warning that no option controls, such as a macro redefined, prints no option, and
         # rucc prints its code where no option controls its warning. The two match on the line.
-        gplain = {(f, l) for f, l, k, o, m, t in gd if k == "warning" and o is None}
+        gplain = {p for f, l, k, o, m, t, x in gd if k == "warning" and o is None for p in at(f, l, x)}
         rkeys = set()
-        for f, l, k, o, m, t in rd:
+        for f, l, k, o, m, t, x in rd:
             if named(o) or k == "warning":
                 key = (f, l, o or "(none)")
                 if key in rkeys:
@@ -107,7 +117,9 @@ def main():
                 extra[o or "(none)"].append((unit, t, (f, l) in gfiles))
             else:
                 hard[f"{o or ''} {shape(m)}"].append((unit, t))
-        for f, l, o in gkeys - rkeys:
+        lost = {(f, l, o) for f, l, k, o, m, t, x in gd
+                if o and not any((af, al, o) in rkeys for af, al in at(f, l, x))}
+        for f, l, o in lost:
             missing[o] += 1
         for k, o, m, t in rdrv:
             drv[(k, o or "", shape(m))].append((unit, t))
