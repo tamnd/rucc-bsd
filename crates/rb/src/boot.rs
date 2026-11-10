@@ -380,13 +380,12 @@ pub fn qemu_command(req: &Request) -> Vec<String> {
             "raw",
         ));
     }
-    // The virt machine gives the first virtio-mmio device on the command line the highest
-    // address, and the guests number the devices from the lowest. In reverse, the root disk is
-    // the first disk, vtbd0 or ld0, and the results disk the second, as on PCI.
+    // The riscv64 virt machine gives the first virtio-mmio device on the command line the
+    // highest address, and lists the devices in its device tree from the highest address down.
+    // U-Boot and the kernels take them in the order of the device tree, which is the order of the
+    // command line. So the root disk is the first disk, vtbd0 or ld0, and the results disk the
+    // second, as on PCI.
     let mmio = req.virtio == Bus::Mmio;
-    if mmio {
-        disks.reverse();
-    }
     let bus = if mmio { "device" } else { "pci" };
     for (id, file, format) in &disks {
         words.extend([
@@ -945,12 +944,12 @@ mod tests {
             line,
             "qemu-system-riscv64 -machine virt,accel=tcg -smp 2 -m 8G -display none \
              -monitor none -serial stdio -no-reboot -kernel /u/u-boot.bin \
-             -drive if=none,id=spare1,file=/runs/1/spare1.disk,format=raw,cache=unsafe \
-             -device virtio-blk-device,drive=spare1 \
-             -drive if=none,id=rb,file=/runs/1/results.disk,format=raw,cache=unsafe \
-             -device virtio-blk-device,drive=rb \
              -drive if=none,id=root,file=/runs/1/disk.qcow2,format=qcow2,cache=unsafe \
              -device virtio-blk-device,drive=root \
+             -drive if=none,id=rb,file=/runs/1/results.disk,format=raw,cache=unsafe \
+             -device virtio-blk-device,drive=rb \
+             -drive if=none,id=spare1,file=/runs/1/spare1.disk,format=raw,cache=unsafe \
+             -device virtio-blk-device,drive=spare1 \
              -netdev user,id=n0,restrict=on -device virtio-net-device,netdev=n0"
         );
         req.kvm = true;
