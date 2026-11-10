@@ -1,6 +1,7 @@
 # The differences between R's and G's configuration that are correct (plan 05.5 and 02.2).
 #
-# rb mk-diff reads the entries with a variable, and rb flags-diff reads the entries with a flag.
+# rb mk-diff reads the entries with a variable, rb flags-diff reads the entries with a flag, and
+# rb probes reads the entries with a macro.
 # A `*` in a name matches any text. `system` and `point` limit an entry to one system or to one
 # point of rb mk-diff. Every entry has a reason. A difference caused by rucc answering a probe
 # wrongly is a bug, and it never gets an entry here.
@@ -12,3 +13,11 @@ reason = "Each compiler has its own resource directory, from -print-resource-dir
 [[divergence]]
 variable = "*COMPILER_ABSOLUTE_PATH"
 reason = "The path of the compiler itself. rb mk-diff replaces the toolchain directory, but a compiler found on PATH keeps its own path."
+
+[[divergence]]
+macro = "__rucc*"
+reason = "rucc names itself with __rucc__ and its version macros, as GCC names itself with __GNUC__. No source of FreeBSD or NetBSD names them, so they do not change what a build compiles."
+
+[[divergence]]
+macro = "__VERSION__"
+reason = "The name and version of the compiler, as a string. The preprocessor cannot test a string in #if, so a source can only copy it into a program as text, and it does not change what a build compiles."

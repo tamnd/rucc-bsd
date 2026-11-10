@@ -1,8 +1,8 @@
 //! `mk-divergences.toml`: the differences between R's and G's configuration that are correct, each
 //! with its reason (plan 05.5 and 02.2).
 //!
-//! `rb mk-diff` reads the entries that name a make variable, and `rb flags-diff` reads the entries
-//! that name a flag. A difference that an entry matches is listed with the entry's reason and is
+//! `rb mk-diff` reads the entries that name a make variable, `rb flags-diff` reads the entries
+//! that name a flag, and `rb probes` reads the entries that name a macro. A difference that an entry matches is listed with the entry's reason and is
 //! not counted. A difference caused by rucc answering a probe wrongly is a bug, and never gets an
 //! entry.
 
@@ -34,18 +34,23 @@ pub struct Divergence {
     pub point: Option<String>,
     /// A flag of a unit's command line, for `rb flags-diff`. A `*` matches any text.
     pub flag: Option<String>,
+    /// A macro of `-dM -E`, for `rb probes`. A `*` matches any text.
+    #[serde(rename = "macro")]
+    pub predefined: Option<String>,
     /// Why the difference is correct.
     pub reason: String,
 }
 
 impl Divergences {
-    /// Parse the file's text. Every entry must name a variable or a flag, and give a reason.
+    /// Parse the file's text. Every entry must name one variable, flag or macro, and give a
+    /// reason.
     pub fn parse(text: &str) -> Result<Self, String> {
         let file: Self = toml::from_str(text).map_err(|e| e.to_string())?;
         for (i, d) in file.divergence.iter().enumerate() {
-            if d.variable.is_none() == d.flag.is_none() {
+            let names = [&d.variable, &d.flag, &d.predefined];
+            if names.iter().filter(|n| n.is_some()).count() != 1 {
                 return Err(format!(
-                    "entry {} must name a variable or a flag, not both",
+                    "entry {} must name one of a variable, a flag or a macro",
                     i + 1
                 ));
             }
@@ -88,6 +93,18 @@ impl Divergences {
             .find(|d| {
                 d.system.as_deref().is_none_or(|s| s == system)
                     && d.flag.as_deref().is_some_and(|f| glob(f, flag))
+            })
+            .map(|d| d.reason.as_str())
+    }
+
+    /// The reason for a macro of `-dM -E` that differs, if an entry allows it.
+    #[must_use]
+    pub fn predefined(&self, system: &str, name: &str) -> Option<&str> {
+        self.divergence
+            .iter()
+            .find(|d| {
+                d.system.as_deref().is_none_or(|s| s == system)
+                    && d.predefined.as_deref().is_some_and(|m| glob(m, name))
             })
             .map(|d| d.reason.as_str())
     }
@@ -147,6 +164,11 @@ reason = "for the test"
 [[divergence]]
 flag = "-frucc-*"
 reason = "rucc's own"
+
+[[divergence]]
+system = "freebsd"
+macro = "__rucc*"
+reason = "rucc's name"
 "#,
         )
         .unwrap();
@@ -159,13 +181,23 @@ reason = "rucc's own"
         assert!(d.variable("freebsd", "kernel", "CFLAGS").is_none());
         assert_eq!(d.flag("netbsd", "-frucc-trace=x"), Some("rucc's own"));
         assert!(d.flag("netbsd", "-O2").is_none());
+        assert_eq!(
+            d.predefined("freebsd", "__rucc_major__"),
+            Some("rucc's name")
+        );
+        assert!(d.predefined("netbsd", "__rucc__").is_none());
+        assert!(d.predefined("freebsd", "__GNUC__").is_none());
+        assert!(d.variable("freebsd", "top", "__rucc__").is_none());
     }
 
     #[test]
     fn an_entry_needs_one_name_and_a_reason() {
         let both =
             Divergences::parse("[[divergence]]\nvariable = \"A\"\nflag = \"-b\"\nreason = \"x\"\n");
-        assert!(both.unwrap_err().contains("not both"));
+        assert!(both.unwrap_err().contains("one of"));
+        let two =
+            Divergences::parse("[[divergence]]\nmacro = \"A\"\nflag = \"-b\"\nreason = \"x\"\n");
+        assert!(two.is_err());
         let neither = Divergences::parse("[[divergence]]\nreason = \"x\"\n");
         assert!(neither.is_err());
         let bare = Divergences::parse("[[divergence]]\nvariable = \"A\"\nreason = \" \"\n");

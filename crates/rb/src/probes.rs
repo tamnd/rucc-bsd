@@ -7,8 +7,10 @@
 //! compared by its exit status.
 //!
 //! The probes are a fixed list, and with `--from` also every call a G build's `compile.jsonl`
-//! marks as a probe.
+//! marks as a probe. A macro that differs and that an entry of `mk-divergences.toml` names is
+//! listed with the entry's reason and does not count.
 
+use crate::divergences::Divergences;
 use harness_shim::record::CompileRecord;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -112,6 +114,69 @@ const FLAGS: &[&[&str]] = &[
 /// The unit the flag probes compile.
 pub const UNIT: &str = "int rb_probe(int x) { return x + 1; }\n";
 
+/// The files of the small tree that the `-B` and `--sysroot` probes search, under the work
+/// directory. `buildworld` gives `-B` the directory of the cross tools and, for lib32,
+/// `WORLDTMP/usr/lib32`, and gives `--sysroot` `WORLDTMP` (plan 05.1). The `ld` is executable,
+/// because GCC finds a program only if it can run it.
+pub const TREE: &[&str] = &[
+    "rb-b/ld",
+    "rb-b/crt1.o",
+    "rb-sysroot/usr/lib/crt1.o",
+    "rb-sysroot/usr/lib/libc.so",
+    "rb-sysroot/usr/lib32/crt1.o",
+];
+
+/// The `-B` and `--sysroot` probes, as `buildworld` uses the two flags. Each reads the tree of
+/// [`TREE`].
+const SEARCH: &[(&str, &[&str])] = &[
+    (
+        "-B the tools -print-prog-name=ld",
+        &["-Brb-b/", "-print-prog-name=ld"],
+    ),
+    (
+        "-B the tools -print-file-name=crt1.o",
+        &["-Brb-b/", "-print-file-name=crt1.o"],
+    ),
+    (
+        "--sysroot -print-sysroot",
+        &["--sysroot=rb-sysroot", "-print-sysroot"],
+    ),
+    (
+        "--sysroot -print-file-name=crt1.o",
+        &["--sysroot=rb-sysroot", "-print-file-name=crt1.o"],
+    ),
+    (
+        "--sysroot -print-file-name=libc.so",
+        &["--sysroot=rb-sysroot", "-print-file-name=libc.so"],
+    ),
+    (
+        "-m32 -B WORLDTMP/usr/lib32 --sysroot -print-file-name=crt1.o",
+        &[
+            "-m32",
+            "-Brb-sysroot/usr/lib32",
+            "--sysroot=rb-sysroot",
+            "-print-file-name=crt1.o",
+        ],
+    ),
+];
+
+/// Make the files of [`TREE`] under `work`.
+pub fn make_tree(work: &Path) -> Result<(), String> {
+    for name in TREE {
+        let path = work.join(name);
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(&path, "").map_err(|e| format!("{}: {e}", path.display()))?;
+        if name.ends_with("/ld") {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// The fixed probes.
 #[must_use]
 pub fn fixed() -> Vec<Probe> {
@@ -177,6 +242,9 @@ pub fn fixed() -> Vec<Probe> {
         let mut args: Vec<&str> = flags.to_vec();
         args.extend(["-c", "rb-probe.c", "-o", "rb-probe.o"]);
         probes.push(Probe::new(&flags.join(" "), &args, "", Reads::Status));
+    }
+    for (name, args) in SEARCH {
+        probes.push(Probe::new(name, args, "", Reads::Output));
     }
     probes
 }
@@ -471,17 +539,49 @@ pub struct Outcome {
     pub probe: Probe,
     /// How R differs, or nothing.
     pub differs: Vec<String>,
+    /// The macros that differ and that `mk-divergences.toml` allows, each with its reason.
+    pub allowed: Vec<(String, String)>,
     /// R's time.
     pub r_ms: u128,
     /// Why it was not asked, when it was not.
     pub skipped: Option<String>,
 }
 
-/// Ask every probe of G and R in `work`.
-pub fn run(g: &Path, r: &Path, probes: Vec<Probe>, work: &Path) -> Result<Vec<Outcome>, String> {
+/// Take out of `differs` the macro differences that `divergences` allows for `system`, and return
+/// them with their reasons. A macro difference starts with the macro's name and a colon.
+pub fn allow(
+    differs: &mut Vec<String>,
+    system: &str,
+    divergences: &Divergences,
+) -> Vec<(String, String)> {
+    let mut allowed = Vec::new();
+    differs.retain(|d| {
+        let name = d.split_once(':').map_or(d.as_str(), |(n, _)| n);
+        match divergences.predefined(system, name) {
+            Some(reason) => {
+                allowed.push((name.to_string(), reason.to_string()));
+                false
+            }
+            None => true,
+        }
+    });
+    allowed
+}
+
+/// Ask every probe of G and R in `work`. The macro differences that `divergences` allows for
+/// `system` do not count.
+pub fn run(
+    g: &Path,
+    r: &Path,
+    probes: Vec<Probe>,
+    work: &Path,
+    system: &str,
+    divergences: &Divergences,
+) -> Result<Vec<Outcome>, String> {
     std::fs::create_dir_all(work).map_err(|e| format!("{}: {e}", work.display()))?;
     let unit = work.join("rb-probe.c");
     std::fs::write(&unit, UNIT).map_err(|e| format!("{}: {e}", unit.display()))?;
+    make_tree(work)?;
     let mut out = Vec::new();
     for probe in probes {
         if let Some(cwd) = &probe.cwd
@@ -490,6 +590,7 @@ pub fn run(g: &Path, r: &Path, probes: Vec<Probe>, work: &Path) -> Result<Vec<Ou
             out.push(Outcome {
                 probe,
                 differs: Vec::new(),
+                allowed: Vec::new(),
                 r_ms: 0,
                 skipped: Some("its directory is not on this host".to_string()),
             });
@@ -497,8 +598,15 @@ pub fn run(g: &Path, r: &Path, probes: Vec<Probe>, work: &Path) -> Result<Vec<Ou
         }
         let ga = ask(g, &probe, work, &work.join("probes-G.jsonl"));
         let ra = ask(r, &probe, work, &work.join("probes-R.jsonl"));
+        let mut differs = compare(probe.reads, &ga, &ra);
+        let allowed = if probe.reads == Reads::Macros {
+            allow(&mut differs, system, divergences)
+        } else {
+            Vec::new()
+        };
         out.push(Outcome {
-            differs: compare(probe.reads, &ga, &ra),
+            differs,
+            allowed,
             r_ms: ra.ms,
             skipped: None,
             probe,
@@ -513,7 +621,11 @@ pub fn run(g: &Path, r: &Path, probes: Vec<Probe>, work: &Path) -> Result<Vec<Ou
 pub fn report(outcomes: &[Outcome], all: bool, details: usize) -> (String, usize) {
     let mut s = String::new();
     let (mut same, mut differ, mut skipped, mut slow) = (0, 0, 0, 0);
+    let mut allowed: BTreeMap<&str, (&str, usize)> = BTreeMap::new();
     for o in outcomes {
+        for (name, reason) in &o.allowed {
+            allowed.entry(name).or_insert((reason, 0)).1 += 1;
+        }
         if let Some(why) = &o.skipped {
             skipped += 1;
             if all {
@@ -540,6 +652,12 @@ pub fn report(outcomes: &[Outcome], all: bool, details: usize) -> (String, usize
             }
         }
     }
+    if !allowed.is_empty() {
+        s.push_str("allowed by mk-divergences.toml:\n");
+        for (name, (reason, n)) in &allowed {
+            let _ = writeln!(s, "         {name} in {n} probes: {reason}");
+        }
+    }
     let _ = writeln!(
         s,
         "probes: {} asked, {same} the same, {differ} differ, {skipped} skipped; R took more than 20 ms on {slow}",
@@ -552,6 +670,7 @@ pub fn report(outcomes: &[Outcome], all: bool, details: usize) -> (String, usize
 pub mod cli {
     use super::{fixed, from_records, report, run};
     use crate::cli::Args;
+    use crate::divergences::Divergences;
     use crate::toolchain::cli::Files;
     use rb_shim::config::{FILE_NAME, ShimConfig};
     use std::fmt::Write as _;
@@ -612,7 +731,8 @@ pub mod cli {
             );
             probes.extend(more);
         }
-        let outcomes = run(&g, &r, probes, &work)?;
+        let divergences = Divergences::load(root, args.get("divergences").map(Path::new))?;
+        let outcomes = run(&g, &r, probes, &work, &files.pin.system, &divergences)?;
         let details = args
             .get("details")
             .map(str::parse)
@@ -674,6 +794,74 @@ mod tests {
                 "__rucc__: G undefined, R 1"
             ]
         );
+    }
+
+    #[test]
+    fn allowed_macros_do_not_count() {
+        let d = Divergences::parse(
+            "[[divergence]]\nmacro = \"__rucc*\"\nreason = \"rucc's name\"\n\n\
+             [[divergence]]\nsystem = \"netbsd\"\nmacro = \"__VERSION__\"\nreason = \"text\"\n",
+        )
+        .unwrap();
+        let g = answer(0, "#define __GNUC__ 15\n#define __VERSION__ \"15.2.0\"\n");
+        let r = answer(
+            0,
+            "#define __GNUC__ 15\n#define __VERSION__ \"rucc\"\n#define __rucc__ 1\n#define __rucc_major__ 0\n",
+        );
+        let mut differs = compare(Reads::Macros, &g, &r);
+        let allowed = allow(&mut differs, "freebsd", &d);
+        assert_eq!(differs, [r#"__VERSION__: G "15.2.0", R "rucc""#]);
+        assert_eq!(allowed.len(), 2);
+        assert_eq!(
+            allowed[0],
+            ("__rucc__".to_string(), "rucc's name".to_string())
+        );
+        let mut differs = compare(Reads::Macros, &g, &r);
+        assert_eq!(allow(&mut differs, "netbsd", &d).len(), 3);
+        assert!(differs.is_empty());
+        let outcome = Outcome {
+            probe: Probe::new("-dM -E", &["-dM", "-E", "-"], "", Reads::Macros),
+            differs,
+            allowed: allow(&mut compare(Reads::Macros, &g, &r), "netbsd", &d),
+            r_ms: 3,
+            skipped: None,
+        };
+        let (text, differ) = report(&[outcome], false, 8);
+        assert_eq!(differ, 0);
+        assert!(
+            text.contains("__rucc_major__ in 1 probes: rucc's name"),
+            "{text}"
+        );
+        assert!(text.contains("1 asked, 1 the same, 0 differ"), "{text}");
+    }
+
+    #[test]
+    fn the_search_probes_have_their_tree() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let work = std::env::temp_dir().join(format!("rb-probes-tree-{}", std::process::id()));
+        make_tree(&work).unwrap();
+        for name in TREE {
+            assert!(work.join(name).is_file(), "{name}");
+        }
+        let mode = std::fs::metadata(work.join("rb-b/ld"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111);
+        let probes = fixed();
+        for (name, args) in SEARCH {
+            let p = probes.iter().find(|p| p.name == *name).unwrap();
+            assert_eq!(p.reads, Reads::Output);
+            for a in *args {
+                let path = a
+                    .strip_prefix("-B")
+                    .or_else(|| a.strip_prefix("--sysroot="));
+                if let Some(path) = path {
+                    assert!(work.join(path).is_dir(), "{a}");
+                }
+            }
+        }
+        std::fs::remove_dir_all(&work).unwrap();
     }
 
     #[test]
