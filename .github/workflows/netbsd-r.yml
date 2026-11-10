@@ -107,7 +107,7 @@ jobs:
 
   kernel:
     name: GENERIC kernel with ${{ matrix.cc }}
-    needs: tools
+    needs: [tools, rb]
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     continue-on-error: ${{ matrix.cc == 'rucc' }}
@@ -213,6 +213,49 @@ jobs:
             echo
             scripts/netbsd/r-report.sh "$NB_ROOT/logs/kernel-$CC_NAME.log" "$NB_ROOT/logs/kernel-$CC_NAME-k.log"
           } >> "$GITHUB_STEP_SUMMARY"
+      # Each leg keeps its objects and a compile.jsonl made from the shim log, with /mnt/nb/obj
+      # moved to /mnt/cmp/LEG/obj, so that the compare job can unpack both legs side by side.
+      - name: the objects and the compile log for rb
+        if: always()
+        run: |
+          out="$NB_ROOT/cmp"
+          mkdir -p "$out"
+          side=G
+          if [ "$CC_NAME" = rucc ]; then side=R; fi
+          python3 scripts/netbsd/shim-records.py "$NB_ROOT/logs/shim.tsv" "$side" \
+            "$NB_ROOT/obj" "/mnt/cmp/$CC_NAME/obj" > "$out/compile.jsonl"
+          (cd "$NB_ROOT" && find obj/sys/arch/amd64/compile/GENERIC -name '*.o' -print0 \
+            | tar --null -T - -cf - | xz -T0 > "$out/objects.tar.xz")
+          ls -l "$out"
+      # rb mk-diff needs both TOOLDIRs and the kernel's build directory, so it runs in the rucc
+      # leg. RB_SHIM_LOG is empty so that its probes stay out of shim.tsv.
+      - uses: actions/download-artifact@v8.0.1
+        if: always() && matrix.cc == 'rucc'
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: rb mk-diff
+        if: always() && matrix.cc == 'rucc'
+        run: |
+          rb="$RUNNER_TEMP/rb/rb"
+          chmod +x "$rb"
+          out="$NB_ROOT/cmp"
+          kernel="$NB_ROOT/obj/sys/arch/amd64/compile/GENERIC"
+          args=()
+          if [ -f "$kernel/Makefile" ]; then args=(--kernel "$kernel"); fi
+          "$rb" mk-diff netbsd-trunk --g "$NB_ROOT/tools" --r "$NB_ROOT/tools-r" --src "$NB_ROOT/src" \
+            "${args[@]}" --work "$out/mk-diff" > "$out/mk-diff.txt" 2>&1 \
+            || echo "rb mk-diff exited $?" >> "$out/mk-diff.txt"
+          { echo "### rb mk-diff"; echo; echo '```'; head -3 "$out/mk-diff.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          RB_SHIM_LOG: ""
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-objects-${{ matrix.cc }}
+          path: /mnt/nb/cmp
+          if-no-files-found: ignore
+          retention-days: 7
       - name: the kern-GENERIC set from the rucc kernel
         if: always() && matrix.cc == 'rucc' && inputs.g_run != ''
         run: |
@@ -251,7 +294,6 @@ jobs:
 
   rb:
     name: cargo build rb
-    if: inputs.g_run != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -264,6 +306,65 @@ jobs:
           name: rb-linux-x86_64
           path: target/release/rb
           retention-days: 7
+
+  # rb flags-diff, sections-diff and symbols-diff of the rucc leg against the ref leg, which is G's
+  # compiler through the same shims. The objects of the ref leg are under /mnt/cmp/ref and those
+  # of the rucc leg under /mnt/cmp/rucc. None of them fails the run.
+  compare:
+    name: rb compares the rucc kernel with the ref kernel
+    needs: [kernel, rb]
+    if: always() && needs.rb.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p /mnt/cmp
+          sudo chown "$(id -u):$(id -g)" /mnt/cmp
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-objects-ref
+          path: /mnt/cmp/ref
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-objects-rucc
+          path: /mnt/cmp/rucc
+      - name: rb flags-diff, sections-diff and symbols-diff
+        run: |
+          rb="$RUNNER_TEMP/rb/rb"
+          chmod +x "$rb"
+          for leg in ref rucc; do tar -xJf "/mnt/cmp/$leg/objects.tar.xz" -C "/mnt/cmp/$leg"; done
+          out=/mnt/cmp/record
+          mkdir -p "$out"
+          cp /mnt/cmp/rucc/mk-diff.txt "$out/" 2>/dev/null || true
+          g=(--g /mnt/cmp/ref/compile.jsonl --g-root /mnt/cmp/ref)
+          r=(--r /mnt/cmp/rucc/compile.jsonl --r-root /mnt/cmp/rucc)
+          run() { "$rb" "$@" > "$out/$1.txt" 2>&1 || echo "rb $1 exited $?" >> "$out/$1.txt"; }
+          run flags-diff netbsd-trunk "${g[@]}" "${r[@]}" --paired-only
+          for tool in sections-diff symbols-diff; do
+            run "$tool" "${g[@]}" "${r[@]}"
+            "$rb" "$tool" "${g[@]}" "${r[@]}" --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
+          done
+          {
+            echo "### rb compares the rucc kernel with the ref kernel"
+            echo
+            echo '```'
+            for f in mk-diff flags-diff sections-diff symbols-diff; do
+              if [ -f "$out/$f.txt" ]; then echo "rb $f:"; head -4 "$out/$f.txt"; echo; fi
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-compare
+          path: /mnt/cmp/record
+          retention-days: 14
 
   # G's sets with the rucc kernel in kern-GENERIC, made into the live image as in netbsd-g.yml.
   # The RB-TEST leg puts the rucc RB-TEST kernel in kern-GENERIC.

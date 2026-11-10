@@ -206,6 +206,7 @@ jobs:
         run: |
           # The ref objects are under /build/obj and the replay objects are at the same paths under
           # /build/replay, so the roots pair them. The probes of rb mk-diff go to their own log.
+          # sections-diff-all.txt and symbols-diff-all.txt have every line of each list.
           # shellcheck disable=SC2016
           scripts/freebsd/builder.sh ssh "cd /root/harness && export KERNCONF=$KERNCONF && "'
             rb=/build/rb/bin/rb; ref=/build/out/compile-ref.jsonl; out=/root/out
@@ -214,8 +215,12 @@ jobs:
             run mk-diff freebsd-15.1 --dir /build/toolchain --src /build/src --work "$out/mk-diff" \
               --kernel "/build/obj/build/src/amd64.amd64/sys/$KERNCONF"
             run flags-diff freebsd-15.1 --g "$ref" --r /build/out/compile-rucc.jsonl --paired-only
+            pair="--g $ref --r /build/out/compile-replay.jsonl --g-root /build/obj --r-root /build/replay/build/obj"
             for tool in warnings sections-diff symbols-diff; do
-              run "$tool" --g "$ref" --r /build/out/compile-replay.jsonl --g-root /build/obj --r-root /build/replay/build/obj
+              run "$tool" $pair
+            done
+            for tool in sections-diff symbols-diff; do
+              "$rb" "$tool" $pair --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
             done'
         env:
           KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
