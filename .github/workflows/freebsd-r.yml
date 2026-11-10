@@ -239,9 +239,23 @@ jobs:
       - name: the image of the last good freebsd-g run
         if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref'
         run: |
-          id=$(gh run list -R "$GITHUB_REPOSITORY" -w freebsd-g.yml -b main -s success -L 1 --json databaseId -q '.[0].databaseId')
+          # freebsd-g also runs for other pins, and a run of another pin has no image of this one.
+          # So take the newest good run on main that has an image of this pin.
+          name="freebsd-image-$RB_PIN-graded"
+          id=
+          for run in $(gh run list -R "$GITHUB_REPOSITORY" -w freebsd-g.yml -b main -s success -L 30 --json databaseId -q '.[].databaseId'); do
+            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?name=$name" \
+              -q '.artifacts[] | select(.expired | not) | .name' | grep -qx "$name"; then
+              id=$run
+              break
+            fi
+          done
+          if [ -z "$id" ]; then
+            echo "No good freebsd-g run on main has the artifact $name." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           echo "The image has the world of freebsd-g run $id and the kernel of $RB_SIDE." | tee record/g-image.txt >> "$GITHUB_STEP_SUMMARY"
-          gh run download "$id" -R "$GITHUB_REPOSITORY" -n "freebsd-image-$RB_PIN-graded" -D g-image
+          gh run download "$id" -R "$GITHUB_REPOSITORY" -n "$name" -D g-image
           scripts/freebsd/builder.sh ssh 'mkdir -p /build/image'
           scripts/freebsd/builder.sh put g-image/freebsd.img.zst /build/image/g.img.zst
           rm -rf g-image
