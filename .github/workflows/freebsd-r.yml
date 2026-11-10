@@ -45,7 +45,7 @@ on:
         required: false
         default: main
       kernconf:
-        description: The kernel configuration
+        description: "The kernel configuration: one of the tree, or RB-TEST of conf/freebsd/kernel (plan 12.2)"
         required: false
         default: GENERIC
       target:

@@ -1,0 +1,21 @@
+# RB-TEST: the kernel configuration that rb boots to run the tests (plan 12.2). It is GENERIC of the
+# pinned tree with options added and none removed. G and R use the same file. Each option tells
+# which part of the rig needs it.
+#
+# The build scripts give make KERNCONFDIR=<harness>/conf/freebsd/kernel when RB_KERNCONF names a
+# file here. config(8) then reads the include from the tree's sys/amd64/conf.
+#
+# The console needs no option. The loader.conf of the image puts the loader and the kernel on the
+# serial console that rb boot reads (conf/freebsd/image/loader.conf).
+
+include 	GENERIC
+ident		RB-TEST
+
+# A panic prints the stack trace with the ddb back end. GENERIC of a release has KDB, KDB_TRACE
+# and STACK but no back end, so its trace comes from stack(9). The trace of ddb also shows each trap
+# frame, with the trap number and the registers, which tells where a fault of the kernel was.
+options 	DDB
+
+# A panic does not stop at the ddb prompt, where no person is. The kernel continues to the dump
+# and the reboot. rb boot sees the panic and the trace on the console.
+options 	KDB_UNATTENDED

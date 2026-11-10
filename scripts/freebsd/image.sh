@@ -31,6 +31,12 @@ guest="$RB_HARNESS/scripts/freebsd/guest"
 d="$RB_DESTDIR"
 work=$(dirname "$RB_IMAGE")
 mkdir -p "$RB_OUT" "$work"
+# A kernel configuration of rucc-bsd, such as RB-TEST (plan 12.2), is in conf/freebsd/kernel of
+# the harness. make finds it by KERNCONFDIR, and the configurations of the tree in sys/amd64/conf.
+kernconfdir=
+if [ -f "${RB_HARNESS:-}/conf/freebsd/kernel/${RB_KERNCONF:-GENERIC}" ]; then
+	kernconfdir="$RB_HARNESS/conf/freebsd/kernel"
+fi
 
 now() { date +%s; }
 epoch=$(stat -f %m "$RB_SRC/Makefile")
@@ -52,7 +58,7 @@ start=$(now)
 rm -rf "$d"
 mkdir -p "$d"
 if ! make -C "$RB_SRC" -j"$RB_JOBS" installworld installkernel distribution DESTDIR="$d" \
-	TARGET=amd64 TARGET_ARCH=amd64 KERNCONF="${RB_KERNCONF:-GENERIC}" \
+	TARGET=amd64 TARGET_ARCH=amd64 KERNCONF="${RB_KERNCONF:-GENERIC}" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
 	CROSS_TOOLCHAIN="$RB_TOOLCHAIN" __MAKE_CONF=/dev/null SRCCONF="$RB_SRCCONF" \
 	> "$RB_OUT/install.log" 2>&1; then
 	tail -60 "$RB_OUT/install.log"
