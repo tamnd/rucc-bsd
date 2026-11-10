@@ -97,6 +97,12 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             print!("{text}");
             Ok(exit(ok))
         }
+        "ctf-diff" => {
+            let (text, ok) = rb::ctfdiff::cli::run_cli(args)?;
+            print!("{text}");
+            Ok(exit(ok))
+        }
+        "test" => test(args),
         "warnings" => {
             let (text, ok) = rb::warnings::cli::run(args)?;
             print!("{text}");
@@ -220,6 +226,17 @@ fn compilers(args: &Args) -> Result<ExitCode, String> {
 }
 
 /// Exit 0 when a check held, and 1 when it did not.
+/// `rb test`. Booting an image needs the repository's rows.toml; reading earlier boots does not.
+fn test(args: &Args) -> Result<ExitCode, String> {
+    let rows = match rb::repo::Repo::find() {
+        Ok(repo) => Some(rb_pins::places::Rows::load(&repo.root)?),
+        Err(_) => None,
+    };
+    let (text, ok) = rb::attribution::cli::run(args, rows.as_ref())?;
+    print!("{text}");
+    Ok(exit(ok))
+}
+
 fn exit(ok: bool) -> ExitCode {
     if ok {
         ExitCode::SUCCESS

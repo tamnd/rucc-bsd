@@ -327,14 +327,15 @@ jobs:
           rm "$NB_ROOT/release/destdir-meta.tar"
           binary="$NB_ROOT/release/amd64/binary"
           # The CTF of the rucc kernel against the CTF of G's kernel of the same configuration,
-          # until rb ctf-diff does it (plan 09.6). The full lists go to the logs artifact.
+          # with rb ctf-diff (plan 09.6). The full lists go to the logs artifact.
+          chmod +x "$RUNNER_TEMP/rb/rb"
           {
             echo "### CTF: the rucc $KERNEL kernel against G's"
             echo
             if [ -f "$binary/sets/kern-$KERNEL.tar.xz" ]; then
               tar -xJOf "$binary/sets/kern-$KERNEL.tar.xz" ./netbsd > "$RUNNER_TEMP/g-netbsd"
-              python3 scripts/netbsd/ctf-diff.py "$RUNNER_TEMP/g-netbsd" \
-                "$RUNNER_TEMP/r-kernel/$KERNEL_FILE" --out "$NB_ROOT/logs/ctf" || true
+              "$RUNNER_TEMP/rb/rb" ctf-diff --g "$RUNNER_TEMP/g-netbsd" \
+                --r "$RUNNER_TEMP/r-kernel/$KERNEL_FILE" --out "$NB_ROOT/logs/ctf" || true
               rm "$RUNNER_TEMP/g-netbsd"
             else
               echo "G run $G_RUN has no kern-$KERNEL set."
@@ -598,6 +599,35 @@ jobs:
         env:
           G_RUN: ${{ inputs.g_run }}
           RUCC_REF: ${{ inputs.rucc }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: netbsd-atf-*
+          path: g-atf
+          run-id: ${{ inputs.g_run }}
+          github-token: ${{ github.token }}
+      # The 2x2 of plan 12.6 for the cells this run has: GG from G run g_run and RG from the
+      # shards above. rb test writes the attribution of each case RG does not pass.
+      - name: rb test, RG against GG
+        run: |
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          shopt -s nullglob
+          gg=(g-atf/*/)
+          rg=(atf/*/)
+          {
+            echo "### rb test: RG against GG"
+            echo
+            if [ ${#gg[@]} -eq 0 ] || [ ${#rg[@]} -eq 0 ]; then
+              echo "There are no ATF shards for GG (${#gg[@]}) or RG (${#rg[@]})."
+              exit 0
+            fi
+            join() { local IFS=+; echo "$*"; }
+            "$RUNNER_TEMP/rb/rb" test --gg "$(join "${gg[@]%/}")" --rg "$(join "${rg[@]%/}")" \
+              --out out/test || true
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:

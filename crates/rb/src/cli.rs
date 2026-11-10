@@ -232,6 +232,51 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
             values: &["row", "dir", "g", "r"],
             switches: &["ungraded"],
         },
+        _ => return graded_commands(command),
+    })
+}
+
+/// What the commands that grade R against G accept.
+fn graded_commands(command: &str) -> Option<Accepts> {
+    Some(match command {
+        "ctf-diff" => Accepts {
+            positional: false,
+            values: &["g", "r", "g-log", "r-log", "out", "limit"],
+            switches: &[],
+        },
+        "test" => Accepts {
+            positional: false,
+            values: &[
+                "gg",
+                "rg",
+                "gr",
+                "rr",
+                "gg-image",
+                "rg-image",
+                "gr-image",
+                "rr-image",
+                "baseline",
+                "out",
+                "work",
+                "limit",
+                "suite",
+                "row",
+                "firmware",
+                "tests-only",
+                "tests-except",
+                "boot-timeout",
+                "timeout",
+                "reboots",
+                "spare-disks",
+                "disk-size",
+                "cpus",
+                "memory",
+                "qemu",
+                "ovmf-code",
+                "ovmf-vars",
+            ],
+            switches: &["keep", "dry-run"],
+        },
         _ => return None,
     })
 }
@@ -288,6 +333,16 @@ usage:
       the report stop after N lines, 50 by default. When a call was delegated under bring-up, the
       first line says the build is ungraded, and the report lists each delegated unit with what
       rucc said about it.
+  rb ctf-diff --g FILE|DIR --r FILE|DIR [--g-log LOG --r-log LOG] [--out DIR] [--limit N]
+      Compare the CTF of G's and R's kernels and modules. Each side is an ELF file with a
+      .SUNW_ctf section, or a directory, where the files with one are paired by their path under
+      it. Each named type must have the same members, member types and bit offsets, or the same
+      values; all types, anonymous ones too, are compared by kind and by how a use of them is
+      written; and each data and function symbol must have the same type. The symbol types are
+      read in symbol table order, as libctf reads them. LOG is a build log as text: the warnings
+      and errors of ctfconvert and ctfmerge only R's log has are the losses. --out writes the
+      named types of each side and the differences. Each list stops after N lines, 40 by default.
+      Exits 1 when anything is not the same, a file has CTF on one side only, or R has a loss.
   rb demands LOG [--pin PIN --row ROW --conf CONF [--write]] [--flags-only] [--jobs N] [--limit N]
       Count the compiler features one build uses, from its compile.jsonl. Every C and assembly
       unit of the C compiler slot is run again with -E in place of -c, in its own directory, and
@@ -393,6 +448,21 @@ usage:
       first error, the flags rucc refused, and the units with a warning G did not give, compared
       as rb warnings does. --out writes one line per unit as tab-separated values. Exits 1 when a
       unit failed or has such a warning.
+  rb test (--gg RUNS | --gg-image IMG | --baseline DIR) [--rg RUNS | --rg-image IMG]
+          [--gr RUNS | --gr-image IMG] [--rr RUNS | --rr-image IMG] [--out DIR] [--work DIR]
+          [--limit N] [the options of rb boot] [--dry-run]
+      The graded run with the 2x2: GG, RG (R's kernel on G's world), GR (G's kernel on R's world)
+      and RR. RUNS are output directories of rb boot, as rb baseline --from takes them: runs
+      separated by ',' and the shards of one run by '+'. An image is booted into DIR/<cell>,
+      work/test by default. A case is graded when every GG run passed it, and with --baseline
+      when its verdict in DIR/cases.tsv is stable-pass. The claim is RR, or RG or GR when it is
+      the only cell given. It runs every suite, boot,smoke,tests by default; an RG or GR image
+      next to an RR claim is booted only for the suites and top-level test directories of the
+      cases RR failed. Each graded case the claim does not pass gets a verdict from RG and GR:
+      kernel, world, both or interaction, as plan 12.6 gives them, and only kernel with an RG
+      claim and only world with a GR claim. --out writes attribution.tsv and test.md. The case
+      list stops after N lines, 50 by default. Exits 1 when the claim does not pass a graded
+      case, or nothing is graded.
   rb toolchain PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
           [--destdir DIR] [--shim PATH] [--bringup as,cxx-c [--bringup-units UNIT,...]]
           [--ungraded]
