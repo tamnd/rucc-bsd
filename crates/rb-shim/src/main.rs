@@ -89,6 +89,11 @@ fn shim(argv: &[String], called: &str, name: &str) -> Result<ExitCode, String> {
                 "MACHINE_ARCH",
                 "TARGET",
                 "TARGET_ARCH",
+                // NetBSD's GCC reads these for the prefix maps of MKREPRO (share/mk/bsd.sys.mk).
+                "NETBSDSRCDIR",
+                "NETBSDOBJDIR",
+                "DESTDIR",
+                "X11SRCDIR",
             ],
             &["RB_", "RUCC_"],
         ),
