@@ -92,6 +92,9 @@ def main():
         rd, rdrv = read(os.path.join(rec, "rucc"))
         gkeys = {(f, l, o) for f, l, k, o, m, t in gd if o}
         gfiles = {(f, l) for f, l, k, o, m, t in gd}
+        # A GCC warning that no option controls, such as a macro redefined, prints no option, and
+        # rucc prints its code where no option controls its warning. The two match on the line.
+        gplain = {(f, l) for f, l, k, o, m, t in gd if k == "warning" and o is None}
         rkeys = set()
         for f, l, k, o, m, t in rd:
             if named(o) or k == "warning":
@@ -99,8 +102,9 @@ def main():
                 if key in rkeys:
                     continue
                 rkeys.add(key)
-                if key not in gkeys:
-                    extra[o or "(none)"].append((unit, t, (f, l) in gfiles))
+                if key in gkeys or (k == "warning" and not named(o) and (f, l) in gplain):
+                    continue
+                extra[o or "(none)"].append((unit, t, (f, l) in gfiles))
             else:
                 hard[f"{o or ''} {shape(m)}"].append((unit, t))
         for f, l, o in gkeys - rkeys:
