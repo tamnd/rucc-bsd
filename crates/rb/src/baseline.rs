@@ -167,9 +167,9 @@ pub fn verdict(results: &[Option<&str>]) -> &'static str {
 
 /// Each case of any run, with its result and duration in each run. A case a run did not report
 /// is `None` there.
-type Table<'a> = BTreeMap<(&'a str, &'a str), Vec<Option<&'a Case>>>;
+pub(crate) type Table<'a> = BTreeMap<(&'a str, &'a str), Vec<Option<&'a Case>>>;
 
-fn table(runs: &[Run]) -> Table<'_> {
+pub(crate) fn table(runs: &[Run]) -> Table<'_> {
     let mut t: Table = BTreeMap::new();
     for (i, run) in runs.iter().enumerate() {
         for c in &run.cases {

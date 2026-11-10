@@ -4,6 +4,7 @@
 //! The commands arrive one milestone at a time, in the order of plan 16. Each one lives in its
 //! own module, and the binary only parses the command line and calls it.
 
+pub mod attribution;
 pub mod baseline;
 pub mod boot;
 pub mod build;
@@ -11,6 +12,8 @@ pub mod cases;
 pub mod census;
 pub mod cli;
 pub mod console;
+pub mod ctf;
+pub mod ctfdiff;
 pub mod demands;
 pub mod divergences;
 pub mod fetch;

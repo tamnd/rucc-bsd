@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 harness-agent.workspace = true
 harness-shim.workspace = true
+miniz_oxide.workspace = true
 object.workspace = true
 rb-image = { path = "../rb-image" }
 rb-pins = { path = "../rb-pins" }
