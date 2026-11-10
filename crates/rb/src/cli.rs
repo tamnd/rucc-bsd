@@ -219,7 +219,16 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
         },
         "probes" => Accepts {
             positional: true,
-            values: &["row", "dir", "g", "r", "from", "work", "details"],
+            values: &[
+                "row",
+                "dir",
+                "g",
+                "r",
+                "from",
+                "work",
+                "details",
+                "divergences",
+            ],
             switches: &["all"],
         },
         "syntax" => Accepts {
@@ -393,17 +402,19 @@ usage:
       pins.toml, personas.toml and toolchains.toml. ARCH is rucc's architecture, x86_64 by
       default. Exits 1 when a persona needs review, such as a NetBSD BASE-VER that moved.
   rb probes PIN [--row ROW] (--dir DIR | --g G --r R) [--from LOG] [--work DIR] [--all]
-          [--details N]
+          [--details N] [--divergences FILE]
       Ask G's and R's C compilers the questions a build asks, without building, and say for each
       whether they answer the same. DIR is a FreeBSD directory of rb toolchain. G and R are
       compilers, or directories of rb toolchain or rb shim whose rb-shim.toml names a cc slot,
       such as NetBSD TOOLDIRs. The probes are --version as bsd.compiler.mk reads it, the gcc
       version of -v, echo __FreeBSD_cc_version | cc -E -, the -print- questions, the macros of
-      -dM -E, the __has_feature and __has_extension queries of the systems' headers, and the
-      kernel and boot code flags rucc may refuse. --from adds every C compiler probe of a
-      compile.jsonl, once each. The probes run in DIR of --work, and the shims' records of them go
-      to probes-G.jsonl and probes-R.jsonl there. --all prints the probes that are the same too.
-      Exits 1 when a probe differs.
+      -dM -E, the __has_feature and __has_extension queries of the systems' headers, the kernel
+      and boot code flags rucc may refuse, and -B and --sysroot as buildworld gives them, on a
+      small tree in the work directory. --from adds every C compiler probe of a compile.jsonl,
+      once each. The probes run in DIR of --work, and the shims' records of them go to
+      probes-G.jsonl and probes-R.jsonl there. --all prints the probes that are the same too. A
+      macro that mk-divergences.toml, or FILE, allows is listed with its reason and does not
+      count. Exits 1 when a probe differs.
   rb sections-diff --g LOG --r LOG [--g-root DIR --r-root DIR] [--jobs N] [--limit N]
       Compare each object of two builds. LOG is the compile.jsonl of each build, and objects are
       paired by path, with the roots replaced as for rb flags-diff. Section names must be the

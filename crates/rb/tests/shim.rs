@@ -367,7 +367,7 @@ fn probes_compare_what_the_build_reads() {
     ];
     let (ok, text) = rb(&top, &args);
     assert!(ok, "{text}");
-    assert!(text.contains("26 asked, 26 the same, 0 differ"), "{text}");
+    assert!(text.contains("32 asked, 32 the same, 0 differ"), "{text}");
     std::fs::write(
         &gcc,
         "#!/bin/sh\ncase \" $* \" in *\" -dM \"*) echo '#define __GNUC__ 15' ;; esac\nexit 0\n",
