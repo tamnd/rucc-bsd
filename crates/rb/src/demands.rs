@@ -186,11 +186,33 @@ pub fn replay_args(record: &CompileRecord) -> Vec<String> {
     out
 }
 
+/// The recorded variables that the replay of a record sets: those that its command line names as
+/// `$NAME`. NetBSD's GCC reads `-fmacro-prefix-map=$DESTDIR=` and the like from the environment,
+/// and stops with an error when the variable is not set.
+#[must_use]
+pub fn replay_env(record: &CompileRecord) -> Vec<(&str, &str)> {
+    record
+        .env
+        .iter()
+        .filter(|(name, _)| {
+            let named = format!("${name}");
+            record.argv.iter().any(|a| {
+                a.match_indices(&named).any(|(i, _)| {
+                    !a[i + named.len()..]
+                        .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                })
+            })
+        })
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect()
+}
+
 /// Read one unit's features.
 pub fn read_unit(unit: &Unit, record: &CompileRecord) -> Result<Features, String> {
     let text = if unit.preprocess {
         let out = Command::new(&record.compiler)
             .args(replay_args(record))
+            .envs(replay_env(record))
             .current_dir(&record.cwd)
             .stdin(Stdio::null())
             .output()
@@ -529,6 +551,27 @@ mod tests {
         );
         r.added = vec!["--target=x".into()];
         assert_eq!(replay_args(&r), ["--target=x", "-E", "-O2", "a.c"]);
+    }
+
+    #[test]
+    fn the_replay_sets_the_variables_that_the_command_line_names() {
+        let mut r = CompileRecord::new(
+            argv(
+                "rb-cc -fmacro-prefix-map=$DESTDIR= -fdebug-prefix-map=$NETBSDSRCDIR=/usr/src -c a.c",
+            ),
+            "/gcc".into(),
+            "/o".into(),
+        );
+        for (k, v) in [
+            ("DESTDIR", "/d"),
+            ("DESTDIRX", "/x"),
+            ("NETBSDSRCDIR", "/s"),
+            ("X11SRCDIR", "/x11"),
+            ("PATH", "/bin"),
+        ] {
+            r.env.insert(k.into(), v.into());
+        }
+        assert_eq!(replay_env(&r), [("DESTDIR", "/d"), ("NETBSDSRCDIR", "/s")]);
     }
 
     const LOG: &str = r#"{"started":1,"argv":["rb-cc","-O2","-fno-common","-c","a.c","-o","a.o"],"compiler":"/gcc","cwd":"/o","inputs":[{"path":"a.c","sha256":"x"}],"outputs":[{"path":"a.o","sha256":"y"}],"wall-seconds":0.1,"exit":0,"slot":"cc","side":"G","origin":"ref"}
