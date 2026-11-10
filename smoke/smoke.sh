@@ -77,10 +77,13 @@ network()
 }
 
 # The NetBSD image has no spare partition of its own, so the check uses the EFI system partition,
-# a msdos wedge next to the root. dkctl names it.
+# a msdos wedge next to the root. dkctl names it. The root's disk comes first: on evbarm and riscv
+# it is ld4, because ld0 to ld3 are wired to sdmmc.
 netbsd_spare()
 {
-	for d in ld0 wd0 sd0; do
+	root=$(sysctl -n kern.root_device 2> /dev/null)
+	root=$(dkctl "$root" getwedgeinfo 2> /dev/null | sed -n 's/^dk[0-9]* at \([a-z]*[0-9]*\): .*/\1/p')
+	for d in $root ld0 wd0 sd0; do
 		w=$(dkctl $d listwedges 2> /dev/null | sed -n 's/^\(dk[0-9]*\): .*type: msdos.*/\1/p')
 		if [ -n "$w" ]; then
 			echo "$w" | head -n 1
