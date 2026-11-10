@@ -160,6 +160,9 @@ jobs:
       - name: build.sh kernel=GENERIC
         run: |
           provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh kernel -P -u kernel=GENERIC
+          # releasekernel runs the host's gzip on the kernel. GNU gzip keeps the kernel's mtime in
+          # netbsd-GENERIC.gz, where NetBSD's gzip writes 0, so the kernel gets MKREPRO_TIMESTAMP.
+          touch -d "@$MKREPRO_TIMESTAMP" "$NB_ROOT/obj/sys/arch/amd64/compile/GENERIC/netbsd"
           provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh releasekernel -P -u releasekernel=GENERIC
       - name: build.sh sets
         run: |

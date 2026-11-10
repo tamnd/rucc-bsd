@@ -11,7 +11,8 @@
 # "release", which also builds six more kernels and the install media. This script runs the
 # commands of the kernset-GENERIC target of etc/Makefile in the tree, with the values that the tree's
 # make gives for the same variables. We do not call that target, because it depends on snap_pre,
-# which depends on distribution and would rebuild the world.
+# which depends on distribution and would rebuild the world. As in etc/Makefile, pax gets
+# --timestamp MKREPRO_TIMESTAMP when that is set, for a build with -P.
 
 . "$(dirname "$0")/common.sh"
 
@@ -39,6 +40,9 @@ group=$(v BINGRP)
 gzip_flags=$(v GZIP_FLAGS)
 xz_opt=$(v XZ_OPT)
 
+timestamp=()
+[ -z "${MKREPRO_TIMESTAMP:-}" ] || timestamp=(--timestamp "$MKREPRO_TIMESTAMP")
+
 kerndir="$kernobjdir/$conf"
 setdir="$NB_REL/$NB_MACHINE/binary/sets"
 set_file="$setdir/kern-$conf.$suffix"
@@ -54,6 +58,6 @@ kernels=$(awk '/^config/ { print $2; found = 1 } END { if (!found) print "netbsd
 		[ -f "$kerndir/$k" ] && echo "./$k type=file"
 	done
 } | (cd "$kerndir" && GZIP="$gzip_flags" XZ_OPT="$xz_opt" \
-	"$pax" --use-compress-program "$compress" -O -w -M -N "$NB_SRC/etc" -f "$set_file")
+	"$pax" "${timestamp[@]}" --use-compress-program "$compress" -O -w -M -N "$NB_SRC/etc" -f "$set_file")
 
 echo "kernset: $set_file, $(du -k "$set_file" | cut -f1) KiB"

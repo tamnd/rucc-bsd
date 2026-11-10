@@ -112,6 +112,12 @@ chroot "$d" pkg clean -ay >> "$RB_OUT/packages.log" 2>&1
 echo "UPDATE packages SET time = $epoch; VACUUM;" | chroot "$d" pkg shell >> "$RB_OUT/packages.log" 2>&1 ||
 	echo "pkg shell failed, so the install times stay" >> "$RB_OUT/packages.log"
 chroot "$d" pkg query '%t' | sort | uniq -c >> "$RB_OUT/packages.log"
+# A package script that runs pw adds a line to /var/log/userlog that starts with the wall-clock
+# time. That time becomes the image's time, as for pkg's database.
+if [ -f "$d/var/log/userlog" ]; then
+	stamp=$(date -u -r "$epoch" '+%Y-%m-%d %H:%M:%S')
+	sed -i '' -E "s/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/$stamp/" "$d/var/log/userlog"
+fi
 umount "$d/dev"
 trap - EXIT
 rm -f "$d/etc/resolv.conf"

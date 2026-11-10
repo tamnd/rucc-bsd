@@ -49,10 +49,12 @@ def main():
         for line in f:
             if line.startswith("#"):
                 continue
+            # suite, case, the result of each run, the seconds of each run, and the verdict.
             cols = line.rstrip("\n").split("\t")
             if cols[0] != "tests":
                 continue
-            results = set(cols[2:-1:2])
+            runs = (len(cols) - 3) // 2
+            results = set(cols[2 : 2 + runs])
             stable["any"] += 1
             if len(results) == 1:
                 r = results.pop()
