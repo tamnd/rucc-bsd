@@ -15,7 +15,9 @@
 //! 6. The results are unpacked to `results/`, and `boot.json` says what happened.
 //!
 //! An image with no rb-rc, such as a release image, shows a login prompt. Then the result is
-//! `login`, which passes the boot suite and nothing else.
+//! `login`, which passes the boot suite and nothing else. With `--login`, rb logs in as root
+//! instead and starts rb-rc from the results disk, which then also holds rb-rc's scripts. So the
+//! suites run on such an image too, and the boot limit is until `RB-READY`.
 
 use crate::console::{Lines, Seen};
 use rb_image::conf::RbConf;
@@ -177,6 +179,8 @@ pub enum Bus {
 }
 
 /// One boot.
+// Each flag is a separate choice of the command line, and any of them can be set.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     /// The disk image.
@@ -219,6 +223,8 @@ pub struct Request {
     pub in_place: bool,
     /// Keep the overlay and the results disk.
     pub keep: bool,
+    /// Log in as root at the login prompt, and start rb-rc from the results disk.
+    pub login: bool,
 }
 
 /// How a boot ended.
@@ -241,6 +247,8 @@ pub struct Outcome {
     pub restarts: u32,
     /// Seconds until `RB-READY` or the login prompt.
     pub ready_seconds: Option<f64>,
+    /// Seconds until rb typed the command that starts rb-rc, with `--login`.
+    pub login_seconds: Option<f64>,
     /// Seconds until `RB-DONE`.
     pub done_seconds: Option<f64>,
     /// Seconds in all.
@@ -425,9 +433,37 @@ pub fn kvm_usable(qemu: &str) -> bool {
             .is_ok()
 }
 
-/// The results disk before the boot: an archive with the `rb.conf`, and room after it.
-pub fn results_disk(conf: &RbConf, size: u64) -> Result<Vec<u8>, String> {
-    let tar = ustar::write(&[ustar::Entry::file("rb.conf", 0o644, conf.render())])?;
+/// Where `--login` puts rb-rc's scripts in the guest. The results disk holds them under `rb/`.
+const LOGIN_DIR: &str = "/tmp";
+
+/// What rb types at the shell prompt with `--login`. It unpacks the results disk into
+/// [`LOGIN_DIR`] and runs rb-rc from there. The disk is the second disk: `vtbd1` on FreeBSD, and on
+/// NetBSD `ld1` on amd64 and `ld5` on evbarm and riscv, where `ld4` is the root. `sh -c` and the
+/// single quotes make the line the same in sh and in csh.
+#[must_use]
+pub fn login_command() -> String {
+    format!(
+        "sh -c 'cd {LOGIN_DIR} && for d in /dev/vtbd1 /dev/rld1d /dev/rld5c; do \
+         tar -xf $d 2>/dev/null && break; done; \
+         exec env RB_LIBEXEC={LOGIN_DIR}/rb sh {LOGIN_DIR}/rb/run'\r"
+    )
+}
+
+/// The results disk before the boot: an archive with the `rb.conf`, and room after it. With
+/// `login`, the archive also has rb-rc's scripts, for an image that does not have them.
+pub fn results_disk(conf: &RbConf, size: u64, login: bool) -> Result<Vec<u8>, String> {
+    let mut entries = vec![ustar::Entry::file("rb.conf", 0o644, conf.render())];
+    if login {
+        entries.push(ustar::Entry::dir("rb"));
+        for (name, text) in [
+            ("run", rb_image::guest::RUN),
+            ("smoke", rb_image::guest::SMOKE),
+            ("tests", rb_image::guest::TESTS),
+        ] {
+            entries.push(ustar::Entry::file(&format!("rb/{name}"), 0o555, text));
+        }
+    }
+    let tar = ustar::write(&entries)?;
     if (tar.len() as u64) > size {
         return Err(format!("a results disk of {size} bytes is too small"));
     }
@@ -471,7 +507,7 @@ pub fn prepare(req: &Request) -> Result<(), String> {
     }
     create_file(
         &p.results_disk,
-        &results_disk(&req.conf, req.disk_size)?,
+        &results_disk(&req.conf, req.disk_size, req.login)?,
         req.disk_size,
     )?;
     for i in 1..=req.spare_disks {
@@ -488,6 +524,14 @@ enum Msg {
     Out(Vec<u8>),
     Err(String),
     End,
+}
+
+/// How far `--login` has come.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Typed {
+    Nothing,
+    User,
+    Command,
 }
 
 /// Why rb stopped QEMU.
@@ -510,6 +554,8 @@ struct Watch {
     ready_at: Option<Instant>,
     done_at: Option<Instant>,
     ddb_at: Option<Instant>,
+    login_at: Option<Instant>,
+    typed: Typed,
     stop: Option<Stop>,
 }
 
@@ -528,6 +574,8 @@ impl Watch {
             ready_at: None,
             done_at: None,
             ddb_at: None,
+            login_at: None,
+            typed: Typed::Nothing,
             stop: None,
         })
     }
@@ -550,11 +598,33 @@ impl Watch {
         }
     }
 
-    /// Note the times of the markers, and say whether to stop QEMU, and why.
+    /// What to type next with `--login`: `root` at the login prompt, then the command that
+    /// starts rb-rc at the shell prompt.
+    fn answer(&mut self, req: &Request) -> Option<String> {
+        if !req.login || self.seen.ready.is_some() {
+            return None;
+        }
+        match self.typed {
+            Typed::Nothing if self.seen.login => {
+                self.typed = Typed::User;
+                Some("root\r".into())
+            }
+            Typed::User if shell_prompt(&self.lines.partial()) => {
+                self.typed = Typed::Command;
+                self.login_at = Some(Instant::now());
+                Some(login_command())
+            }
+            _ => None,
+        }
+    }
+
+    /// Note the times of the markers, and say whether to stop QEMU, and why. With `--login`, a
+    /// login prompt is not the end: the boot limit runs until `RB-READY`.
     fn check(&mut self, req: &Request) -> Option<Stop> {
         let now = Instant::now();
         let seen = &self.seen;
-        if self.ready_at.is_none() && (seen.ready.is_some() || seen.login) {
+        let login = seen.login && !req.login;
+        if self.ready_at.is_none() && (seen.ready.is_some() || login) {
             self.ready_at = Some(now);
         }
         if self.done_at.is_none() && seen.done.is_some() {
@@ -566,13 +636,13 @@ impl Watch {
         let secs = Duration::from_secs;
         if self.ddb_at.is_some_and(|t| now - t > secs(req.ddb_wait)) {
             Some(Stop::Ddb)
-        } else if seen.login && seen.ready.is_none() {
+        } else if login && seen.ready.is_none() {
             Some(Stop::Login)
         } else if self.ready_at.is_none() && now - self.clock > secs(req.boot_timeout) {
             Some(Stop::BootTimeout)
         } else if self
             .done_at
-            .is_some_and(|t| now - t > secs(req.poweroff_timeout) || seen.login)
+            .is_some_and(|t| now - t > secs(req.poweroff_timeout) || login)
         {
             Some(Stop::NoPoweroff)
         } else if now - self.clock > secs(req.timeout) {
@@ -630,6 +700,12 @@ impl Watch {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
             let why = self.check(req);
+            if let Some(text) = self.answer(req)
+                && let Some(s) = stdin.as_mut()
+            {
+                let _ = s.write_all(text.as_bytes());
+                let _ = s.flush();
+            }
             if self.ddb_at.is_some() && !sent_bt {
                 sent_bt = true;
                 // FreeBSD's ddb.conf has printed the backtrace already, and NetBSD needs the
@@ -694,6 +770,7 @@ pub fn run(req: &Request) -> Result<Outcome, String> {
     }
     let since = |t: Option<Instant>| t.map(|t| (t - w.clock).as_secs_f64());
     outcome.ready_seconds = since(w.ready_at);
+    outcome.login_seconds = since(w.login_at);
     outcome.done_seconds = since(w.done_at);
     outcome.seconds = w.clock.elapsed().as_secs_f64();
     outcome.result = result(w.stop, &w.seen).to_string();
@@ -706,12 +783,21 @@ pub fn run(req: &Request) -> Result<Outcome, String> {
     Ok(outcome)
 }
 
+/// Whether the text after the last newline is a shell's prompt: `#` for root, as sh and csh show
+/// it on both systems, such as `root@freebsd:~ # ` and `# `.
+fn shell_prompt(text: &str) -> bool {
+    text.trim_end().ends_with('#')
+}
+
 /// Unpack the results to `results/`, from the results disk or else from the console, and say
 /// which.
 fn collect(req: &Request, seen: &Seen) -> Result<Option<String>, String> {
     let entries = ustar::read_disk(&paths(req).results_disk).unwrap_or_default();
     let results = req.out.join("results");
-    if entries.iter().any(|e| e.path != "rb.conf") {
+    // What rb wrote before the boot is not a result: the rb.conf, and rb-rc's scripts with
+    // --login.
+    let ours = |path: &str| path == "rb.conf" || path == "rb" || path.starts_with("rb/");
+    if entries.iter().any(|e| !ours(&e.path)) {
         ustar::unpack(&entries, &results)?;
         return Ok(Some("disk".into()));
     }
@@ -778,6 +864,12 @@ pub fn summary(o: &Outcome, out: &Path) -> String {
             s,
             "| login prompt | {:.0} s, no rb-rc |",
             o.ready_seconds.unwrap_or(0.0)
+        );
+    }
+    if let Some(t) = o.login_seconds {
+        let _ = writeln!(
+            s,
+            "| logged in | {t:.0} s, and started rb-rc from the results disk |"
         );
     }
     if o.restarts > 0 {
@@ -868,6 +960,7 @@ mod tests {
             reboots: 1,
             in_place: false,
             keep: false,
+            login: false,
         }
     }
 
@@ -974,14 +1067,36 @@ mod tests {
             suites: vec!["boot".into(), "smoke".into()],
             ..RbConf::default()
         };
-        let tar = results_disk(&conf, 1 << 20).unwrap();
+        let tar = results_disk(&conf, 1 << 20, false).unwrap();
         let entries = ustar::read(&tar).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "rb.conf");
         let text = String::from_utf8(entries[0].data.clone()).unwrap();
         assert!(text.contains("rb_suites='boot smoke'\n"), "{text}");
         assert!(text.contains("rb_poweroff=YES\n"), "{text}");
-        assert!(results_disk(&conf, 512).is_err());
+        assert!(results_disk(&conf, 512, false).is_err());
+        // With --login, rb-rc's scripts come on the disk, where the typed command finds them.
+        let tar = results_disk(&conf, 1 << 20, true).unwrap();
+        let entries = ustar::read(&tar).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["rb.conf", "rb", "rb/run", "rb/smoke", "rb/tests"]);
+        assert!(entries[2..].iter().all(|e| e.mode == 0o555));
+        assert_eq!(entries[2].data, rb_image::guest::RUN.as_bytes());
+        let line = login_command();
+        assert!(line.starts_with("sh -c 'cd /tmp && ") && line.ends_with("/tmp/rb/run'\r"));
+        assert!(
+            line.contains(" /dev/vtbd1 /dev/rld1d /dev/rld5c;"),
+            "{line}"
+        );
+        assert!(!line.contains('\n') && !line.contains('"'), "{line}");
+    }
+
+    #[test]
+    fn shell_prompts() {
+        assert!(shell_prompt("root@freebsd:~ # "));
+        assert!(shell_prompt("# "));
+        assert!(!shell_prompt("login: root"));
+        assert!(!shell_prompt("FreeBSD/arm64 (freebsd) (ttyu0)"));
     }
 
     #[test]
@@ -1144,7 +1259,12 @@ pub mod cli {
                 str::to_string,
             ),
             firmware,
-            boot_timeout: number(args, "boot-timeout", if kvm { 600 } else { 1800 })?,
+            boot_timeout: number(
+                args,
+                "boot-timeout",
+                row.boot_limit_seconds
+                    .map_or(if kvm { 600 } else { 1800 }, u64::from),
+            )?,
             timeout: number(args, "timeout", u64::from(hours) * 3600)?,
             poweroff_timeout: 300,
             ddb_wait: 30,
@@ -1153,6 +1273,7 @@ pub mod cli {
             reboots: number(args, "reboots", 1)?,
             in_place: args.has("in-place"),
             keep: args.has("keep"),
+            login: args.has("login"),
         })
     }
 
@@ -1281,6 +1402,17 @@ pub mod cli {
             assert!(!req.kvm, "the row is TCG");
             assert!(req.virtio == Bus::Mmio && req.cpu.is_none());
             assert_eq!(req.firmware, Firmware::UBoot { image: "/u".into() });
+            // The row's boot limit, which is longer than the default of a TCG boot, and the
+            // command line over it.
+            assert_eq!(req.boot_timeout, 5400);
+            assert!(!req.login);
+            let mut words = vec![
+                "boot", "--image", "i", "--out", "o", "--row", "riscv64", "--u-boot", "/u",
+            ];
+            words.extend(["--boot-timeout", "60", "--login"]);
+            let req = request(&args(&words), &rows(), |_| true).unwrap();
+            assert_eq!(req.boot_timeout, 60);
+            assert!(req.login);
         }
 
         #[test]
