@@ -80,6 +80,7 @@ fn request(top: &Path, out: &Path) -> Request {
         reboots: 0,
         in_place: false,
         keep: false,
+        login: false,
     }
 }
 

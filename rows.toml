@@ -51,6 +51,8 @@ test_firmware = "edk2"
 cpus = 4
 memory_gb = 8
 console = "serial"
+# The limit from the start of QEMU to RB-READY. 1800 s is also rb boot's default under TCG.
+boot_limit_seconds = 1800
 test_on = ["server1", "server2"]
 
 [row.riscv64]
@@ -73,6 +75,9 @@ test_firmware = "u-boot"
 cpus = 4
 memory_gb = 8
 console = "serial"
+# riscv64 under TCG is the slowest row, and the first boot of an image also makes the SSH host
+# keys. That can take longer than the 1800 s that rb boot gives a TCG boot by default.
+boot_limit_seconds = 5400
 test_on = ["server1", "server2"]
 
 # FreeBSD stable/14 only, since 15.0 retired the i386 kernel.

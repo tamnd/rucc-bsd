@@ -86,6 +86,7 @@ impl Rig {
             reboots: 1,
             in_place: false,
             keep: false,
+            login: false,
         };
         Rig { top, req }
     }
@@ -232,6 +233,70 @@ fn an_image_with_no_rb_rc() {
     rig.done();
 }
 
+/// A release image with no rb-rc. rb logs in as root, and types the command that unpacks rb-rc
+/// from the results disk and runs it. A serial console ends each line with a carriage return.
+#[test]
+fn an_image_with_no_rb_rc_and_a_login() {
+    let body = r#"
+cr=$(printf '\r')
+line() {
+	s=
+	while c=$(dd bs=1 count=1 2> /dev/null) && [ -n "$c" ] && [ "$c" != "$cr" ]; do
+		s="$s$c"
+	done
+	echo "$s"
+}
+printf '\nFreeBSD/arm64 (freebsd) (ttyu0)\n\nlogin: '
+user=$(line)
+echo "$user"
+echo "$user" > "$here/user"
+printf 'FreeBSD 15.1-RELEASE\n\nroot@freebsd:~ # '
+cmd=$(line)
+echo "$cmd"
+echo "$cmd" > "$here/typed"
+test -x "$here/in/rb/run" && test -x "$here/in/rb/smoke" || exit 1
+echo "RB-READY FreeBSD rb 15.1-RELEASE arm64"
+echo "RB-CONF /dev/vtbd1"
+mkdir -p "$here/out"
+for s in $rb_suites; do
+	echo "RB-SUITE $s"
+	echo "$s pass" >> "$here/out/suites"
+	echo "RB-SUITE-END $s pass"
+done
+tar -cf "$disk" -C "$here/out" .
+echo "RB-DONE boot=pass smoke=pass archive=disk"
+exit 0
+"#;
+    let mut rig = Rig::new("login-typed", body);
+    rig.req.login = true;
+    let o = boot::run(&rig.req).unwrap();
+    assert_eq!(o.result, "pass", "{o:?}");
+    assert!(
+        o.passed() && o.seen.login && o.seen.ready.is_some(),
+        "{o:?}"
+    );
+    assert!(o.login_seconds.is_some(), "{o:?}");
+    assert_eq!(rig.file("bin/user"), "root\n");
+    assert_eq!(
+        rig.file("bin/typed").trim_end(),
+        boot::login_command().trim_end_matches('\r')
+    );
+    assert_eq!(rig.file("run/results/suites"), "boot pass\nsmoke pass\n");
+    assert!(boot::summary(&o, &rig.req.out).contains("| logged in |"));
+
+    // With no shell prompt after the login, the boot limit passes: the login prompt is not the end
+    // of a boot with --login.
+    let body = "printf 'login: '\nexec sleep 30\n";
+    let mut rig2 = Rig::new("login-stuck", body);
+    rig2.req.login = true;
+    rig2.req.boot_timeout = 2;
+    let o = boot::run(&rig2.req).unwrap();
+    assert_eq!(o.result, "boot-timeout", "{o:?}");
+    assert!(o.login_seconds.is_none() && o.ready_seconds.is_none());
+    rig.done();
+    rig2.done();
+}
+
 #[test]
 fn results_on_the_console() {
     let body = r#"
@@ -281,6 +346,7 @@ fn real_boot() {
         reboots: 1,
         in_place: false,
         keep: false,
+        login: false,
     };
     let o = boot::run(&req).unwrap();
     println!("{}", boot::summary(&o, Path::new(&out)));

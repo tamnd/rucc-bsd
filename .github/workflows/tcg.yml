@@ -1,0 +1,156 @@
+# The TCG cadence of plan 11.5: the aarch64 and riscv64 rows of FreeBSD and NetBSD, under QEMU
+# with TCG on the amd64 runner.
+#
+#   nightly  the boot and smoke suites on each of the four rows, Monday to Saturday. One boot job
+#            per row, so the night costs the rb job and four boot jobs.
+#   weekly   on Sunday, the full suite of each row, sharded by top-level test directory as in
+#            netbsd-baseline.yml. Each shard is one boot with the boot, smoke and tests suites, so
+#            Sunday has its boot and smoke too. At most six shards run at a time, so that the
+#            weekly run does not take every runner.
+#
+# The images are the release images of conf/tcg/images.conf, checked by their published digests.
+# They have no rb-rc, so rb boot logs in as root at the login prompt (--login) and starts rb-rc from
+# the results disk. The row in rows.toml gives the QEMU machine, the CPU, the firmware and the boot
+# limit: riscv64 boots for longer than the 1800 s that rb boot gives a TCG boot by default.
+#
+# A manual run takes the cadence and the rows.
+
+name: tcg
+
+on:
+  schedule:
+    - cron: "23 1 * * 1-6"
+    - cron: "23 1 * * 0"
+  workflow_dispatch:
+    inputs:
+      cadence:
+        description: nightly (boot and smoke) or weekly (the full suite, sharded)
+        type: choice
+        options: [nightly, weekly]
+        default: nightly
+      rows:
+        description: The system-row pairs, separated by spaces
+        default: freebsd-aarch64 freebsd-riscv64 netbsd-aarch64 netbsd-riscv64
+
+# One run of each cadence at a time. A scheduled run waits for the one before it, and is not
+# cancelled, so the queue holds at most one more.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.schedule }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rb:
+    name: cargo build rb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: the boots of this run
+        id: plan
+        env:
+          CADENCE: ${{ inputs.cadence || (github.event.schedule == '23 1 * * 0' && 'weekly' || 'nightly') }}
+          ROWS: ${{ inputs.rows || 'freebsd-aarch64 freebsd-riscv64 netbsd-aarch64 netbsd-riscv64' }}
+        run: |
+          python3 -I - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, os
+          cadence = os.environ["CADENCE"]
+          # The shards of the full suite. Each system's two largest top-level directories are a
+          # shard of their own, and the rest is the third.
+          shards = {
+              "freebsd": [["only", "sys"], ["only", "lib"], ["except", "sys,lib"]],
+              "netbsd": [["only", "net"], ["only", "lib"], ["except", "net,lib"]],
+          }
+          include = []
+          for name in os.environ["ROWS"].split():
+              system, row = name.split("-", 1)
+              if cadence == "nightly":
+                  include.append({"name": name, "system": system, "row": row,
+                                  "shard": "smoke", "suite": "boot,smoke", "tests": "",
+                                  "minutes": 150 if row == "riscv64" else 60})
+                  continue
+              for how, dirs in shards[system]:
+                  include.append({"name": name, "system": system, "row": row,
+                                  "shard": f"{how}-{dirs.replace(',', '-')}",
+                                  "suite": "boot,smoke,tests",
+                                  "tests": f"--tests-{how} {dirs}", "minutes": 355})
+          matrix = {"include": include}
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"matrix={json.dumps(matrix)}\n")
+          print(f"### {cadence}: {len(include)} boots\n")
+          for b in include:
+              print(f"- {b['name']} {b['shard']}")
+          EOF
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rb-linux-x86_64
+          path: target/release/rb
+          retention-days: 7
+
+  boot:
+    name: ${{ matrix.name }} ${{ matrix.shard }}
+    needs: rb
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.minutes }}
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.rb.outputs.matrix) }}
+    env:
+      NAME: ${{ matrix.name }}
+      ROW: ${{ matrix.row }}
+      SHARD: ${{ matrix.shard }}
+      SUITE: ${{ matrix.suite }}
+      TESTS: ${{ matrix.tests }}
+      MINUTES: ${{ matrix.minutes }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: QEMU and the firmware
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends qemu-utils xz-utils \
+            qemu-system-arm qemu-efi-aarch64 qemu-system-misc opensbi u-boot-qemu
+          qemu-system-aarch64 --version | head -n 1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: the release image
+        run: |
+          image=$(scripts/tcg/image.sh "$NAME" "$RUNNER_TEMP/image" 16G)
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          ls -l "$image"
+      # rb's own limit ends ten minutes before the job's, so that the results are kept.
+      - name: rb boot
+        run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          # shellcheck disable=SC2086
+          "$RUNNER_TEMP/rb/rb" boot --image "$IMAGE" --out "$RUNNER_TEMP/out" --row "$ROW" \
+            --login --suite "$SUITE" $TESTS --timeout $(((MINUTES - 10) * 60)) \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### $NAME $SHARD: the console's RB- lines"
+            echo
+            echo '```'
+            grep -a '^RB-' "$RUNNER_TEMP/out/console.log" 2>/dev/null
+            cat "$RUNNER_TEMP/out/results/tests/counts" 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "$RUNNER_TEMP/image"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: tcg-${{ matrix.name }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/out
+          retention-days: 14

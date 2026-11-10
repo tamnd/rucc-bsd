@@ -134,6 +134,9 @@ pub struct Row {
     pub console: Option<String>,
     /// The limit on a whole test run.
     pub run_limit_hours: Option<u32>,
+    /// The limit from the start of QEMU to rb-rc's `RB-READY`, when the default of `rb boot` is
+    /// too short for the row.
+    pub boot_limit_seconds: Option<u32>,
     /// The machines that run the tests.
     #[serde(default)]
     pub test_on: Vec<String>,
