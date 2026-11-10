@@ -65,9 +65,9 @@ machine = "virt"
 accel = "tcg"
 # NetBSD's riscv kernel has virtio on the FDT only, not on PCI (sys/arch/riscv/conf/GENERIC.common).
 virtio = "mmio"
-# QEMU's own OpenSBI, then U-Boot, which loads the EFI loader from the disk's EFI partition. That
-# is the boot of FreeBSD's riscv wiki. NetBSD's riscv64.img has the same EFI partition, with
-# bootriscv64.efi (distrib/utils/embedded/conf/riscv64.conf).
+# QEMU's own OpenSBI, then U-Boot, which loads the EFI loader from the disk's EFI partition. Both
+# systems' riscv64 images have one: FreeBSD's VM images (release/tools/vmimage.subr) and NetBSD's
+# riscv64.img, with bootriscv64.efi (distrib/utils/embedded/conf/riscv64.conf).
 firmware = ["u-boot"]
 test_firmware = "u-boot"
 cpus = 4
