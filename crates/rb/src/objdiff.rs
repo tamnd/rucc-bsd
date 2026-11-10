@@ -8,7 +8,8 @@
 //! - the section names;
 //! - the flags, type, entry size and group of each section both objects have;
 //! - the size of each data section;
-//! - the entries of each linker set (`set_*` and `link_set_*`).
+//! - the entries of each linker set (`set_*` and `link_set_*`). An entry that is a static local
+//!   is compared without the `.N` that each compiler appends to its name in its own order.
 //!
 //! `rb symbols-diff` compares each symbol that is not local: its name, binding, type and
 //! visibility, and the size of a data symbol.
@@ -387,34 +388,32 @@ pub fn sections(g: &Object, r: &Object) -> Vec<Finding> {
         out.push(finding("group only in R", free_symbol(name), name.clone()));
     }
     let (gsets, rsets) = (linker_sets(g), linker_sets(r));
-    let empty = BTreeSet::new();
+    let empty = BTreeMap::new();
     for set in gsets.keys().chain(rsets.keys()).collect::<BTreeSet<_>>() {
         let (a, b) = (
             gsets.get(set).unwrap_or(&empty),
             rsets.get(set).unwrap_or(&empty),
         );
-        for entry in a.difference(b) {
-            out.push(finding(
-                "linker set entry only in G",
-                None,
-                format!("{set}: {entry}"),
-            ));
-        }
-        for entry in b.difference(a) {
-            out.push(finding(
-                "linker set entry only in R",
-                None,
-                format!("{set}: {entry}"),
-            ));
+        for (kind, mine, theirs) in [
+            ("linker set entry only in G", a, b),
+            ("linker set entry only in R", b, a),
+        ] {
+            for (entry, &here) in mine {
+                let there = theirs.get(entry).copied().unwrap_or(0);
+                for _ in there..here {
+                    out.push(finding(kind, None, format!("{set}: {entry}")));
+                }
+            }
         }
     }
     out
 }
 
-/// The symbols each linker set section of an object defines, by set.
+/// The symbols each linker set section of an object defines, by set, with the number of entries
+/// of each name. The name of a local symbol loses the `.N` of [`unnumbered`].
 #[must_use]
-pub fn linker_sets(o: &Object) -> BTreeMap<String, BTreeSet<String>> {
-    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+pub fn linker_sets(o: &Object) -> BTreeMap<String, BTreeMap<String, usize>> {
+    let mut out: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
     for s in &o.sections {
         if is_linker_set(&s.name) {
             out.entry(s.name.clone()).or_default();
@@ -422,12 +421,33 @@ pub fn linker_sets(o: &Object) -> BTreeMap<String, BTreeSet<String>> {
     }
     for sym in &o.symbols {
         if sym.defined && is_linker_set(&sym.section) {
-            out.entry(sym.section.clone())
+            let name = if sym.binding == elf::STB_LOCAL.0 {
+                unnumbered(&sym.name)
+            } else {
+                &sym.name
+            };
+            *out.entry(sym.section.clone())
                 .or_default()
-                .insert(sym.name.clone());
+                .entry(name.to_string())
+                .or_default() += 1;
         }
     }
     out
+}
+
+/// A name without the `.N` that GCC and rucc append to a static local, such as the
+/// `__set_sysctl_set_sym_sysctl___debug_fail_point_x.4` of a fail point in a function. Each
+/// compiler gives the numbers in its own order, so they are not compared.
+#[must_use]
+pub fn unnumbered(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, n))
+            if !stem.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            stem
+        }
+        _ => name,
+    }
 }
 
 /// The differences between the symbols of two objects that are not local, G first.
@@ -858,7 +878,7 @@ mod tests {
         let data = o.sections.iter().find(|s| s.name == ".data").unwrap();
         assert_eq!((data.size, flag_letters(data.flags).as_str()), (16, "WA"));
         assert_eq!(
-            linker_sets(&o)["set_sysinit_set"].iter().next().unwrap(),
+            linker_sets(&o)["set_sysinit_set"].keys().next().unwrap(),
             "__set_a"
         );
         let table = o.symbols.iter().find(|s| s.name == "table").unwrap();
@@ -866,6 +886,47 @@ mod tests {
             (table.binding, table.kind, table.size),
             (elf::STB_GLOBAL.0, elf::STT_OBJECT.0, 16)
         );
+    }
+
+    #[test]
+    fn static_locals_in_linker_sets_lose_their_numbers() {
+        assert_eq!(unnumbered("__set_x_sym_a.4"), "__set_x_sym_a");
+        assert_eq!(unnumbered("__set_x_sym_a"), "__set_x_sym_a");
+        assert_eq!(unnumbered("a.b"), "a.b");
+        assert_eq!(unnumbered(".4"), ".4");
+        let o = |names: &[&str]| Object {
+            sections: vec![Section {
+                name: "set_x".into(),
+                kind: elf::SHT_PROGBITS.0,
+                flags: 0x3,
+                entsize: 0,
+                size: 8 * names.len() as u64,
+                group: String::new(),
+            }],
+            symbols: names
+                .iter()
+                .map(|n| Symbol {
+                    name: (*n).into(),
+                    binding: elf::STB_LOCAL.0,
+                    kind: elf::STT_OBJECT.0,
+                    visibility: 0,
+                    size: 8,
+                    section: "set_x".into(),
+                    defined: true,
+                })
+                .collect(),
+            groups: BTreeSet::new(),
+        };
+        let g = o(&["__set_x_sym_a.4", "__set_x_sym_a.5", "__set_x_sym_b.3"]);
+        let r = o(&["__set_x_sym_a.1", "__set_x_sym_a.3", "__set_x_sym_b.5"]);
+        assert!(sections(&g, &r).is_empty());
+        let r = o(&["__set_x_sym_a.1", "__set_x_sym_b.5"]);
+        let found = sections(&g, &r);
+        assert_eq!(
+            kinds(&found),
+            [("section size", true), ("linker set entry only in G", true)]
+        );
+        assert_eq!(found[1].what, "set_x: __set_x_sym_a");
     }
 
     #[test]

@@ -420,10 +420,10 @@ usage:
       paired by path, with the roots replaced as for rb flags-diff. Section names must be the
       same. Each section both objects have must have the same flags, type, entry size and group,
       and each data section the same size. Each linker set, set_* or link_set_*, must hold the
-      same entries. Code, read-only data, relocation, debug and .comment sections may differ:
-      they are listed but not counted. Each difference is one line with the unit's source,
-      grouped by kind. Each list stops after N lines, 20 by default. Exits 1 when a difference
-      counts or no object is paired.
+      same entries, with the .N of a static local's name left out. Code, read-only data,
+      relocation, debug and .comment sections may differ: they are listed but not counted. Each
+      difference is one line with the unit's source, grouped by kind. Each list stops after N
+      lines, 20 by default. Exits 1 when a difference counts or no object is paired.
   rb sets [--as-of TIME] [--write]
       Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
       pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME on
