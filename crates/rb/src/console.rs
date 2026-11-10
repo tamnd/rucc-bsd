@@ -14,6 +14,7 @@
 //! | `RB-CASE <dir>/<program>:<case>` | an ATF test case starts (NetBSD) |
 //! | `RB-SUITE-END <suite> <counts>` | a suite ended |
 //! | `RB-DONE <suite>=<counts> ... archive=<disk\|console>` | all suites ended |
+//! | `RB-POWEROFF-FORCE <seconds>` | the shutdown did not end in time, so rb-rc powers off with no sync |
 //!
 //! On FreeBSD, kyua prints `<dir>/<program>:<case>  ->  ` when a case starts and the result on
 //! the same line when it ends. So the last such line names the running case, as `RB-CASE` does.
@@ -101,6 +102,9 @@ pub struct Seen {
     pub done: Option<String>,
     /// Where rb-rc says the results are: `disk` or `console`.
     pub archive: Option<String>,
+    /// Whether rb-rc powered off with no sync because the shutdown did not end in time.
+    #[serde(default)]
+    pub forced_poweroff: bool,
     /// The results archive, when rb-rc wrote it to the console.
     #[serde(skip)]
     pub console_tar: Option<Vec<u8>>,
@@ -192,6 +196,8 @@ impl Seen {
                 .find_map(|w| w.strip_prefix("archive="))
                 .map(str::to_string);
             self.done = Some(rest.to_string());
+        } else if line.starts_with("RB-POWEROFF-FORCE") {
+            self.forced_poweroff = true;
         } else {
             self.other(line);
         }
@@ -357,7 +363,22 @@ RB-DONE boot=pass smoke=1/2 tests=7000/7100 archive=disk
         );
         assert_eq!(seen.archive.as_deref(), Some("disk"));
         assert!(seen.panic.is_none() && !seen.ddb && !seen.login);
+        assert!(!seen.forced_poweroff);
         assert_eq!(seen.running(), None);
+    }
+
+    #[test]
+    fn a_forced_poweroff() {
+        let console = "\
+RB-DONE boot=pass tests=5828/6000 archive=disk
+Nov 10 01:02:03 rb syslogd[123]: Exiting on signal 15
+RB-POWEROFF-FORCE 90
+RB-PS   PID  PPID STAT WCHAN   ELAPSED COMMAND
+RB-MOUNT /dev/dk0 on / type ffs (local)
+";
+        let seen = read(console.as_bytes());
+        assert!(seen.forced_poweroff);
+        assert!(seen.done.is_some() && seen.panic.is_none() && !seen.login);
     }
 
     #[test]

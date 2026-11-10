@@ -13,7 +13,9 @@
 #      <counts>" after it.
 #   5. Write the results as a tar archive with no file system to the results disk. With no
 #      results disk, write the archive to the console with uuencode -m.
-#   6. Print "RB-DONE <suite>=<counts> ... archive=<disk|console>" and power off.
+#   6. Print "RB-DONE <suite>=<counts> ... archive=<disk|console>" and power off. If the VM is
+#      not off after rb_poweroff_wait seconds, print "RB-POWEROFF-FORCE <seconds>", the processes
+#      and the mounts, and power off with no sync and no rc.shutdown.
 #
 # The suites:
 #   boot     nothing more to run. The boot passes when RB-DONE comes and the VM powers off.
@@ -44,6 +46,7 @@ NetBSD) rb_disk=/dev/rld1d ;;
 esac
 rb_suites=boot
 rb_poweroff=YES
+rb_poweroff_wait=90
 if [ -r "$conf" ]; then
 	# shellcheck source=/dev/null
 	. "$conf"
@@ -134,6 +137,10 @@ for suite in $rb_suites; do
 done
 
 dmesg > "$out/dmesg.end" 2>&1
+# What the suites left behind. A process or a mount that a test did not remove can stop the
+# shutdown.
+ps -axww -o pid,ppid,stat,wchan,etime,command > "$out/ps.end" 2>&1
+mount > "$out/mount.end" 2>&1
 if save; then
 	archive=disk
 else
@@ -141,17 +148,41 @@ else
 	(cd "$out" && tar -cf - .) | uuencode -m rb.tar
 fi
 echo "RB-DONE$done_line archive=$archive"
-sync
+
+# A test can leave something behind that stops rc.shutdown or the sync, and then the VM does
+# not power off. The results are on the results disk already, so after rb_poweroff_wait seconds
+# this child powers off with halt -n (no sync) and -q (no rc.shutdown, no signals). It ignores
+# SIGTERM, so it lives until halt sends SIGKILL to all processes. It writes to /dev/console
+# because the output of /etc/rc goes through a pipe that the shutdown can stop. The processes
+# and the mounts go to the console in the background, because ps or mount can also hang.
+poweroff_watchdog()
+{
+	trap '' HUP TERM
+	sleep "$rb_poweroff_wait"
+	exec > /dev/console 2>&1
+	echo "RB-POWEROFF-FORCE $rb_poweroff_wait"
+	(
+		ps -axww -o pid,ppid,stat,wchan,etime,command | sed 's/^/RB-PS /'
+		mount | sed 's/^/RB-MOUNT /'
+	) &
+	sleep 5
+	halt -l -n -p -q
+}
 
 # NetBSD's shutdown forks, and the child waits some seconds before it powers off. In that time
 # /etc/rc continues and prints a login prompt, which rb boot reads as no power off. -D keeps
 # shutdown in the foreground, so /etc/rc stops here until the VM powers off.
 case $rb_poweroff in
 [Yy][Ee][Ss])
+	poweroff_watchdog &
+	sync
 	case $(uname -s) in
 	NetBSD) shutdown -D -p now ;;
 	*) shutdown -p now ;;
 	esac
+	;;
+*)
+	sync
 	;;
 esac
 exit 0
