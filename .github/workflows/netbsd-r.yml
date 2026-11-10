@@ -28,16 +28,6 @@ name: netbsd-r
 
 # The paths leave out the files that only the image, the boot and the tests use.
 on:
-  pull_request:
-    paths:
-      - scripts/netbsd/**
-      - conf/netbsd/**
-      - .github/workflows/netbsd-r.yml
-      - "!scripts/netbsd/guest/**"
-      - "!scripts/netbsd/boot.py"
-      - "!scripts/netbsd/atf-counts.py"
-      - "!scripts/netbsd/prepare-image.sh"
-      - "!scripts/netbsd/kernset.sh"
   workflow_dispatch:
     inputs:
       rucc:

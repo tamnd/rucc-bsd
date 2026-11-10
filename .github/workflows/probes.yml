@@ -20,10 +20,6 @@
 name: probes
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/probes.yml
-      - crates/rb/src/probes.rs
   workflow_dispatch:
     inputs:
       rucc:

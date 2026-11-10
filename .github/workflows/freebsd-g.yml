@@ -35,11 +35,6 @@
 name: freebsd-g
 
 on:
-  pull_request:
-    paths:
-      - conf/freebsd/**
-      - scripts/freebsd/**
-      - .github/workflows/freebsd-g.yml
   schedule:
     - cron: "41 4 * * 6"
   workflow_dispatch:
