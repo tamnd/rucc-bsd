@@ -4,7 +4,7 @@
 #![cfg(unix)]
 
 use rb::baseline::{self, Meta};
-use rb::boot::{Firmware, Request};
+use rb::boot::{Bus, Firmware, Request};
 use rb::cli::{Args, accepted};
 use rb_image::conf::RbConf;
 use rb_pins::places::Rows;
@@ -67,7 +67,7 @@ fn request(top: &Path, out: &Path) -> Request {
         machine: "q35".into(),
         kvm: false,
         cpu: None,
-        mmio: false,
+        virtio: Bus::Pci,
         cpus: 2,
         memory: "1G".into(),
         firmware: Firmware::Seabios,

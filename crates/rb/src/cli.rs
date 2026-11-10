@@ -45,6 +45,56 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "baseline" | "boot" => return boot_commands(command),
+        "census" => Accepts {
+            positional: true,
+            values: &["objdir", "skip", "objects", "limit"],
+            switches: &[],
+        },
+        "demands" => Accepts {
+            positional: true,
+            values: &["pin", "row", "conf", "jobs", "limit"],
+            switches: &["write", "flags-only"],
+        },
+        "fetch" => Accepts {
+            positional: true,
+            values: &["set"],
+            switches: &["tarball"],
+        },
+        "image" => Accepts {
+            positional: true,
+            values: &[
+                "build", "out", "system", "suites", "packages", "size", "tools", "work",
+            ],
+            switches: &["dry-run"],
+        },
+        "personas" => Accepts {
+            positional: false,
+            values: &["arch"],
+            switches: &[],
+        },
+        "sections-diff" | "symbols-diff" => Accepts {
+            positional: false,
+            values: &["g", "r", "g-root", "r-root", "jobs", "limit"],
+            switches: &[],
+        },
+        "sets" => Accepts {
+            positional: false,
+            values: &["as-of"],
+            switches: &["write"],
+        },
+        "warnings" => Accepts {
+            positional: false,
+            values: &["g", "r", "g-root", "r-root", "limit"],
+            switches: &[],
+        },
+        _ => return toolchain_commands(command),
+    })
+}
+
+/// What the commands that boot images accept.
+fn boot_commands(command: &str) -> Option<Accepts> {
+    Some(match command {
         "baseline" => Accepts {
             positional: true,
             values: &[
@@ -102,49 +152,7 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             ],
             switches: &["in-place", "keep", "dry-run"],
         },
-        "census" => Accepts {
-            positional: true,
-            values: &["objdir", "skip", "objects", "limit"],
-            switches: &[],
-        },
-        "demands" => Accepts {
-            positional: true,
-            values: &["pin", "row", "conf", "jobs", "limit"],
-            switches: &["write", "flags-only"],
-        },
-        "fetch" => Accepts {
-            positional: true,
-            values: &["set"],
-            switches: &["tarball"],
-        },
-        "image" => Accepts {
-            positional: true,
-            values: &[
-                "build", "out", "system", "suites", "packages", "size", "tools", "work",
-            ],
-            switches: &["dry-run"],
-        },
-        "personas" => Accepts {
-            positional: false,
-            values: &["arch"],
-            switches: &[],
-        },
-        "sections-diff" | "symbols-diff" => Accepts {
-            positional: false,
-            values: &["g", "r", "g-root", "r-root", "jobs", "limit"],
-            switches: &[],
-        },
-        "sets" => Accepts {
-            positional: false,
-            values: &["as-of"],
-            switches: &["write"],
-        },
-        "warnings" => Accepts {
-            positional: false,
-            values: &["g", "r", "g-root", "r-root", "limit"],
-            switches: &[],
-        },
-        _ => return toolchain_commands(command),
+        _ => return None,
     })
 }
 

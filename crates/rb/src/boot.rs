@@ -47,7 +47,7 @@ pub enum Firmware {
         /// The variables, such as `AAVMF_VARS.fd`.
         vars: PathBuf,
     },
-    /// QEMU's own OpenSBI, then U-Boot in S-mode as its next stage. U-Boot loads the EFI loader
+    /// QEMU's own `OpenSBI`, then U-Boot in S-mode as its next stage. U-Boot loads the EFI loader
     /// from the disk.
     UBoot {
         /// U-Boot's `u-boot.bin`.
@@ -167,6 +167,15 @@ pub fn find_u_boot() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// The bus of the virtio devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bus {
+    /// PCI: `virtio-blk-pci` and `virtio-net-pci`.
+    Pci,
+    /// virtio-mmio: `virtio-blk-device` and `virtio-net-device`.
+    Mmio,
+}
+
 /// One boot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
@@ -184,8 +193,8 @@ pub struct Request {
     pub kvm: bool,
     /// The QEMU CPU under TCG. Under KVM the CPU is always `host`.
     pub cpu: Option<String>,
-    /// Put the disks and the network on virtio-mmio, not on PCI.
-    pub mmio: bool,
+    /// The bus of the virtio disks and network.
+    pub virtio: Bus,
     /// vCPUs.
     pub cpus: u32,
     /// Memory, as QEMU takes it, such as `8G`.
@@ -374,10 +383,11 @@ pub fn qemu_command(req: &Request) -> Vec<String> {
     // The virt machine gives the first virtio-mmio device on the command line the highest
     // address, and the guests number the devices from the lowest. In reverse, the root disk is
     // the first disk, vtbd0 or ld0, and the results disk the second, as on PCI.
-    if req.mmio {
+    let mmio = req.virtio == Bus::Mmio;
+    if mmio {
         disks.reverse();
     }
-    let bus = if req.mmio { "device" } else { "pci" };
+    let bus = if mmio { "device" } else { "pci" };
     for (id, file, format) in &disks {
         words.extend([
             "-drive".into(),
@@ -386,7 +396,7 @@ pub fn qemu_command(req: &Request) -> Vec<String> {
                 file.display()
             ),
             "-device".into(),
-            if id == "root" && !req.mmio {
+            if id == "root" && !mmio {
                 format!("virtio-blk-pci,drive={id},bootindex=0")
             } else {
                 format!("virtio-blk-{bus},drive={id}")
@@ -843,7 +853,7 @@ mod tests {
             machine: "q35".into(),
             kvm: true,
             cpu: None,
-            mmio: false,
+            virtio: Bus::Pci,
             cpus: 2,
             memory: "8G".into(),
             firmware: Firmware::Ovmf {
@@ -925,7 +935,7 @@ mod tests {
         );
         req.qemu = "qemu-system-riscv64".into();
         req.cpu = None;
-        req.mmio = true;
+        req.virtio = Bus::Mmio;
         req.spare_disks = 1;
         req.firmware = Firmware::UBoot {
             image: "/u/u-boot.bin".into(),
@@ -1005,7 +1015,7 @@ mod tests {
 /// The command line: `rb boot --image IMG --out DIR ...`, with the row's QEMU settings from
 /// `rows.toml`.
 pub mod cli {
-    use super::{Firmware, Request, find_edk2, find_ovmf, find_u_boot, kvm_usable};
+    use super::{Bus, Firmware, Request, find_edk2, find_ovmf, find_u_boot, kvm_usable};
     use crate::cli::Args;
     use rb_image::conf::{RbConf, parse_suites};
     use rb_image::plan::parse_size;
@@ -1119,7 +1129,11 @@ pub mod cli {
             machine,
             kvm,
             cpu: row.cpu.clone(),
-            mmio: row.virtio.as_deref() == Some("mmio"),
+            virtio: if row.virtio.as_deref() == Some("mmio") {
+                Bus::Mmio
+            } else {
+                Bus::Pci
+            },
             cpus: number(args, "cpus", row.cpus.unwrap_or(2))?,
             memory: args.get("memory").map_or_else(
                 || format!("{}G", row.memory_gb.unwrap_or(8)),
@@ -1246,7 +1260,7 @@ pub mod cli {
                 ("qemu-system-aarch64", "virt")
             );
             assert_eq!(req.cpu.as_deref(), Some("max,pauth-impdef=on"));
-            assert!(!req.kvm && !req.mmio);
+            assert!(!req.kvm && req.virtio == Bus::Pci);
             assert_eq!((req.cpus, req.boot_timeout), (4, 1800));
             assert_eq!(
                 req.firmware,
@@ -1261,7 +1275,7 @@ pub mod cli {
             let req = request(&a, &rows(), |_| true).unwrap();
             assert_eq!(req.qemu, "qemu-system-riscv64");
             assert!(!req.kvm, "the row is TCG");
-            assert!(req.mmio && req.cpu.is_none());
+            assert!(req.virtio == Bus::Mmio && req.cpu.is_none());
             assert_eq!(
                 req.firmware,
                 Firmware::UBoot {
