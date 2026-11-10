@@ -14,9 +14,10 @@
 //! `rb symbols-diff` compares each symbol that is not local: its name, binding, type and
 //! visibility, and the size of a data symbol.
 //!
-//! Some differences are allowed: code and literal sections, debug sections, `.comment`, function
-//! sizes and the names a compiler makes up, such as `*.cold` and `*.isra.0`. They are listed but
-//! not counted. The gate is zero counted differences.
+//! Some differences are allowed: code and literal sections, debug sections, `.SUNW_ctf`,
+//! `.comment`, function sizes and the names a compiler makes up, such as `*.cold` and
+//! `*.isra.0`. They are listed but not counted. ctfconvert adds `.SUNW_ctf` after the compile,
+//! so an object that the replay compiles again has none. The gate is zero counted differences.
 
 use crate::census::{absolute, is_object};
 use harness_shim::record::CompileRecord;
@@ -258,6 +259,8 @@ pub fn free_section(section: &Section) -> Option<&'static str> {
         Some("read-only data and literals")
     } else if name.starts_with(".debug") || name.starts_with(".zdebug") {
         Some("debug information, which rb ctf-diff compares")
+    } else if name == ".SUNW_ctf" {
+        Some("CTF, which ctfconvert adds after the compile and rb ctf-diff compares")
     } else if name == ".comment" {
         Some("the compiler's identification")
     } else {
@@ -964,6 +967,7 @@ mod tests {
         };
         assert!(free_section(&s(".text.unlikely", 1, 6)).is_some());
         assert!(free_section(&s(".debug_info", 1, 0)).is_some());
+        assert!(free_section(&s(".SUNW_ctf", 1, 0)).is_some());
         assert!(free_section(&s(".data", 1, 3)).is_none());
         assert!(free_size(&s(".data", 1, 3)).is_none());
         assert!(free_size(&s("set_x", 1, 2)).is_none());
