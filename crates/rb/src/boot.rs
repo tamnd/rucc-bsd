@@ -709,6 +709,12 @@ pub fn summary(o: &Outcome, out: &Path) -> String {
             o.seen.panic_case.as_deref().unwrap_or("no test case")
         );
     }
+    if o.seen.forced_poweroff {
+        let _ = writeln!(
+            s,
+            "| shutdown | did not end in time, so rb-rc powered off with no sync; see `RB-PS` and `RB-MOUNT` in the console |"
+        );
+    }
     if let Some(code) = o.qemu_exit
         && code != 0
     {
