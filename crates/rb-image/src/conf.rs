@@ -16,9 +16,10 @@ pub const SUITES: &[&str] = &["boot", "smoke", "tests"];
 pub struct RbConf {
     /// The suites to run, in order.
     pub suites: Vec<String>,
-    /// The results disk. `None` takes the system's default (`/dev/vtbd1` on FreeBSD and
-    /// `/dev/rld1d` on NetBSD). An empty string means no disk, and the results go to the
-    /// console.
+    /// The results disk. `None` takes the system's default: `/dev/vtbd1` on FreeBSD, and on
+    /// NetBSD the raw partition of the `ld` disk after the root's disk, such as `/dev/rld1d` on
+    /// amd64 and `/dev/rld5c` on evbarm and riscv. An empty string means no disk, and the
+    /// results go to the console.
     pub disk: Option<String>,
     /// Whether rb-rc powers the VM off when it is done.
     pub poweroff: bool,

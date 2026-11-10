@@ -40,6 +40,11 @@ qemu = "qemu-system-aarch64"
 machine = "virt"
 # KVM on arm64 hardware if there is any, otherwise TCG (open question 7).
 accel = "tcg"
+# max has PAC and BTI, so the kernels turn them on and the branch protection of 11.2 runs.
+# pauth-impdef=on is QEMU's fast PAC, the one its documentation names for TCG.
+cpu = "max,pauth-impdef=on"
+# EDK2 in flash, then the EFI loader on the disk. FreeBSD's tools/boot/ci-qemu-test.sh boots
+# arm64 the same way, and both systems' arm64 images have an EFI partition.
 firmware = ["edk2"]
 test_firmware = "edk2"
 # More than one vCPU, so that the locking tests exercise rucc's memory ordering (11.2).
@@ -52,13 +57,19 @@ test_on = ["server1", "server2"]
 from = { netbsd = "B7", freebsd = "B7" }
 rucc_arch = "riscv64"
 freebsd = { target = "riscv", target_arch = "riscv64" }
-netbsd = { machine = "riscv", machine_arch = "riscv64" }
+# NetBSD builds rv32 compatibility libraries on riscv64 by default (share/mk/bsd.own.mk), and
+# rucc has no riscv32 back end, so R and G both build with MKCOMPAT=no (02.1).
+netbsd = { machine = "riscv", machine_arch = "riscv64", make = ["MKCOMPAT=no"] }
 qemu = "qemu-system-riscv64"
 machine = "virt"
 accel = "tcg"
-# OpenSBI, then U-Boot or EDK2, whichever the system's own documentation names (12.3).
-firmware = ["opensbi"]
-test_firmware = "opensbi"
+# NetBSD's riscv kernel has virtio on the FDT only, not on PCI (sys/arch/riscv/conf/GENERIC.common).
+virtio = "mmio"
+# QEMU's own OpenSBI, then U-Boot, which loads the EFI loader from the disk's EFI partition. Both
+# systems' riscv64 images have one: FreeBSD's VM images (release/tools/vmimage.subr) and NetBSD's
+# riscv64.img, with bootriscv64.efi (distrib/utils/embedded/conf/riscv64.conf).
+firmware = ["u-boot"]
+test_firmware = "u-boot"
 cpus = 4
 memory_gb = 8
 console = "serial"

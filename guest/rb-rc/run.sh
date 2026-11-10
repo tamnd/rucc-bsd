@@ -38,10 +38,27 @@ work=${RB_WORK:-/var/rb}
 libexec=${RB_LIBEXEC:-/usr/libexec/rb}
 out=$work/out
 
+# NetBSD's results disk: the raw partition of the ld disk after the root's disk. The root is
+# often a wedge, such as dk1 at ld0. evbarm and riscv wire ld0 to ld3 to sdmmc, so their virtio
+# disks start at ld4, and their raw partition is c, not d.
+netbsd_disk()
+{
+	root=$(sysctl -n kern.root_device 2> /dev/null)
+	case $root in
+	dk[0-9]*) root=$(dkctl "$root" getwedgeinfo 2> /dev/null | sed -n 's/^dk[0-9]* at \([a-z]*[0-9]*\): .*/\1/p') ;;
+	esac
+	raw=$(sysctl -n kern.rawpartition 2> /dev/null)
+	raw=$(echo abcdefghijklmnop | cut -c$((${raw:-3} + 1)))
+	case $root in
+	ld[0-9]*) echo "/dev/rld$((${root#ld} + 1))$raw" ;;
+	*) echo "/dev/rld1$raw" ;;
+	esac
+}
+
 # The defaults. rb.conf sets the values that differ.
 case $(uname -s) in
 FreeBSD) rb_disk=/dev/vtbd1 ;;
-NetBSD) rb_disk=/dev/rld1d ;;
+NetBSD) rb_disk=$(netbsd_disk) ;;
 *) rb_disk= ;;
 esac
 rb_suites=boot

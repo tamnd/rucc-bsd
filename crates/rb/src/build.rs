@@ -5,14 +5,16 @@
 //! `destdir`, `release` and `logs`. A build through the shim also gets `toolchain-<cc>`, made by
 //! `rb toolchain`, and its compile records go to `logs/compile-<cc>.jsonl`.
 //!
-//! NetBSD runs `build.sh -U -m MACHINE -j N -O obj -T TOOLDIR -D destdir -R release` once for each
-//! target, with `-u` after `tools`. TOOLDIR is `tools` for `tools` and for `--no-shim`, and the
-//! shim's copy of it otherwise.
+//! NetBSD runs `build.sh -U -m MACHINE -a MACHINE_ARCH -j N -O obj -T TOOLDIR -D destdir -R release`
+//! once for each target, with `-u` after `tools`, and with `-V NAME=value` for each make variable
+//! of the row. TOOLDIR is `tools` for `tools` and for `--no-shim`, and the shim's copy of it
+//! otherwise.
 //!
 //! FreeBSD runs `make buildworld` and `make buildkernel` in `src` with `MAKEOBJDIRPREFIX=obj`, the
 //! row's `TARGET` and `TARGET_ARCH`, `SRCCONF=conf/freebsd/CONF.conf`, `__MAKE_CONF=/dev/null`, and
 //! `CROSS_TOOLCHAIN` set to the `.mk` file of `rb toolchain`, or to the reference package's name
-//! under `--no-shim`. That is the command line of FreeBSD's own GCC jobs.
+//! under `--no-shim`, then the row's make variables. That is the command line of FreeBSD's own GCC
+//! jobs.
 //!
 //! Each target's output goes to `logs/<name>.log` and to standard output, and one line goes to
 //! `logs/phases.tsv` in the columns of `scripts/netbsd/summary.sh`.
@@ -113,6 +115,10 @@ fn quote(word: &str) -> String {
 pub struct NetbsdBuild {
     /// `MACHINE`.
     pub machine: String,
+    /// `MACHINE_ARCH`, for a machine with more than one.
+    pub machine_arch: Option<String>,
+    /// The row's make variables, as `NAME=value`.
+    pub vars: Vec<String>,
     /// `-j`.
     pub jobs: usize,
     /// `-N`.
@@ -141,6 +147,11 @@ pub fn netbsd_steps(layout: &Layout, b: &NetbsdBuild) -> Vec<Step> {
                 b.noise.to_string(),
                 "-m".into(),
                 b.machine.clone(),
+            ];
+            if let Some(arch) = &b.machine_arch {
+                argv.extend(["-a".into(), arch.clone()]);
+            }
+            argv.extend([
                 "-j".into(),
                 b.jobs.to_string(),
                 "-O".into(),
@@ -151,7 +162,10 @@ pub fn netbsd_steps(layout: &Layout, b: &NetbsdBuild) -> Vec<Step> {
                 layout.destdir.display().to_string(),
                 "-R".into(),
                 layout.release.display().to_string(),
-            ];
+            ]);
+            for var in &b.vars {
+                argv.extend(["-V".into(), var.clone()]);
+            }
             if target != "tools" {
                 argv.push("-u".into());
             }
@@ -192,6 +206,8 @@ pub struct FreebsdBuild {
     pub targets: Vec<String>,
     /// The toolchain directory, for the size column.
     pub tooldir: PathBuf,
+    /// The row's make variables, as `NAME=value`.
+    pub vars: Vec<String>,
 }
 
 /// The FreeBSD steps.
@@ -218,6 +234,7 @@ pub fn freebsd_steps(layout: &Layout, b: &FreebsdBuild) -> Vec<Step> {
                 "__MAKE_CONF=/dev/null".into(),
                 format!("SRCCONF={}", b.srcconf.display()),
             ];
+            argv.extend(b.vars.iter().cloned());
             if !make_target.starts_with("build") {
                 argv.push(format!("DESTDIR={}", layout.destdir.display()));
                 argv.push("-DNO_ROOT".into());
@@ -417,8 +434,11 @@ pub mod cli {
         }
 
         fn netbsd(&self, tooldir: &Path, targets: Vec<String>) -> Result<NetbsdBuild, String> {
+            let names = &self.files.row.netbsd;
             Ok(NetbsdBuild {
                 machine: self.files.machine(),
+                machine_arch: names.machine_arch.clone(),
+                vars: names.make.clone(),
                 jobs: self.jobs,
                 noise: self
                     .args
@@ -553,6 +573,7 @@ pub mod cli {
                     kernconf: self.args.get("kernconf").unwrap_or("GENERIC").to_string(),
                     targets: self.targets.clone(),
                     tooldir: dir,
+                    vars: names.make.clone(),
                 },
             ))
         }
@@ -640,6 +661,8 @@ mod tests {
             &layout,
             &NetbsdBuild {
                 machine: "amd64".into(),
+                machine_arch: None,
+                vars: Vec::new(),
                 jobs: 4,
                 noise: 1,
                 tooldir: PathBuf::from("/mnt/nb/toolchain-rucc"),
@@ -654,6 +677,22 @@ mod tests {
         assert!(steps[1].line().ends_with(
             "-T /mnt/nb/toolchain-rucc -D /mnt/nb/destdir -R /mnt/nb/release -u kernel=GENERIC"
         ));
+        let riscv = netbsd_steps(
+            &layout,
+            &NetbsdBuild {
+                machine: "riscv".into(),
+                machine_arch: Some("riscv64".into()),
+                vars: vec!["MKCOMPAT=no".into()],
+                jobs: 4,
+                noise: 1,
+                tooldir: PathBuf::from("/mnt/nb/tools"),
+                targets: vec!["distribution".into()],
+            },
+        );
+        assert_eq!(
+            riscv[0].line(),
+            "cd /mnt/nb/src && ./build.sh -U -N 1 -m riscv -a riscv64 -j 4 -O /mnt/nb/obj -T /mnt/nb/tools -D /mnt/nb/destdir -R /mnt/nb/release -V MKCOMPAT=no -u distribution"
+        );
     }
 
     #[test]
@@ -670,6 +709,7 @@ mod tests {
                 kernconf: "GENERIC".into(),
                 targets: vec!["world".into(), "installworld".into()],
                 tooldir: PathBuf::from("/b/toolchain-rucc"),
+                vars: Vec::new(),
             },
         );
         assert_eq!(

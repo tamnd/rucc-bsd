@@ -117,6 +117,10 @@ pub struct Row {
     pub machine: Option<String>,
     /// `kvm` or `tcg`.
     pub accel: Option<String>,
+    /// The QEMU CPU under TCG, when not QEMU's default for the machine.
+    pub cpu: Option<String>,
+    /// The bus of the virtio disks and network: `pci`, the default, or `mmio`.
+    pub virtio: Option<String>,
     /// The firmware each run boots with.
     #[serde(default)]
     pub firmware: Vec<String>,
@@ -152,6 +156,9 @@ pub struct Names {
     /// The series the row exists for, when not all.
     #[serde(default)]
     pub series: Vec<String>,
+    /// The make variables of the row's builds, as `NAME=value`, in R and in G.
+    #[serde(default)]
+    pub make: Vec<String>,
 }
 
 impl Builders {
@@ -212,6 +219,23 @@ impl Rows {
                     "{ROWS}: {name} tests on {f}, which is not in its firmware"
                 ));
             }
+            if let Some(bus) = &row.virtio
+                && bus != "pci"
+                && bus != "mmio"
+            {
+                return Err(format!(
+                    "{ROWS}: {name} has virtio {bus:?}; give \"pci\" or \"mmio\""
+                ));
+            }
+            for var in row.freebsd.make.iter().chain(&row.netbsd.make) {
+                if !var.split_once('=').is_some_and(|(k, _)| {
+                    !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                }) {
+                    return Err(format!(
+                        "{ROWS}: {name} has the make variable {var:?}; give NAME=value"
+                    ));
+                }
+            }
         }
         Ok(file)
     }
@@ -257,6 +281,13 @@ mod tests {
         assert!(Rows::parse(base).is_ok());
         let firmware = base.replace("test_firmware = \"ovmf\"", "test_firmware = \"edk2\"");
         assert!(Rows::parse(&firmware).unwrap_err().contains("edk2"));
+        let bus = base.replace("qemu = \"q\"", "qemu = \"q\"\nvirtio = \"usb\"");
+        assert!(Rows::parse(&bus).unwrap_err().contains("usb"));
+        let make = base.replace(
+            "netbsd = { machine = \"amd64\" }",
+            "netbsd = { machine = \"amd64\", make = [\"MKCOMPAT\"] }",
+        );
+        assert!(Rows::parse(&make).unwrap_err().contains("NAME=value"));
         let inside = format!(
             "{base}[row.b]\nfrom = {{}}\nrucc_arch = \"i686\"\nin_row = \"c\"\nfreebsd = {{}}\nnetbsd = {{}}\n"
         );

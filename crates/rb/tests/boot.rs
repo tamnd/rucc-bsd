@@ -3,7 +3,7 @@
 //! results back to the disk. Each test gives it a different ending. `real_boot` uses QEMU itself.
 #![cfg(unix)]
 
-use rb::boot::{self, Firmware, Request};
+use rb::boot::{self, Bus, Firmware, Request};
 use rb_image::conf::RbConf;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -72,6 +72,8 @@ impl Rig {
             qemu: qemu.display().to_string(),
             machine: "q35".into(),
             kvm: false,
+            cpu: None,
+            virtio: Bus::Pci,
             cpus: 2,
             memory: "1G".into(),
             firmware: Firmware::Seabios,
@@ -265,6 +267,8 @@ fn real_boot() {
         qemu: "qemu-system-x86_64".into(),
         machine: "q35".into(),
         kvm: boot::kvm_usable("qemu-system-x86_64"),
+        cpu: None,
+        virtio: Bus::Pci,
         cpus: 2,
         memory: "2G".into(),
         firmware: Firmware::Seabios,
