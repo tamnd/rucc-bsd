@@ -48,6 +48,10 @@ on:
         description: A pin of conf/freebsd/pins.conf
         required: false
         default: 15.1-release
+      commit:
+        description: Build this full commit hash of a git pin instead of the pinned one, to look for a G-good commit
+        required: false
+        default: ""
       conf:
         description: A SRCCONF of conf/freebsd
         required: false
@@ -194,7 +198,7 @@ jobs:
         if: env.RB_HIT != 'true' && env.RB_STOP != 'provision'
         run: |
           mkdir -p record
-          read -r archive strip < <(RB_OUT=record scripts/freebsd/fetch.sh "$RB_PIN")
+          read -r archive strip < <(RB_OUT=record RB_COMMIT="${{ inputs.commit }}" scripts/freebsd/fetch.sh "$RB_PIN")
           ls -l "$archive"
           scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
           scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
@@ -334,7 +338,9 @@ jobs:
         run: |
           # The published run of the pin, from conf/freebsd/published.conf, or else the last one of
           # the branch's test job.
-          read -r job build < <(awk -v p="$RB_PIN" '$1 == p { print $2, $3 }' conf/freebsd/published.conf) || true
+          # An entry of published.conf is for the pinned commit, so a run of another commit does not use it.
+          [ -n "${{ inputs.commit }}" ] ||
+            read -r job build < <(awk -v p="$RB_PIN" '$1 == p { print $2, $3 }' conf/freebsd/published.conf) || true
           if [ -z "${job:-}" ]; then
             case $RB_PIN in
             main) job=FreeBSD-main-amd64-test ;;
@@ -364,7 +370,8 @@ jobs:
   baseline:
     name: rb baseline
     needs: [rb, boot]
-    if: always() && needs.rb.result == 'success' && needs.boot.result != 'skipped'
+    # A baseline is of the pinned commit, so a run of another commit makes none.
+    if: always() && needs.rb.result == 'success' && needs.boot.result != 'skipped' && !inputs.commit
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -393,8 +400,11 @@ jobs:
           # runs are separated by commas. It writes to out/baselines, not baselines/.
           chmod +x "$RUNNER_TEMP/rb/rb"
           zstd -d -q image/freebsd.img.zst -o "$RUNNER_TEMP/freebsd.img"
+          # download-artifact puts a single artifact straight into results, and each of two or more
+          # into results/NAME.
           from=""
-          for r in results/freebsd-results-*; do
+          for r in results/freebsd-results-* results; do
+            [ -d "$r/boots" ] || continue
             run=""
             for fw in bios uefi; do
               [ -f "$r/boots/$fw/boot.json" ] || continue
@@ -403,10 +413,19 @@ jobs:
             done
             [ -z "$run" ] || from="$from,${run#+}"
           done
+          # Without --from, rb baseline would boot the image itself.
+          if [ -z "$from" ]; then
+            echo "No boot results were downloaded." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          mkdir -p out
           status=0
           "$RUNNER_TEMP/rb/rb" baseline "$RB_PIN_NAME" --row amd64 --conf "$RB_CONF" --from "${from#,}" \
             --image "$RUNNER_TEMP/freebsd.img" --dir out/baselines > baseline.md || status=$?
-          cp results/freebsd-results-"$RB_PIN-$RB_CONF"/published.json out/ 2>/dev/null || true
+          # Every run has the same published.json, so the first one is enough.
+          for p in results/freebsd-results-*/published.json results/published.json; do
+            if [ -f "$p" ]; then cp "$p" out/; break; fi
+          done
           python3 -I scripts/freebsd/baseline-gap.py out/baselines out/published.json >> baseline.md || true
           {
             cat baseline.md
