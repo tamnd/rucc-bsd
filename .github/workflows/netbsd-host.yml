@@ -17,10 +17,6 @@
 name: netbsd-host
 
 on:
-  pull_request:
-    paths:
-      - provision/builders/netbsd-host/**
-      - .github/workflows/netbsd-host.yml
   workflow_dispatch:
     inputs:
       rebuild:

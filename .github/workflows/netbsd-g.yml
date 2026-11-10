@@ -31,14 +31,6 @@ name: netbsd-g
 # The paths leave out the files that only the R builds use (netbsd-r.yml), so that a change to R
 # does not build G again.
 on:
-  pull_request:
-    paths:
-      - scripts/netbsd/**
-      - conf/netbsd/**
-      - .github/workflows/netbsd-g.yml
-      - "!scripts/netbsd/overlay.sh"
-      - "!scripts/netbsd/r-report.sh"
-      - "!conf/netbsd/toolchain/**"
   workflow_dispatch:
     inputs:
       atf:

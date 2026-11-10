@@ -38,14 +38,6 @@
 name: freebsd-r
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/freebsd-r.yml
-      - scripts/freebsd/rb-tools.sh
-      - scripts/freebsd/build.sh
-      - scripts/freebsd/r-report.py
-      - scripts/freebsd/replay.py
-      - scripts/freebsd/r-image.sh
   workflow_dispatch:
     inputs:
       rucc:
