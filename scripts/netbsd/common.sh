@@ -28,8 +28,14 @@ mkdir -p "$NB_LOGS"
 # The build.sh command line every phase uses. -U is an unprivileged build, which writes a METALOG
 # that the sets and the images need. -N1 prints one short line per command; NB_NOISE=2 prints the
 # commands themselves, which the R builds use so that a failed compile shows its command line.
+# NB_MACHINE_ARCH is build.sh's -a, which evbarm needs. NB_VARS is the row's make variables
+# (rows.toml), as NAME=value words, and each one is a -V.
 nb_buildsh() {
-	(cd "$NB_SRC" && ./build.sh -U -N "${NB_NOISE:-1}" -m "$NB_MACHINE" -j "$NB_JOBS" \
+	for nb_var in ${NB_VARS:-}; do
+		set -- -V "$nb_var" "$@"
+	done
+	(cd "$NB_SRC" && ./build.sh -U -N "${NB_NOISE:-1}" -m "$NB_MACHINE" \
+		${NB_MACHINE_ARCH:+-a "$NB_MACHINE_ARCH"} -j "$NB_JOBS" \
 		-O "$NB_OBJ" -T "${NB_TOOLDIR:-$NB_TOOLS}" -D "$NB_DEST" -R "$NB_REL" "$@")
 }
 

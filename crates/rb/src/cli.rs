@@ -70,6 +70,9 @@ pub fn accepted(command: &str) -> Option<Accepts> {
                 "qemu",
                 "ovmf-code",
                 "ovmf-vars",
+                "edk2-code",
+                "edk2-vars",
+                "u-boot",
             ],
             switches: &["dry-run"],
         },
@@ -93,6 +96,9 @@ pub fn accepted(command: &str) -> Option<Accepts> {
                 "qemu",
                 "ovmf-code",
                 "ovmf-vars",
+                "edk2-code",
+                "edk2-vars",
+                "u-boot",
             ],
             switches: &["in-place", "keep", "dry-run"],
         },
@@ -304,16 +310,20 @@ usage:
       suite by default. With --from, the runs are the output directories of earlier rb boot
       commands, and nothing boots. A run in shards, one boot per shard, joins the directories
       of its shards with '+', as in --from smoke+net+lib. Exits 1 when a run did not pass.
-  rb boot --image IMG --out DIR [--suite boot,smoke,tests] [--row ROW] [--firmware ovmf|seabios]
+  rb boot --image IMG --out DIR [--suite boot,smoke,tests] [--row ROW]
+          [--firmware ovmf|seabios|edk2|u-boot]
           [--tests-only DIR,...] [--tests-except DIR,...] [--boot-timeout SECS] [--timeout SECS]
           [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
-          [--qemu PATH] [--ovmf-code FILE --ovmf-vars FILE] [--in-place] [--keep] [--dry-run]
+          [--qemu PATH] [--ovmf-code FILE --ovmf-vars FILE] [--edk2-code FILE --edk2-vars FILE]
+          [--u-boot FILE] [--in-place] [--keep] [--dry-run]
       Boot an image once under QEMU, on a qcow2 overlay so the image does not change. The second
       disk holds an rb.conf with the suites, boot by default, and rb-rc writes its results back
       to it. The console goes to DIR/console.log. rb waits for RB-READY or a login prompt for
       SECS, 600 by default under KVM, then for RB-DONE until the row's run limit. On a panic it
       sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
       DIR/boot.json. ROW is amd64 by default, and the firmware is the row's test firmware.
+      edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then the S-mode U-Boot of
+      riscv64, which loads the EFI loader from the disk.
       Exits 1 when the boot did not pass.
   rb build PIN --cc rucc|ref --root DIR [--row ROW] [--targets T,...] [--src DIR] [--jobs N]
           [--conf CONF] [--kernconf NAME] [--rucc PATH] [--log FILE] [--shim PATH] [--noise N]

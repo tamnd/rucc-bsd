@@ -66,6 +66,8 @@ fn request(top: &Path, out: &Path) -> Request {
         qemu: top.join("bin/qemu-system-x86_64").display().to_string(),
         machine: "q35".into(),
         kvm: false,
+        cpu: None,
+        mmio: false,
         cpus: 2,
         memory: "1G".into(),
         firmware: Firmware::Seabios,

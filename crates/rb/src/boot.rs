@@ -40,6 +40,19 @@ pub enum Firmware {
         /// `OVMF_VARS`.
         vars: PathBuf,
     },
+    /// EDK2 for aarch64, through the EFI loader, in the same two flash devices as OVMF.
+    Edk2 {
+        /// The code, such as `AAVMF_CODE.fd`.
+        code: PathBuf,
+        /// The variables, such as `AAVMF_VARS.fd`.
+        vars: PathBuf,
+    },
+    /// QEMU's own OpenSBI, then U-Boot in S-mode as its next stage. U-Boot loads the EFI loader
+    /// from the disk.
+    UBoot {
+        /// U-Boot's `u-boot.bin`.
+        image: PathBuf,
+    },
 }
 
 impl Firmware {
@@ -49,6 +62,17 @@ impl Firmware {
         match self {
             Firmware::Seabios => "seabios",
             Firmware::Ovmf { .. } => "ovmf",
+            Firmware::Edk2 { .. } => "edk2",
+            Firmware::UBoot { .. } => "u-boot",
+        }
+    }
+
+    /// The code and the variables of a firmware in flash.
+    #[must_use]
+    pub fn flash(&self) -> Option<(&Path, &Path)> {
+        match self {
+            Firmware::Ovmf { code, vars } | Firmware::Edk2 { code, vars } => Some((code, vars)),
+            Firmware::Seabios | Firmware::UBoot { .. } => None,
         }
     }
 }
@@ -82,13 +106,65 @@ pub const OVMF_PLACES: &[(&str, &str)] = &[
     ),
 ];
 
-/// The first OVMF of [`OVMF_PLACES`] that is there.
-#[must_use]
-pub fn find_ovmf() -> Option<(PathBuf, PathBuf)> {
-    OVMF_PLACES
+/// Where Debian and Ubuntu (`qemu-efi-aarch64`), Fedora, Arch, FreeBSD's `qemu` and Homebrew put
+/// EDK2 for aarch64, as code and variables.
+pub const EDK2_PLACES: &[(&str, &str)] = &[
+    (
+        "/usr/share/AAVMF/AAVMF_CODE.fd",
+        "/usr/share/AAVMF/AAVMF_VARS.fd",
+    ),
+    (
+        "/usr/share/edk2/aarch64/QEMU_EFI-pflash.raw",
+        "/usr/share/edk2/aarch64/vars-template-pflash.raw",
+    ),
+    (
+        "/usr/share/edk2/aarch64/QEMU_CODE.fd",
+        "/usr/share/edk2/aarch64/QEMU_VARS.fd",
+    ),
+    (
+        "/usr/local/share/qemu/edk2-aarch64-code.fd",
+        "/usr/local/share/qemu/edk2-arm-vars.fd",
+    ),
+    (
+        "/opt/homebrew/share/qemu/edk2-aarch64-code.fd",
+        "/opt/homebrew/share/qemu/edk2-arm-vars.fd",
+    ),
+];
+
+/// Where Debian and Ubuntu (`u-boot-qemu`) and FreeBSD (`u-boot-qemu-riscv64`) put the S-mode
+/// U-Boot for QEMU's riscv64 `virt` machine.
+pub const U_BOOT_PLACES: &[&str] = &[
+    "/usr/lib/u-boot/qemu-riscv64_smode/u-boot.bin",
+    "/usr/local/share/u-boot/u-boot-qemu-riscv64/u-boot.bin",
+];
+
+/// The first code and variables of `places` that are there.
+fn find_flash(places: &[(&str, &str)]) -> Option<(PathBuf, PathBuf)> {
+    places
         .iter()
         .find(|(c, v)| Path::new(c).is_file() && Path::new(v).is_file())
         .map(|(c, v)| (PathBuf::from(c), PathBuf::from(v)))
+}
+
+/// The first OVMF of [`OVMF_PLACES`] that is there.
+#[must_use]
+pub fn find_ovmf() -> Option<(PathBuf, PathBuf)> {
+    find_flash(OVMF_PLACES)
+}
+
+/// The first EDK2 of [`EDK2_PLACES`] that is there.
+#[must_use]
+pub fn find_edk2() -> Option<(PathBuf, PathBuf)> {
+    find_flash(EDK2_PLACES)
+}
+
+/// The first U-Boot of [`U_BOOT_PLACES`] that is there.
+#[must_use]
+pub fn find_u_boot() -> Option<PathBuf> {
+    U_BOOT_PLACES
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file())
 }
 
 /// One boot.
@@ -106,6 +182,10 @@ pub struct Request {
     pub machine: String,
     /// Whether to use KVM.
     pub kvm: bool,
+    /// The QEMU CPU under TCG. Under KVM the CPU is always `host`.
+    pub cpu: Option<String>,
+    /// Put the disks and the network on virtio-mmio, not on PCI.
+    pub mmio: bool,
     /// vCPUs.
     pub cpus: u32,
     /// Memory, as QEMU takes it, such as `8G`.
@@ -140,7 +220,7 @@ pub struct Outcome {
     pub result: String,
     /// The image.
     pub image: String,
-    /// `seabios` or `ovmf`.
+    /// `seabios`, `ovmf`, `edk2` or `u-boot`.
     pub firmware: String,
     /// `kvm` or `tcg`.
     pub accel: String,
@@ -181,7 +261,7 @@ pub struct Paths {
     pub format: &'static str,
     /// The results disk.
     pub results_disk: PathBuf,
-    /// The copy of the OVMF variables.
+    /// The copy of the firmware's variables.
     pub vars: PathBuf,
 }
 
@@ -201,7 +281,7 @@ pub fn paths(req: &Request) -> Paths {
         disk,
         format,
         results_disk: req.out.join("results.disk"),
-        vars: req.out.join("ovmf-vars.fd"),
+        vars: req.out.join(format!("{}-vars.fd", req.firmware.name())),
     }
 }
 
@@ -253,6 +333,8 @@ pub fn qemu_command(req: &Request) -> Vec<String> {
     ];
     if req.kvm {
         words.extend(["-cpu".into(), "host".into()]);
+    } else if let Some(cpu) = &req.cpu {
+        words.extend(["-cpu".into(), cpu.clone()]);
     }
     words.extend([
         "-smp".into(),
@@ -267,7 +349,7 @@ pub fn qemu_command(req: &Request) -> Vec<String> {
         "stdio".into(),
         "-no-reboot".into(),
     ]);
-    if let Firmware::Ovmf { code, .. } = &req.firmware {
+    if let Some((code, _)) = req.firmware.flash() {
         words.extend([
             "-drive".into(),
             format!("if=pflash,format=raw,readonly=on,file={}", code.display()),
@@ -275,7 +357,28 @@ pub fn qemu_command(req: &Request) -> Vec<String> {
             format!("if=pflash,format=raw,file={}", p.vars.display()),
         ]);
     }
-    let mut disk = |id: &str, file: &Path, format: &str, boot: bool| {
+    if let Firmware::UBoot { image } = &req.firmware {
+        words.extend(["-kernel".into(), image.display().to_string()]);
+    }
+    let mut disks = vec![
+        ("root".to_string(), p.disk.clone(), p.format),
+        ("rb".to_string(), p.results_disk.clone(), "raw"),
+    ];
+    for i in 1..=req.spare_disks {
+        disks.push((
+            format!("spare{i}"),
+            req.out.join(format!("spare{i}.disk")),
+            "raw",
+        ));
+    }
+    // The virt machine gives the first virtio-mmio device on the command line the highest
+    // address, and the guests number the devices from the lowest. In reverse, the root disk is
+    // the first disk, vtbd0 or ld0, and the results disk the second, as on PCI.
+    if req.mmio {
+        disks.reverse();
+    }
+    let bus = if req.mmio { "device" } else { "pci" };
+    for (id, file, format) in &disks {
         words.extend([
             "-drive".into(),
             format!(
@@ -283,29 +386,19 @@ pub fn qemu_command(req: &Request) -> Vec<String> {
                 file.display()
             ),
             "-device".into(),
-            if boot {
+            if id == "root" && !req.mmio {
                 format!("virtio-blk-pci,drive={id},bootindex=0")
             } else {
-                format!("virtio-blk-pci,drive={id}")
+                format!("virtio-blk-{bus},drive={id}")
             },
         ]);
-    };
-    disk("root", &p.disk, p.format, true);
-    disk("rb", &p.results_disk, "raw", false);
-    for i in 1..=req.spare_disks {
-        disk(
-            &format!("spare{i}"),
-            &req.out.join(format!("spare{i}.disk")),
-            "raw",
-            false,
-        );
     }
     // QEMU's user network, with DHCP for the smoke suite's check and no route out.
     words.extend([
         "-netdev".into(),
         "user,id=n0,restrict=on".into(),
         "-device".into(),
-        "virtio-net-pci,netdev=n0".into(),
+        format!("virtio-net-{bus},netdev=n0"),
     ]);
     words
 }
@@ -339,7 +432,7 @@ fn create_file(path: &Path, data: &[u8], size: u64) -> Result<(), String> {
     f.set_len(size).map_err(err)
 }
 
-/// Make the overlay, the results disk, the spare disks and the copy of the OVMF variables.
+/// Make the overlay, the results disk, the spare disks and the copy of the firmware's variables.
 pub fn prepare(req: &Request) -> Result<(), String> {
     std::fs::create_dir_all(&req.out).map_err(|e| format!("{}: {e}", req.out.display()))?;
     if !req.image.is_file() {
@@ -375,7 +468,7 @@ pub fn prepare(req: &Request) -> Result<(), String> {
     for i in 1..=req.spare_disks {
         create_file(&req.out.join(format!("spare{i}.disk")), &[], 128 << 20)?;
     }
-    if let Firmware::Ovmf { vars, .. } = &req.firmware {
+    if let Some((_, vars)) = req.firmware.flash() {
         std::fs::copy(vars, &p.vars).map_err(|e| format!("{}: {e}", vars.display()))?;
     }
     Ok(())
@@ -749,6 +842,8 @@ mod tests {
             qemu: "qemu-system-x86_64".into(),
             machine: "q35".into(),
             kvm: true,
+            cpu: None,
+            mmio: false,
             cpus: 2,
             memory: "8G".into(),
             firmware: Firmware::Ovmf {
@@ -796,6 +891,61 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("file=/img/fb.img,format=raw,"), "{line}");
+    }
+
+    #[test]
+    fn the_qemu_commands_of_the_virt_machines() {
+        let mut req = request();
+        req.qemu = "qemu-system-aarch64".into();
+        req.machine = "virt".into();
+        req.kvm = false;
+        req.cpu = Some("max,pauth-impdef=on".into());
+        req.spare_disks = 0;
+        req.firmware = Firmware::Edk2 {
+            code: "/edk2/CODE.fd".into(),
+            vars: "/edk2/VARS.fd".into(),
+        };
+        let line = qemu_command(&req).join(" ");
+        assert!(
+            line.starts_with(
+                "qemu-system-aarch64 -machine virt,accel=tcg -cpu max,pauth-impdef=on -smp 2 "
+            ),
+            "{line}"
+        );
+        assert!(
+            line.contains(
+                "-drive if=pflash,format=raw,readonly=on,file=/edk2/CODE.fd \
+                 -drive if=pflash,format=raw,file=/runs/1/edk2-vars.fd "
+            ),
+            "{line}"
+        );
+        assert!(
+            line.contains("virtio-blk-pci,drive=root,bootindex=0") && line.contains("-pci,netdev"),
+            "{line}"
+        );
+        req.qemu = "qemu-system-riscv64".into();
+        req.cpu = None;
+        req.mmio = true;
+        req.spare_disks = 1;
+        req.firmware = Firmware::UBoot {
+            image: "/u/u-boot.bin".into(),
+        };
+        let line = qemu_command(&req).join(" ");
+        assert_eq!(
+            line,
+            "qemu-system-riscv64 -machine virt,accel=tcg -smp 2 -m 8G -display none \
+             -monitor none -serial stdio -no-reboot -kernel /u/u-boot.bin \
+             -drive if=none,id=spare1,file=/runs/1/spare1.disk,format=raw,cache=unsafe \
+             -device virtio-blk-device,drive=spare1 \
+             -drive if=none,id=rb,file=/runs/1/results.disk,format=raw,cache=unsafe \
+             -device virtio-blk-device,drive=rb \
+             -drive if=none,id=root,file=/runs/1/disk.qcow2,format=qcow2,cache=unsafe \
+             -device virtio-blk-device,drive=root \
+             -netdev user,id=n0,restrict=on -device virtio-net-device,netdev=n0"
+        );
+        req.kvm = true;
+        req.cpu = Some("max".into());
+        assert!(qemu_command(&req).join(" ").contains("-cpu host -smp"));
     }
 
     #[test]
@@ -855,7 +1005,7 @@ mod tests {
 /// The command line: `rb boot --image IMG --out DIR ...`, with the row's QEMU settings from
 /// `rows.toml`.
 pub mod cli {
-    use super::{Firmware, Request, find_ovmf, kvm_usable};
+    use super::{Firmware, Request, find_edk2, find_ovmf, find_u_boot, kvm_usable};
     use crate::cli::Args;
     use rb_image::conf::{RbConf, parse_suites};
     use rb_image::plan::parse_size;
@@ -899,9 +1049,9 @@ pub mod cli {
             .machine
             .clone()
             .ok_or_else(|| format!("the row {row_name} has no QEMU machine"))?;
-        if machine != "q35" {
+        if machine != "q35" && machine != "virt" {
             return Err(format!(
-                "rb boot boots only the q35 rows for now, and {row_name} is {machine}"
+                "rb boot boots the q35 and virt machines, and {row_name} is {machine}"
             ));
         }
         let qemu = match args.get("qemu") {
@@ -933,6 +1083,24 @@ pub mod cli {
                 };
                 Firmware::Ovmf { code, vars }
             }
+            "edk2" => {
+                let (code, vars) = match (args.get("edk2-code"), args.get("edk2-vars")) {
+                    (Some(c), Some(v)) => (PathBuf::from(c), PathBuf::from(v)),
+                    (None, None) => find_edk2().ok_or(
+                        "no EDK2 for aarch64 found; install qemu-efi-aarch64, or give --edk2-code and --edk2-vars",
+                    )?,
+                    _ => return Err("give both --edk2-code and --edk2-vars".into()),
+                };
+                Firmware::Edk2 { code, vars }
+            }
+            "u-boot" => Firmware::UBoot {
+                image: match args.get("u-boot") {
+                    Some(u) => PathBuf::from(u),
+                    None => find_u_boot().ok_or(
+                        "no S-mode U-Boot for riscv64 found; install u-boot-qemu, or give --u-boot",
+                    )?,
+                },
+            },
             other => return Err(format!("rb boot cannot boot with {other} yet")),
         };
         let kvm = row.accel.as_deref() == Some("kvm") && kvm(&qemu);
@@ -950,6 +1118,8 @@ pub mod cli {
             qemu,
             machine,
             kvm,
+            cpu: row.cpu.clone(),
+            mmio: row.virtio.as_deref() == Some("mmio"),
             cpus: number(args, "cpus", row.cpus.unwrap_or(2))?,
             memory: args.get("memory").map_or_else(
                 || format!("{}G", row.memory_gb.unwrap_or(8)),
@@ -1056,11 +1226,71 @@ pub mod cli {
         }
 
         #[test]
+        fn requests_for_the_virt_rows() {
+            let a = args(&[
+                "boot",
+                "--image",
+                "i",
+                "--out",
+                "o",
+                "--row",
+                "aarch64",
+                "--edk2-code",
+                "/c",
+                "--edk2-vars",
+                "/v",
+            ]);
+            let req = request(&a, &rows(), |_| false).unwrap();
+            assert_eq!(
+                (req.qemu.as_str(), req.machine.as_str()),
+                ("qemu-system-aarch64", "virt")
+            );
+            assert_eq!(req.cpu.as_deref(), Some("max,pauth-impdef=on"));
+            assert!(!req.kvm && !req.mmio);
+            assert_eq!((req.cpus, req.boot_timeout), (4, 1800));
+            assert_eq!(
+                req.firmware,
+                Firmware::Edk2 {
+                    code: "/c".into(),
+                    vars: "/v".into()
+                }
+            );
+            let a = args(&[
+                "boot", "--image", "i", "--out", "o", "--row", "riscv64", "--u-boot", "/u",
+            ]);
+            let req = request(&a, &rows(), |_| true).unwrap();
+            assert_eq!(req.qemu, "qemu-system-riscv64");
+            assert!(!req.kvm, "the row is TCG");
+            assert!(req.mmio && req.cpu.is_none());
+            assert_eq!(
+                req.firmware,
+                Firmware::UBoot {
+                    image: "/u".into()
+                }
+            );
+        }
+
+        #[test]
         fn mistakes() {
             let err = |words: &[&str]| request(&args(words), &rows(), |_| true).unwrap_err();
             assert!(err(&["boot", "--out", "o"]).contains("--image"));
             assert!(
-                err(&["boot", "--image", "i", "--out", "o", "--row", "aarch64"]).contains("q35")
+                err(&["boot", "--image", "i", "--out", "o", "--row", "i386", "--firmware", "ovmf"])
+                    .contains("seabios, not ovmf")
+            );
+            assert!(
+                err(&[
+                    "boot",
+                    "--image",
+                    "i",
+                    "--out",
+                    "o",
+                    "--row",
+                    "aarch64",
+                    "--edk2-code",
+                    "/c"
+                ])
+                .contains("both --edk2-code")
             );
             assert!(
                 err(&["boot", "--image", "i", "--out", "o", "--firmware", "edk2"])
