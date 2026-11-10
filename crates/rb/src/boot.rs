@@ -1042,6 +1042,42 @@ pub mod cli {
             .unwrap_or_default()
     }
 
+    /// The firmware `name` of the row, from the command line or from the places it is installed.
+    fn firmware(args: &Args, name: &str) -> Result<Firmware, String> {
+        Ok(match name {
+            "seabios" => Firmware::Seabios,
+            "ovmf" => {
+                let (code, vars) = match (args.get("ovmf-code"), args.get("ovmf-vars")) {
+                (Some(c), Some(v)) => (PathBuf::from(c), PathBuf::from(v)),
+                (None, None) => find_ovmf().ok_or(
+                    "no OVMF found; install ovmf, give --ovmf-code and --ovmf-vars, or use --firmware seabios",
+                )?,
+                _ => return Err("give both --ovmf-code and --ovmf-vars".into()),
+            };
+                Firmware::Ovmf { code, vars }
+            }
+            "edk2" => {
+                let (code, vars) = match (args.get("edk2-code"), args.get("edk2-vars")) {
+                (Some(c), Some(v)) => (PathBuf::from(c), PathBuf::from(v)),
+                (None, None) => find_edk2().ok_or(
+                    "no EDK2 for aarch64 found; install qemu-efi-aarch64, or give --edk2-code and --edk2-vars",
+                )?,
+                _ => return Err("give both --edk2-code and --edk2-vars".into()),
+            };
+                Firmware::Edk2 { code, vars }
+            }
+            "u-boot" => Firmware::UBoot {
+                image: match args.get("u-boot") {
+                    Some(u) => PathBuf::from(u),
+                    None => find_u_boot().ok_or(
+                        "no S-mode U-Boot for riscv64 found; install u-boot-qemu, or give --u-boot",
+                    )?,
+                },
+            },
+            other => return Err(format!("rb boot cannot boot with {other} yet")),
+        })
+    }
+
     /// The request the command line asks for. `kvm` says whether KVM can be used here.
     pub fn request(
         args: &Args,
@@ -1081,38 +1117,7 @@ pub mod cli {
                 row.firmware.join(" or ")
             ));
         }
-        let firmware = match firmware_name {
-            "seabios" => Firmware::Seabios,
-            "ovmf" => {
-                let (code, vars) = match (args.get("ovmf-code"), args.get("ovmf-vars")) {
-                    (Some(c), Some(v)) => (PathBuf::from(c), PathBuf::from(v)),
-                    (None, None) => find_ovmf().ok_or(
-                        "no OVMF found; install ovmf, give --ovmf-code and --ovmf-vars, or use --firmware seabios",
-                    )?,
-                    _ => return Err("give both --ovmf-code and --ovmf-vars".into()),
-                };
-                Firmware::Ovmf { code, vars }
-            }
-            "edk2" => {
-                let (code, vars) = match (args.get("edk2-code"), args.get("edk2-vars")) {
-                    (Some(c), Some(v)) => (PathBuf::from(c), PathBuf::from(v)),
-                    (None, None) => find_edk2().ok_or(
-                        "no EDK2 for aarch64 found; install qemu-efi-aarch64, or give --edk2-code and --edk2-vars",
-                    )?,
-                    _ => return Err("give both --edk2-code and --edk2-vars".into()),
-                };
-                Firmware::Edk2 { code, vars }
-            }
-            "u-boot" => Firmware::UBoot {
-                image: match args.get("u-boot") {
-                    Some(u) => PathBuf::from(u),
-                    None => find_u_boot().ok_or(
-                        "no S-mode U-Boot for riscv64 found; install u-boot-qemu, or give --u-boot",
-                    )?,
-                },
-            },
-            other => return Err(format!("rb boot cannot boot with {other} yet")),
-        };
+        let firmware = firmware(args, firmware_name)?;
         let kvm = row.accel.as_deref() == Some("kvm") && kvm(&qemu);
         let hours = row.run_limit_hours.unwrap_or(4);
         let conf = RbConf {
@@ -1276,12 +1281,7 @@ pub mod cli {
             assert_eq!(req.qemu, "qemu-system-riscv64");
             assert!(!req.kvm, "the row is TCG");
             assert!(req.virtio == Bus::Mmio && req.cpu.is_none());
-            assert_eq!(
-                req.firmware,
-                Firmware::UBoot {
-                    image: "/u".into()
-                }
-            );
+            assert_eq!(req.firmware, Firmware::UBoot { image: "/u".into() });
         }
 
         #[test]
@@ -1289,8 +1289,18 @@ pub mod cli {
             let err = |words: &[&str]| request(&args(words), &rows(), |_| true).unwrap_err();
             assert!(err(&["boot", "--out", "o"]).contains("--image"));
             assert!(
-                err(&["boot", "--image", "i", "--out", "o", "--row", "i386", "--firmware", "ovmf"])
-                    .contains("seabios, not ovmf")
+                err(&[
+                    "boot",
+                    "--image",
+                    "i",
+                    "--out",
+                    "o",
+                    "--row",
+                    "i386",
+                    "--firmware",
+                    "ovmf"
+                ])
+                .contains("seabios, not ovmf")
             );
             assert!(
                 err(&[
