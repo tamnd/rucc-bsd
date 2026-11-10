@@ -26,7 +26,13 @@ export MAKEOBJDIRPREFIX="$RB_OBJ"
 
 case $phase in
 world) target=buildworld ;;
-kernel) target=buildkernel ;;
+kernel)
+	target=buildkernel
+	# WITHOUT_CLEAN is the default, so buildkernel keeps the objects of an earlier buildkernel and
+	# does not compile them again. freebsd-r builds the kernel with rucc and with ref in one object
+	# tree, so each kernel phase starts with no kernel objects.
+	rm -rf "$RB_OBJ$RB_SRC/amd64.amd64/sys/$RB_KERNCONF"
+	;;
 toolchain) target=kernel-toolchain ;;
 *) echo "usage: $0 world | kernel | toolchain" >&2; exit 2 ;;
 esac
