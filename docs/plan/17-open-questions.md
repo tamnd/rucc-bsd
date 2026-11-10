@@ -172,6 +172,8 @@ The answer is written into 04.2.
 
 **How to find out.** B1 builds NetBSD's userland with the reader on and with `-frucc-asm-reader=off`, from the shim's records. If the reader saves less than 1% of build time, it goes.
 
+**Answer.** The reader goes on ELF. Run 42644075064 of `reader-cost` measured it over 55896 units of NetBSD's userland. It saved -0.01% of the compile time, so removing it costs no compile time. The file-scope blocks cost 2.52% on the assembler path, and the reader got none of it back. 07.3 records the numbers.
+
 **Deadline.** B1.
 
 ## 14. Whether a NetBSD riscv64 baseline grades anything
