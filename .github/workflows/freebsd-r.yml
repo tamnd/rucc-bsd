@@ -103,8 +103,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm || true
       - name: install QEMU
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils sshpass zstd
+          scripts/ci/apt-install.sh qemu-system-x86 qemu-utils sshpass zstd
       - name: cache the builder image
         uses: actions/cache@v6.1.0
         with:
@@ -382,8 +381,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm || true
       - name: install QEMU
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils ovmf zstd
+          scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf zstd
       - name: download the image and the build record
         uses: actions/download-artifact@v8.0.1
         with:

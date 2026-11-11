@@ -55,7 +55,7 @@ merge() {
 	echo "ld linked netbsd, and nbctfmerge over its ${#objects[@]} objects failed."
 	echo
 
-	command -v gdb > /dev/null || sudo apt-get install -y -qq gdb > /dev/null 2>&1 || true
+	command -v gdb > /dev/null || "$(dirname "$0")/../ci/apt-install.sh" gdb > /dev/null 2>&1 || true
 	cp "$dir/netbsd" "$work/netbsd"
 	if command -v gdb > /dev/null; then
 		echo "The same command under gdb, with the output in a copy of netbsd:"
