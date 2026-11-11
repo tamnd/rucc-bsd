@@ -6,7 +6,7 @@
 UNITS is the number of units that replay.py wrote. SHIM.tsv is the shim log of the replay: one
 line for each call, with the exit status, the directory, the slot and the arguments. TIMEOUTS has
 one line for each unit that timeout(1) stopped. Each failed unit has its standard error in the
-.err file next to its object (replay.py --stderr).
+.err file next to its object, with .err added to the object's name (replay.py --stderr).
 
 The cause of a failed unit is its first error line, with the place, the quoted names and the
 numbers taken out, so that one cause groups the units that fail in the same way. A unit with no
@@ -81,7 +81,7 @@ def main():
                 args = fields[3:]
                 obj = next((args[i + 1] for i, a in enumerate(args[:-1]) if a == "-o"), "")
                 source = next((a for a in args if a.endswith(SOURCES) and not a.startswith("-")), "")
-                err = os.path.join(fields[1], os.path.splitext(obj)[0] + ".err")
+                err = os.path.join(fields[1], obj + ".err")
                 line, other = first_error(err)
                 failed.append((cause(line, other, status), source, fields[1], line or other or "", err))
     stopped = []

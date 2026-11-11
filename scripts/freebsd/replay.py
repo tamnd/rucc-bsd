@@ -15,8 +15,9 @@ each object with its G object when the roots are given.
 The units go round-robin into DIR/replay-0.sh to DIR/replay-(N-1).sh, 4 by default, to run at
 the same time. Each line ends with "|| true", so one failed unit does not stop the script. The
 shim writes the records; the scripts print nothing of their own. With --stderr, the standard
-error of each unit goes to a file next to the object, with .err in place of .o, for a shim that
-does not record the diagnostics itself.
+error of each unit goes to a file next to the object, with .err added to its name, for a shim
+that does not record the diagnostics itself. Added and not in place of .o, because NetBSD builds
+one source as x.o, x.po and x.pico in the same directory, and the three would write one file.
 
 timeout(1) stops a unit after S seconds, 300 by default, so one unit that does not stop cannot
 hold its script. A stopped unit has no record, so its source goes on a line of FILE when --timeouts
@@ -114,7 +115,7 @@ def main():
         args = redirect(argv[1:], obj, os.path.splitext(obj)[0] + ".d")
         cmd = " ".join(shlex.quote(x) for x in [a.shim, *args])
         mkdir = f"mkdir -p {shlex.quote(os.path.dirname(obj))}"
-        err = shlex.quote(os.path.splitext(obj)[0] + ".err") if a.stderr else "&1"
+        err = shlex.quote(obj + ".err") if a.stderr else "&1"
         run = f"timeout -k 10 {a.timeout} {cmd} > /dev/null 2>{err}"
         if a.timeouts:
             source = next(i["path"] for i in inputs if i["path"].endswith(SOURCES))
