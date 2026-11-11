@@ -3,10 +3,12 @@
 #
 #   r-image.sh G_IMAGE_ZST
 #
-# Environment: RB_SRC, RB_OBJ, RB_SRCCONF, RB_TOOLCHAIN, RB_KERNCONF, RB_HARNESS and RB_OUT as for
-# build.sh, and RB_IMAGE, the raw image to write. RB_IMAGE.zst is the result.
+# Environment: RB_SRC, RB_OBJ, RB_SRCCONF, RB_TOOLCHAIN, RB_KERNCONF, RB_HARNESS, RB_OUT,
+# RB_TARGET and RB_TARGET_ARCH as for build.sh, and RB_IMAGE, the raw image to write. RB_IMAGE.zst
+# is the result.
 #
-# G_IMAGE_ZST is freebsd.img.zst of a freebsd-g run: G world, G kernel and the test packages. The
+# G_IMAGE_ZST is freebsd.img.zst of a freebsd-g run: G world, G kernel and the test packages. For
+# the aarch64 and riscv64 rows of the tcg cadence it is the release image of the row, made raw. The
 # script attaches a copy of it with mdconfig, mounts its root file system, removes the G kernel and
 # its debug files, and runs installkernel into it with RB_TOOLCHAIN. So the image has the world of
 # G and the kernel and modules of the last buildkernel in RB_OBJ. It writes "r-image" to
@@ -31,7 +33,7 @@ trap 'umount "$mnt" 2>/dev/null; mdconfig -d -u "$md" 2>/dev/null' EXIT
 part=$(gpart show -p "$md" | awk '$4 == "freebsd-ufs" { print $3; exit }')
 mount "/dev/$part" "$mnt"
 rm -rf "$mnt/boot/kernel" "$mnt/boot/kernel.old" "$mnt/usr/lib/debug/boot/kernel"
-if ! make -C "$RB_SRC" installkernel DESTDIR="$mnt" TARGET=amd64 TARGET_ARCH=amd64 \
+if ! make -C "$RB_SRC" installkernel DESTDIR="$mnt" TARGET="${RB_TARGET:-amd64}" TARGET_ARCH="${RB_TARGET_ARCH:-amd64}" \
 	KERNCONF="${RB_KERNCONF:-GENERIC}" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
 	CROSS_TOOLCHAIN="$RB_TOOLCHAIN" __MAKE_CONF=/dev/null \
 	SRCCONF="$RB_SRCCONF" > "$RB_OUT/r-install.log" 2>&1; then
