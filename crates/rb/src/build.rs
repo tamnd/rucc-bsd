@@ -565,7 +565,7 @@ pub mod cli {
                     target_arch: names.target_arch.clone().unwrap_or_else(|| "amd64".into()),
                     jobs: self.jobs,
                     cross_toolchain: if self.no_shim {
-                        persona.reference.clone()
+                        persona.reference_for(&self.files.row, &self.files.toolchains)
                     } else {
                         dir.join(mk).display().to_string()
                     },

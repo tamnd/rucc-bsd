@@ -235,10 +235,11 @@ pub fn plan(
     let persona = personas
         .for_pin(pin)
         .ok_or_else(|| format!("personas.toml has no persona for {}", pin.name))?;
+    let reference_name = persona.reference_for(row, toolchains);
     let reference = toolchains
         .toolchain
-        .get(&persona.reference)
-        .ok_or_else(|| format!("toolchains.toml has no {}", persona.reference))?;
+        .get(&reference_name)
+        .ok_or_else(|| format!("toolchains.toml has no {reference_name}"))?;
     let arch = row.rucc_arch.as_str();
     let target = persona.target(pin, arch);
     let mut config = ShimConfig {
@@ -263,7 +264,7 @@ pub fn plan(
         config,
         target,
         gnuc: persona.gnuc.clone(),
-        reference: persona.reference.clone(),
+        reference: reference_name,
     })
 }
 
@@ -559,6 +560,35 @@ mod tests {
         );
         assert_eq!(shims.config.side, None);
         assert!(!shims.config.rucc_cpp);
+    }
+
+    #[test]
+    fn freebsd_rows_take_the_reference_of_their_target_arch() {
+        let (personas, toolchains, rows) = files();
+        for (row, triple) in [
+            ("aarch64", "aarch64-unknown-freebsd15.1"),
+            ("riscv64", "riscv64-unknown-freebsd15.1"),
+        ] {
+            let shims = plan(
+                &pin("freebsd", "15", "15.1-RELEASE"),
+                &rows.row[row],
+                &personas,
+                &toolchains,
+                &Ask::default(),
+            )
+            .unwrap();
+            assert_eq!(shims.reference, format!("{row}-gcc15"));
+            assert_eq!(shims.names[0], format!("{triple}-rb-cc-rucc"));
+            assert_eq!(shims.config.rucc_args[0], format!("--target={triple}"));
+            assert_eq!(
+                shims.config.ref_cc,
+                PathBuf::from(format!("/usr/local/bin/{triple}-gcc15"))
+            );
+            assert_eq!(
+                shims.config.ref_as,
+                PathBuf::from(format!("/usr/local/{triple}/bin/as"))
+            );
+        }
     }
 
     #[test]

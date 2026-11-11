@@ -61,6 +61,73 @@ pkg_sum = "2$89zgb5ogtnz9fs7ime1cgaad449cm1kd5f5c6yuei7t8p3wjn4pyarjrkt9pffc6iqm
 binutils = "2.44"
 cross_prefix = "/usr/local/x86_64-unknown-freebsd15.1/bin/"
 
+# The aarch64 and riscv64 rows (B7) build G with the same port, devel/freebsd-gcc15, in the flavor
+# of the row's TARGET_ARCH, and with the binutils of that flavor. The persona's reference
+# amd64-gcc15 becomes {TARGET_ARCH}-gcc15 on these rows.
+[toolchain.aarch64-gcc15]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "aarch64-gcc15"
+version = "15.2.0_1"
+origin = "devel/freebsd-gcc15"
+repopath = "All/Hashed/aarch64-gcc15-15.2.0_1~2$35wy8jyw.pkg"
+size = 48820425
+sha256 = "42c7b55724da60fb94ea6440aa3a45e3ae89922c8d7fbf57e7dda1e8c507ad8c"
+pkg_sum = "2$35wy8jywbj75azk1ctcgwwxi8qb1fqzzfagxy97dac7p8apqgu7mqcrz4kpebhechndn1amfnrn1s1h6jdfbk6tzcm7kcmy4hdsau5n"
+needs = ["aarch64-binutils"]
+gcc = "15.2.0"
+cc = "/usr/local/bin/aarch64-unknown-freebsd15.1-gcc15"
+cxx = "/usr/local/bin/aarch64-unknown-freebsd15.1-g++15"
+cpp = "/usr/local/bin/aarch64-unknown-freebsd15.1-cpp15"
+cross_toolchain = "aarch64-gcc15"
+
+[toolchain.aarch64-binutils]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "aarch64-binutils"
+version = "2.44,1"
+origin = "devel/binutils"
+repopath = "All/Hashed/aarch64-binutils-2.44,1~2$4wfbskdi.pkg"
+size = 2465292
+sha256 = "cfc339ff5971c75dcdc114a73c0044dd1e80baa4067865b4666482094134d70e"
+pkg_sum = "2$4wfbskdixr98gqa1xwiybtjw378fmioeccxpmhyqgwfrxr4je4ga4etj3da83rdcitn7cbuusdn6rfx3s7aa55drmmghtzx5bm1s6dy"
+binutils = "2.44"
+cross_prefix = "/usr/local/aarch64-unknown-freebsd15.1/bin/"
+
+[toolchain.riscv64-gcc15]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "riscv64-gcc15"
+version = "15.2.0_1"
+origin = "devel/freebsd-gcc15"
+repopath = "All/Hashed/riscv64-gcc15-15.2.0_1~2$9a4ucef6.pkg"
+size = 60160201
+sha256 = "de7c37e0ad3215b6e5f39bb7d572614a78ffc0cddbd399a4f093bd891a4ba4cc"
+pkg_sum = "2$9a4ucef6mchcgfqmwim3b45znwmubftyqd1e8osyexuj75sffn55uy9rriztmmofo7868pgcx6pcr9i68c4cgs3qmxuzqak8xjnxdrb"
+needs = ["riscv64-binutils"]
+gcc = "15.2.0"
+cc = "/usr/local/bin/riscv64-unknown-freebsd15.1-gcc15"
+cxx = "/usr/local/bin/riscv64-unknown-freebsd15.1-g++15"
+cpp = "/usr/local/bin/riscv64-unknown-freebsd15.1-cpp15"
+cross_toolchain = "riscv64-gcc15"
+
+[toolchain.riscv64-binutils]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "riscv64-binutils"
+version = "2.44,1"
+origin = "devel/binutils"
+repopath = "All/Hashed/riscv64-binutils-2.44,1~2$nyx4nsii.pkg"
+size = 2307305
+sha256 = "6c65e91e491dff85c4401b52afa6ef3401cac499297b2158d8141d04f9d9bb99"
+pkg_sum = "2$nyx4nsiiqzp5g8ypwpsdgcahyyyquk7eb19s4u3t3r8c8bk7aprsahab7jin33g1xz6pa41dke7ujqommgyapqa7utnd9n69d1wdd1d"
+binutils = "2.44"
+cross_prefix = "/usr/local/riscv64-unknown-freebsd15.1/bin/"
+
 [toolchain.netbsd-current-tools]
 system = "netbsd"
 kind = "build.sh tools"
