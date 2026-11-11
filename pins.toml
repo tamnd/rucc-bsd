@@ -1,8 +1,9 @@
 # Written by `rb sets --write` from sets.toml and what the projects publish (plan 04.5).
-# Do not edit by hand. A branch pin with reference = "good" keeps its commit under
-# pin_policy.head = "last-g-good" until the reference builds and boots a newer one (04.6).
+# Do not edit by hand. A branch pin is reference = "good" at a commit with a complete baseline
+# under baselines/. Under pin_policy.head = "last-g-good" it keeps that commit until the
+# reference builds and boots a newer one (04.6).
 
-as_of = "2026-11-08T06:00:00Z"
+as_of = "2026-11-11T13:07:46Z"
 
 [[pin]]
 name = "freebsd-main"
@@ -14,10 +15,10 @@ version = "16.0-CURRENT"
 cadence = "nightly"
 repo = "https://github.com/freebsd/freebsd-src"
 branch = "main"
-commit = "665afd2a9d6469ce692de4018c7c015a194c201d"
-date = "2026-11-08T01:36:05Z"
-head = "665afd2a9d6469ce692de4018c7c015a194c201d"
-head_date = "2026-11-08T01:36:05Z"
+commit = "ff3f704d922a7e0c8c32525fa0ebfc5a6e397160"
+date = "2026-11-11T11:30:54Z"
+head = "ff3f704d922a7e0c8c32525fa0ebfc5a6e397160"
+head_date = "2026-11-11T11:30:54Z"
 reference = "untried"
 
 [[pin]]
@@ -30,10 +31,10 @@ version = "15.2-STABLE"
 cadence = "nightly"
 repo = "https://github.com/freebsd/freebsd-src"
 branch = "stable/15"
-commit = "77fa63fa43fc8df1cfb86476b9caff24d10de6bc"
-date = "2026-11-08T04:09:31Z"
-head = "77fa63fa43fc8df1cfb86476b9caff24d10de6bc"
-head_date = "2026-11-08T04:09:31Z"
+commit = "b157e1ca547d6cd354f06680a5f204f206df6ffa"
+date = "2026-11-10T19:53:57Z"
+head = "b157e1ca547d6cd354f06680a5f204f206df6ffa"
+head_date = "2026-11-10T19:53:57Z"
 reference = "untried"
 eol = "2029-12-31"
 
@@ -47,11 +48,12 @@ version = "14.5-STABLE"
 cadence = "nightly"
 repo = "https://github.com/freebsd/freebsd-src"
 branch = "stable/14"
-commit = "8679d115a00f361be298a4ce78f5ab87b201650d"
-date = "2026-11-07T14:08:23Z"
-head = "8679d115a00f361be298a4ce78f5ab87b201650d"
-head_date = "2026-11-07T14:08:23Z"
-reference = "untried"
+commit = "bb8232686523e05bfc37f4e564b45ca640793b59"
+date = "2026-11-11T07:06:33Z"
+head = "bb8232686523e05bfc37f4e564b45ca640793b59"
+head_date = "2026-11-11T07:06:33Z"
+reference = "no-ref"
+reason = "no G-good commit with amd64-gcc15; GCC 14 candidate 2192d42bbcde (#85)"
 eol = "2028-11-30"
 
 [[pin]]
@@ -64,10 +66,10 @@ version = "15.2-BETA1"
 cadence = "nightly"
 repo = "https://github.com/freebsd/freebsd-src"
 branch = "releng/15.2"
-commit = "26321b7ee3409dee08b704cac9e989353288496a"
-date = "2026-11-07T02:28:57Z"
-head = "26321b7ee3409dee08b704cac9e989353288496a"
-head_date = "2026-11-07T02:28:57Z"
+commit = "61b5fa09db8d95e38f795366135b5b13ebbd4f3b"
+date = "2026-11-10T20:51:19Z"
+head = "61b5fa09db8d95e38f795366135b5b13ebbd4f3b"
+head_date = "2026-11-10T20:51:19Z"
 reference = "untried"
 
 [[pin]]
@@ -122,9 +124,9 @@ repo = "https://github.com/NetBSD/src"
 branch = "trunk"
 commit = "3c50f59789893ab1f71051686347e79c7b2e8327"
 date = "2026-11-08T21:31:26Z"
-head = "3c50f59789893ab1f71051686347e79c7b2e8327"
-head_date = "2026-11-08T21:31:26Z"
-reference = "untried"
+head = "863679ad765f0bc9eeba85cd6f1cdc545422e567"
+head_date = "2026-11-11T00:45:59Z"
+reference = "good"
 gcc = "14.4.0"
 
 [[pin]]

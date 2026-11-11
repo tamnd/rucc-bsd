@@ -3,6 +3,9 @@
 
 [freebsd.current]
 branches = ["main", "stable/15", "stable/14"]
+# A branch here has no reference. rb sets pins it at its head with reference = "no-ref" and the
+# reason, and does not grade it (04.6). stable/14 left the graded branches by the decision on #1.
+no_ref = { "stable/14" = "no G-good commit with amd64-gcc15; GCC 14 candidate 2192d42bbcde (#85)" }
 releng_in_progress = true           # releng/X.Y while ALPHA, BETA or RC
 nightly = true
 

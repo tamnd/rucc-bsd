@@ -127,6 +127,8 @@ Rucc cannot be graded on a head the reference cannot build. So:
 
 B0's first measurement is whether the FreeBSD heads have a G-good commit at all within the last 60 days (open question 1).
 
+B0 found G-good commits on `main` and `stable/15`, and none on `stable/14` with `amd64-gcc15`. `freebsd-g` cannot select the `amd64-gcc14` fallback yet (#85). So `sets.toml` names `stable/14` under `freebsd.current.no_ref` with the reason. `rb sets` pins a branch there at its head with `reference = "no-ref"` and the reason, and no baseline makes it good, until the entry is removed.
+
 ## 04.7 The calendar ahead
 
 | Date | Event | Effect |

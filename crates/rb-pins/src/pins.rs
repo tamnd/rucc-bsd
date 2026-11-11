@@ -68,9 +68,13 @@ pub struct Pin {
     /// The committer date of `head`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head_date: Option<String>,
-    /// For a branch: `untried` until a baseline runs, then `good` or `failed`.
+    /// For a branch: `untried` until a baseline runs, then `good` or `failed`. `no-ref` when
+    /// `sets.toml` says the branch has no reference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    /// Why a `no-ref` branch has no reference, from `sets.toml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     /// For NetBSD: the in-tree GCC from `BASE-VER`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gcc: Option<String>,
