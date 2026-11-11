@@ -1,0 +1,141 @@
+# Some ATF directories many times with the G kernel and with the R kernel (milestone B3), to tell a
+# kernel difference from a case that fails only at times.
+#
+# Both sides boot an image of an earlier run, with the same G world:
+#   G  netbsd-amd64-serial-image of the netbsd-g run g_run.
+#   R  netbsd-r-amd64-serial-image of the netbsd-r run r_run, which used g_run as its world.
+# Each side boots twice, on two runners. Each boot runs the directories of tests (under /usr/tests,
+# such as net/carp) repeat times, with rb boot --tests-repeat. rb boot --scripts puts the suite
+# scripts of this rb on the results disk, because the images can have older ones, which do not
+# know directories under the top or a repeat.
+#
+# The report job puts the table of scripts/netbsd/atf-repeat.py in the step summary: for each case
+# that did not pass every time, how many times it passed on each side.
+
+name: netbsd-loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      r_run:
+        description: A netbsd-r run with g_run as its world, whose GENERIC image to boot
+        required: true
+      g_run:
+        description: The netbsd-g run whose image to boot
+        required: true
+      tests:
+        description: Directories under /usr/tests, separated by commas
+        default: net/carp,net/ndp
+      repeat:
+        description: How many times each boot runs the directories
+        default: "10"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+
+# actions: read lets the jobs download the artifacts of the other runs.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  rb:
+    name: cargo build rb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rb-linux-x86_64
+          path: target/release/rb
+          retention-days: 7
+
+  boot:
+    name: ${{ matrix.side }} kernel, boot ${{ matrix.boot }}
+    needs: rb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [G, R]
+        boot: [1, 2]
+        include:
+          - side: G
+            image: netbsd-amd64-serial-image
+          - side: R
+            image: netbsd-r-amd64-serial-image
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: ${{ matrix.image }}
+          path: ${{ runner.temp }}/image
+          run-id: ${{ matrix.side == 'G' && inputs.g_run || inputs.r_run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: rb boot with the directories, repeat times
+        run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          gz=$(ls "$RUNNER_TEMP"/image/*.img.gz)
+          gzip -d "$gz"
+          img=${gz%.gz}
+          truncate -s 12G "$img"
+          "$RUNNER_TEMP/rb/rb" boot --image "$img" --out "$RUNNER_TEMP/loop" \
+            --suite boot,tests --tests-only "$TESTS" --tests-repeat "$REPEAT" --scripts \
+            --timeout 16000 | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f "$img"
+        env:
+          TESTS: ${{ inputs.tests }}
+          REPEAT: ${{ inputs.repeat }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-loop-${{ matrix.side }}-${{ matrix.boot }}
+          path: ${{ runner.temp }}/loop
+          retention-days: 30
+
+  report:
+    name: report
+    needs: boot
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: netbsd-loop-*
+          path: loop
+      - name: the cases that did not pass every time
+        run: |
+          shopt -s nullglob
+          g=(loop/netbsd-loop-G-*)
+          r=(loop/netbsd-loop-R-*)
+          {
+            echo "### $TESTS, $REPEAT times in each boot (G run $G_RUN, R run $R_RUN)"
+            echo
+            python3 scripts/netbsd/atf-repeat.py --side G "${g[@]}" --side R "${r[@]}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          TESTS: ${{ inputs.tests }}
+          REPEAT: ${{ inputs.repeat }}
+          G_RUN: ${{ inputs.g_run }}
+          R_RUN: ${{ inputs.r_run }}

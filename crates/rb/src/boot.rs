@@ -450,10 +450,11 @@ pub fn login_command() -> String {
 }
 
 /// The results disk before the boot: an archive with the `rb.conf`, and room after it. With
-/// `login`, the archive also has rb-rc's scripts, for an image that does not have them.
+/// `login`, the archive also has rb-rc's scripts, for an image that does not have them. With
+/// [`RbConf::scripts_on_disk`] it has them too, for an image whose scripts are older than rb's.
 pub fn results_disk(conf: &RbConf, size: u64, login: bool) -> Result<Vec<u8>, String> {
     let mut entries = vec![ustar::Entry::file("rb.conf", 0o644, conf.render())];
-    if login {
+    if login || conf.scripts_on_disk {
         entries.push(ustar::Entry::dir("rb"));
         for (name, text) in [
             ("run", rb_image::guest::RUN),
@@ -1234,10 +1235,16 @@ pub mod cli {
         let firmware = firmware(args, firmware_name)?;
         let kvm = row.accel.as_deref() == Some("kvm") && kvm(&qemu);
         let hours = row.run_limit_hours.unwrap_or(4);
+        let repeat: u32 = number(args, "tests-repeat", 1)?;
+        let tests_only = list(args, "tests-only");
+        if repeat == 0 || (repeat != 1 && tests_only.is_empty()) {
+            return Err("--tests-repeat N needs --tests-only and N of 1 or more".to_string());
+        }
         let conf = RbConf {
             suites: parse_suites(args.get("suite").unwrap_or("boot"))?,
-            tests_only: list(args, "tests-only"),
+            tests_only: (0..repeat).flat_map(|_| tests_only.clone()).collect(),
             tests_except: list(args, "tests-except"),
+            scripts_on_disk: args.has("scripts"),
             ..RbConf::default()
         };
         Ok(Request {
@@ -1334,9 +1341,56 @@ pub mod cli {
             assert_eq!((req.boot_timeout, req.timeout), (600, 4 * 3600));
             assert_eq!(req.conf.suites, ["boot", "smoke"]);
             assert_eq!(req.conf.tests_only, ["sys", "lib"]);
+            assert!(!req.conf.scripts_on_disk);
             let req = request(&a, &rows(), |_| false).unwrap();
             assert!(!req.kvm);
             assert_eq!(req.boot_timeout, 1800);
+
+            let words = [
+                "boot",
+                "--image",
+                "i",
+                "--out",
+                "o",
+                "--tests-only",
+                "net/carp,net/ndp",
+                "--tests-repeat",
+                "2",
+                "--scripts",
+            ];
+            let req = request(&args(&words), &rows(), |_| true).unwrap();
+            assert_eq!(
+                req.conf.tests_only,
+                ["net/carp", "net/ndp", "net/carp", "net/ndp"]
+            );
+            assert!(req.conf.scripts_on_disk);
+            let disk = crate::boot::results_disk(&req.conf, 1 << 20, false).unwrap();
+            let names: Vec<String> = rb_image::ustar::read(&disk)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.path)
+                .collect();
+            assert!(names.iter().any(|n| n == "rb/tests"), "{names:?}");
+            for bad in [
+                &words[..5],
+                &[
+                    "boot",
+                    "--image",
+                    "i",
+                    "--out",
+                    "o",
+                    "--tests-only",
+                    "net",
+                    "--tests-repeat",
+                    "0",
+                ][..],
+            ] {
+                let mut w = bad.to_vec();
+                if w.len() == 5 {
+                    w.extend(["--tests-repeat", "2"]);
+                }
+                assert!(request(&args(&w), &rows(), |_| true).is_err(), "{w:?}");
+            }
 
             let a = args(&[
                 "boot",

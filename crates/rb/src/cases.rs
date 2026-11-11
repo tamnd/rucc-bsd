@@ -157,20 +157,44 @@ pub fn read_run(boot: &str, results: &Path) -> Result<Vec<Case>, String> {
     }
     let atf = results.join("tests/atf");
     if atf.is_dir() {
-        let mut files: Vec<_> = std::fs::read_dir(&atf)
-            .map_err(|e| format!("{}: {e}", atf.display()))?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "tps"))
-            .collect();
-        files.sort();
-        for file in files {
-            let dir = file.file_stem().unwrap_or_default().to_string_lossy();
+        for (dir, file) in tps_files(&atf)? {
             let text = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
             cases.extend(tps(&String::from_utf8_lossy(&text), &dir));
         }
     }
     Ok(cases)
+}
+
+/// The `.tps` files under `atf`, sorted, each with the test directory it is the output of: its
+/// path under `atf` with no `.tps`, and with no `@N` when it is run N of a directory that ran
+/// more than once. So `net/carp@2.tps` is the second run of `net/carp`.
+fn tps_files(atf: &Path) -> Result<Vec<(String, std::path::PathBuf)>, String> {
+    let mut out = Vec::new();
+    let mut stack = vec![atf.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+            let path = entry.map_err(|e| format!("{}: {e}", dir.display()))?.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let Some(rel) = path
+                .strip_prefix(atf)
+                .ok()
+                .and_then(|p| p.to_str())
+                .and_then(|p| p.strip_suffix(".tps"))
+            else {
+                continue;
+            };
+            let name = match rel.rsplit_once('@') {
+                Some((d, n)) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => d,
+                _ => rel,
+            };
+            out.push((name.to_string(), path.clone()));
+        }
+    }
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    Ok(out)
 }
 
 /// How many cases of each suite had each result.
@@ -365,6 +389,29 @@ tc-start: 1762671604.000000, cut
         // A run with no results has only its boot case.
         let cases = read_run("panic", &dir.join("none")).unwrap();
         assert_eq!(short(&cases), [("boot".into(), "panic".into(), None)]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_directory_under_the_top_and_its_runs() {
+        let dir = std::env::temp_dir().join(format!("rb-cases-sub-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("tests/atf/net")).unwrap();
+        let tps =
+            |r: &str| format!("tp-start: 1.0, t_basic, 1\ntc-start: 1.0, a\ntc-end: 2.0, a, {r}\n");
+        std::fs::write(dir.join("tests/atf/net/carp.tps"), tps("passed")).unwrap();
+        std::fs::write(dir.join("tests/atf/net/carp@2.tps"), tps("failed")).unwrap();
+        std::fs::write(dir.join("tests/atf/usr.bin.tps"), tps("passed")).unwrap();
+        std::fs::write(dir.join("tests/atf/net/carp.xml"), "").unwrap();
+        let cases = read_run("passed", &dir).unwrap();
+        assert_eq!(
+            short(&cases)[1..],
+            [
+                ("net/carp/t_basic:a".into(), "passed".into(), Some(1.0)),
+                ("net/carp/t_basic:a".into(), "failed".into(), Some(1.0)),
+                ("usr.bin/t_basic:a".into(), "passed".into(), Some(1.0)),
+            ]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

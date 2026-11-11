@@ -4,6 +4,7 @@
 use rb_image::conf::RbConf;
 use rb_image::guest;
 use rb_image::ustar::{self, Entry};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -125,6 +126,39 @@ fn suites_from_the_disk() {
 }
 
 #[test]
+fn scripts_from_the_disk() {
+    let mut conf = RbConf {
+        poweroff: false,
+        ..RbConf::default()
+    };
+    let rig = Rig::new("scripts", &conf);
+    conf.disk = Some(rig.disk().display().to_string());
+    std::fs::write(rig.root.join("etc/rb.conf"), conf.render()).unwrap();
+    // The disk asks for the tests suite with its own script, which the image does not have.
+    let mut boot = conf.clone();
+    boot.suites = vec!["boot".into(), "tests".into()];
+    boot.scripts_on_disk = true;
+    let tests =
+        "#!/bin/sh\nmkdir -p \"$1\"\necho RB-CASE from/the:disk\necho 1/1 > \"$1/counts\"\n";
+    let mut disk = ustar::write(&[
+        Entry::file("rb.conf", 0o644, boot.render()),
+        Entry::dir("rb"),
+        Entry::file("rb/tests", 0o555, tests.to_string()),
+    ])
+    .unwrap();
+    disk.resize(1 << 20, 0);
+    std::fs::write(rig.disk(), &disk).unwrap();
+
+    let console = rig.run();
+    assert!(console.contains("RB-CASE from/the:disk\n"), "{console}");
+    assert!(!console.contains("RB-CASE kern/t_x:t"), "{console}");
+    assert!(
+        console.ends_with("RB-DONE boot=pass tests=1/1 archive=disk\n"),
+        "{console}"
+    );
+}
+
+#[test]
 fn an_empty_disk_keeps_the_image_conf() {
     let mut conf = RbConf {
         poweroff: false,
@@ -237,5 +271,56 @@ fn host_tar() {
     let got = read_disk(&root.join("out.tar"));
     assert_eq!(find(&got, "counts"), "1/1\n");
     assert_eq!(find(&got, &format!("{deep}/f")), "deep\n");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// tests.sh on NetBSD, with a stub atf-run: a directory under the top, run twice.
+#[test]
+fn tests_under_the_top_and_again() {
+    let root = std::env::temp_dir().join(format!("rb-image-tests-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("usr/tests/net/carp")).unwrap();
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    std::fs::write(root.join("usr/tests/Atffile"), "tp: net\n").unwrap();
+    let script = root.join("tests");
+    std::fs::write(&script, guest::TESTS).unwrap();
+    let atf_run = root.join("bin/atf-run");
+    std::fs::write(
+        &atf_run,
+        "#!/bin/sh\nprintf 'tp-start: 1.0, t_basic, 1\\ntc-start: 1.0, a\\ntc-end: 2.0, a, passed\\n'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&atf_run, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        root.join("bin").display(),
+        std::env::var("PATH").unwrap()
+    );
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("out"))
+        .env("PATH", path)
+        .env("RB_TESTS", root.join("usr/tests"))
+        .env("rb_tests_only", "net/carp net/carp")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        console.matches("RB-CASE net/carp/t_basic:a").count(),
+        2,
+        "{console}"
+    );
+    let atf = root.join("out/atf");
+    for f in ["net/carp.tps", "net/carp@2.tps"] {
+        assert!(atf.join(f).is_file(), "no {f}");
+    }
+    let status = std::fs::read_to_string(atf.join("status")).unwrap();
+    let dirs: Vec<&str> = status.lines().filter_map(|l| l.split(' ').next()).collect();
+    assert_eq!(dirs, ["net/carp", "net/carp@2"]);
+    assert_eq!(
+        std::fs::read_to_string(root.join("out/counts")).unwrap(),
+        "2/2\n"
+    );
     std::fs::remove_dir_all(&root).unwrap();
 }

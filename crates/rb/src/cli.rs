@@ -136,6 +136,7 @@ fn boot_commands(command: &str) -> Option<Accepts> {
                 "firmware",
                 "tests-only",
                 "tests-except",
+                "tests-repeat",
                 "boot-timeout",
                 "timeout",
                 "reboots",
@@ -150,7 +151,7 @@ fn boot_commands(command: &str) -> Option<Accepts> {
                 "edk2-vars",
                 "u-boot",
             ],
-            switches: &["in-place", "keep", "login", "dry-run"],
+            switches: &["in-place", "keep", "login", "scripts", "dry-run"],
         },
         _ => return None,
     })
@@ -320,17 +321,21 @@ usage:
       of its shards with '+', as in --from smoke+net+lib. Exits 1 when a run did not pass.
   rb boot --image IMG --out DIR [--suite boot,smoke,tests] [--row ROW]
           [--firmware ovmf|seabios|edk2|u-boot]
-          [--tests-only DIR,...] [--tests-except DIR,...] [--boot-timeout SECS] [--timeout SECS]
+          [--tests-only DIR,...] [--tests-except DIR,...] [--tests-repeat N]
+          [--boot-timeout SECS] [--timeout SECS]
           [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
           [--qemu PATH] [--ovmf-code FILE --ovmf-vars FILE] [--edk2-code FILE --edk2-vars FILE]
-          [--u-boot FILE] [--in-place] [--keep] [--login] [--dry-run]
+          [--u-boot FILE] [--in-place] [--keep] [--login] [--scripts] [--dry-run]
       Boot an image once under QEMU, on a qcow2 overlay so the image does not change. The second
       disk holds an rb.conf with the suites, boot by default, and rb-rc writes its results back
       to it. The console goes to DIR/console.log. rb waits for RB-READY or a login prompt for
       SECS, the row's boot_limit_seconds, else 600 under KVM and 1800 under TCG, then for RB-DONE
       until the row's run limit. With --login, for an image with no rb-rc such as a release
       image, rb logs in as root at the login prompt and starts rb-rc from the results disk,
-      which then also holds rb-rc's scripts, and it waits for RB-READY. On a panic it
+      which then also holds rb-rc's scripts, and it waits for RB-READY. With --scripts, the
+      results disk holds the suite scripts of this rb, and rb-rc runs them and not the image's.
+      On NetBSD a directory of --tests-only can be under the top, such as net/carp, and
+      --tests-repeat N runs the directories of --tests-only N times. On a panic it
       sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
       DIR/boot.json. ROW is amd64 by default, and the firmware is the row's test firmware.
       edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then the S-mode U-Boot of
