@@ -1,0 +1,89 @@
+# Written by rb baseline (plan 12.5). Do not edit by hand. baselines/README.md has the format.
+
+pin = "netbsd-trunk"
+system = "netbsd"
+version = "11.99.10"
+commit = "3c50f59789893ab1f71051686347e79c7b2e8327"
+row = "amd64"
+conf = "graded"
+made = "2026-11-11T13:02:33Z"
+image = "netbsd-amd64-serial.img"
+image_sha256 = "49a577996798bea2d10aba10f11b832befd2e4aba0603890ae1f222f84747d01"
+suites = ["boot", "smoke", "tests"]
+runs = 3
+complete = true
+cases = 11630
+stable_pass = 10910
+g_unstable = 720
+
+[[run]]
+n = 1
+result = "pass"
+passed = true
+seconds = 7098.0
+firmware = "ovmf"
+accel = "kvm"
+restarts = 3
+cases = 11644
+
+[run.counts.boot]
+passed = 3
+
+[run.counts.smoke]
+passed = 15
+skipped = 3
+
+[run.counts.tests]
+expected_failure = 111
+expected_signal = 29
+failed = 16
+passed = 10905
+skipped = 562
+
+[[run]]
+n = 2
+result = "pass"
+passed = true
+seconds = 7327.4
+firmware = "ovmf"
+accel = "kvm"
+restarts = 3
+cases = 11644
+
+[run.counts.boot]
+passed = 3
+
+[run.counts.smoke]
+passed = 15
+skipped = 3
+
+[run.counts.tests]
+expected_failure = 111
+expected_signal = 29
+failed = 16
+passed = 10905
+skipped = 562
+
+[[run]]
+n = 3
+result = "pass"
+passed = true
+seconds = 7142.4
+firmware = "ovmf"
+accel = "kvm"
+restarts = 3
+cases = 11644
+
+[run.counts.boot]
+passed = 3
+
+[run.counts.smoke]
+passed = 15
+skipped = 3
+
+[run.counts.tests]
+expected_failure = 111
+expected_signal = 29
+failed = 15
+passed = 10906
+skipped = 562

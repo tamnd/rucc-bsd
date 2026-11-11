@@ -1,0 +1,182 @@
+# The kernel messages of 3 runs, with the numbers that change replaced by #.
+# runs	message
+3	#, #, #
+3	#, #, #, #, #, #, #, #, #, #,
+3	/dev/fss0: file system not clean (fs_clean=0x#); please fsck(8)
+3	ACPI: 1 ACPI AML tables successfully acquired and loaded
+3	ACPI: APIC 0x# # (v03 BOCHS  BXPC     # BXPC #)
+3	ACPI: BGRT 0x# # (v01 INTEL  EDK2     #      #)
+3	ACPI: DSDT 0x# #B (v01 BOCHS  BXPC     # BXPC #)
+3	ACPI: Enabled 2 GPEs in block 00 to 3F
+3	ACPI: FACP 0x# #F4 (v03 BOCHS  BXPC     # BXPC #)
+3	ACPI: FACS 0x# #
+3	ACPI: HPET 0x# # (v01 BOCHS  BXPC     # BXPC #)
+3	ACPI: MCFG 0x# #C (v01 BOCHS  BXPC     # BXPC #)
+3	ACPI: RSDP 0x# # (v02 BOCHS )
+3	ACPI: WAET 0x# # (v01 BOCHS  BXPC     # BXPC #)
+3	ACPI: XSDT 0x# # (v01 BOCHS  BXPC     #      #)
+3	Copyright (c) #, #, #, #, #
+3	Copyright (c) #, #, #, #, #, #, #, #,
+3	DRAC (PNP0C01) at acpi0 not configured
+3	IPsec: Initialized Security Association Processing.
+3	Kernelized RAIDframe activated
+3	MPACPI PCI bus number 0 exceeds mpacpi_maxpci 0
+3	NetBSD # (GENERIC) #0: Tue Nov 10 06:52:50 UTC #
+3	The NetBSD Foundation, Inc.  All rights reserved.
+3	The Regents of the University of California.  All rights reserved.
+3	WARNING: 3 errors while detecting hardware; check system log.
+3	WARNING: module error: Incompatible module class 1 for `nvmm' (wanted 3)
+3	WARNING: module error: Module `' not found
+3	WARNING: module error: Module `k_helper' not found
+3	WARNING: module error: Module `k_helper.kmod' not found
+3	WARNING: module error: Module `k_helper2' not found
+3	WARNING: module error: Module `k_uvm' not found
+3	WARNING: module error: Module `non-existent.kmod' not found
+3	WARNING: pid # (t_futex_robust) lwp #: exhausted robust futex limit
+3	WARNING: pid # (t_futex_robust) lwp #: unmapped robust futex list head
+3	ZFS filesystem version: 5
+3	acpi0 at mainbus0: Intel ACPICA #
+3	acpi0: MCFG: segment 0, bus 0-#, address 0x#
+3	acpi0: SCI interrupting at int 9
+3	acpi0: X/RSDT: OemId <BOCHS ,BXPC    ,#>, AslId <    ,#>
+3	acpi0: fixed power button present
+3	acpicpu0 at cpu0: ACPI CPU
+3	acpicpu0: C1: HLT, lat   0 us, pow     0 mW
+3	acpicpu1 at cpu1: ACPI CPU
+3	agp0 at pchb0autoconfiguration error: : can't find internal VGA config space
+3	ahcisata0 at pci0 dev 31 function 2: Intel #I AHCI SATA Controller w/ 6 ports (rev. 0x#)
+3	ahcisata0 port 2: device present, speed: #Gb/s
+3	ahcisata0: 64-bit DMA
+3	ahcisata0: AHCI revision #, 6 ports, 32 slots, CAP 0x#<SAM,ISS=0x#=Gen1,SNCQ,S64A>
+3	ahcisata0: interrupting at msi3 vec 0
+3	atabus0 at ahcisata0 channel 0
+3	atabus1 at ahcisata0 channel 1
+3	atabus2 at ahcisata0 channel 2
+3	atabus3 at ahcisata0 channel 3
+3	atabus4 at ahcisata0 channel 4
+3	atabus5 at ahcisata0 channel 5
+3	atapibus0 at atabus2: 1 targets
+3	attimer0 at isa0 port 0x#-0x#
+3	attimer0: attached to pcppi0
+3	audio0 at pad0: playback
+3	audio0: detached
+3	audio0: slinear_le:16 -> slinear_le:16 2ch #Hz, blk # bytes (10ms) for playback
+3	avail memory = # MB
+3	boot device: ld0
+3	cd0 at atapibus0 drive 0: <QEMU DVD-ROM, QM#, #+> cdrom removable
+3	cd0(ahcisata0:2:0): using PIO mode 4, DMA mode 2, Ultra-DMA mode 5 (Ultra/#) (using DMA), NCQ (31 tags)
+3	cd0: drive supports PIO mode 4, DMA mode 2, Ultra-DMA mode 5 (Ultra/#), NCQ (32 tags)
+3	check_exec: rejecting due to data limit (# > 0)
+3	com0 at acpi0 (COM1, PNP#-1): io 0x#-0x# irq 4
+3	com0: console
+3	com0: ns#a, 16-byte FIFO
+3	cpu0 at mainbus0 apid 0
+2	cpu0: AMD EPYC # 64-Core Processor                , id 0x#
+1	cpu0: AMD EPYC 9V45 96-Core Processor                , id 0x#
+2	cpu0: AMD EPYC 9V74 80-Core Processor                , id 0x#
+1	cpu0: Intel(R) Xeon(R) Platinum #C CPU @ #GHz, id 0x#
+1	cpu0: Use lfence to serialize rdtsc
+3	cpu0: Use mfence to serialize rdtsc
+3	cpu0: node 0, package 0, core 0, smt 0
+3	cpu1 at mainbus0 apid 1
+2	cpu1: AMD EPYC # 64-Core Processor                , id 0x#
+1	cpu1: AMD EPYC 9V45 96-Core Processor                , id 0x#
+2	cpu1: AMD EPYC 9V74 80-Core Processor                , id 0x#
+1	cpu1: Intel(R) Xeon(R) Platinum #C CPU @ #GHz, id 0x#
+3	cpu1: node 0, package 0, core 1, smt 0
+3	dk0 at ld0: "EFI system", # blocks at #, type: msdos
+3	dk1 at ld0: "NBImgRoot", # blocks at #, type: ffs
+3	drm at genfb0 not configured
+3	efi: systbl at pa 7f9ec#
+3	genfb0 at pci0 dev 1 function 0: vendor # product # (rev. 0x#)
+3	genfb0: framebuffer at 0x#, size #x#, depth 32, stride #
+3	hpet0 at acpi0: high precision event timer (mem 0x#-0x#)
+3	ichlpcib0 at pci0 dev 31 function 0: Intel #IB LPC Interface Bridge (rev. 0x#)
+3	ichlpcib0: 24-bit timer
+3	ichsmb0 at pci0 dev 31 function 3: Intel #I SMBus Controller (rev. 0x#)
+3	ichsmb0: autoconfiguration error: SMBus disabled
+3	ioapic0 at mainbus0 apid 0: pa 0x#, version 0x#, 24 pins
+3	isa0 at ichlpcib0
+3	kern.module.path=/stand/amd64/#/modules
+3	ld0 at virtio0: features: 0x#<INDIRECT_DESC,DISCARD,CONFIG_WCE,TOPOLOGY,FLUSH,BLK_SIZE,GEOMETRY,SEG_MAX>
+3	ld0: # MB, # cyl, 16 head, 63 sec, # bytes/sect x # sectors
+3	ld0: GPT GUID: 1d#f3-#-#e-bfee-#a#e07
+3	ld0: Unknown SIZE_MAX, assuming #
+3	ld0: max # segs of max # bytes
+3	ld1 at virtio1: features: 0x#<INDIRECT_DESC,DISCARD,CONFIG_WCE,TOPOLOGY,FLUSH,BLK_SIZE,GEOMETRY,SEG_MAX>
+3	ld1: # MB, # cyl, 16 head, 63 sec, # bytes/sect x # sectors
+3	ld1: Unknown SIZE_MAX, assuming #
+3	ld1: max # segs of max # bytes
+3	lpt0 at acpi0 (LPT1, PNP#-1): io 0x#-0x# irq 7
+3	lua0: Lua #  Copyright (C) #-# Lua.org, PUC-Rio
+3	lua0: detached
+3	mainbus0 (root)
+3	midi0 at pcppi0: PC speaker
+3	pad0: detached
+3	pad0: outputs: #Hz, 16-bit, stereo
+3	pchb0 at pci0 dev 0 function 0: Intel 82G33/P35 Host Bridge (rev. 0x#)
+3	pci0 at mainbus0 bus 0: configuration mode 1
+3	pci0: i/o space, memory space enabled, rd/line, rd/mult, wr/inv ok
+3	pckbc1 at acpi0 (KBD, PNP#) (kbd port): io 0x#,0x# irq 1
+3	pckbc1: using irq 1 for kbd slot
+3	pckbc1: using irq 12 for aux slot
+3	pckbc2 at acpi0 (MOU, PNP0F13) (aux port): irq 12
+3	pckbd0 at pckbc1 (kbd slot)
+3	pcppi0 at isa0 port 0x#
+3	pid # was killed: orphaned traced process
+3	pms0 at pckbc1 (aux slot)
+3	qemufwcfg0 at acpi0 (FWCF, QEMU#): io 0x#-0x#
+3	qemufwcfg0: <QEMU>
+3	root file system type: ffs
+3	root on dk1
+3	runner@runnervm7aw5e:/mnt/nb/obj/sys/arch/amd64/compile/GENERIC
+3	setjmp_tester_subroutine: call longjmp
+3	setjmp_tester_test: setjmp returned 0 at first
+3	setjmp_tester_test: setjmp returned 1 at second
+3	spkr0 at pcppi0: PC Speaker
+3	spkr1 at audio0: PC Speaker (synthesized)
+3	spkr1: detached
+3	swwdog0: software watchdog initialized
+3	sysbeep0 at pcppi0
+3	tco0 at ichlpcib0: TCO (watchdog) timer configured.
+3	tco0: Min/Max interval 1/# seconds
+3	timecounter: Timecounter "ACPI-Fast" frequency # Hz quality #
+3	timecounter: Timecounter "clockinterrupt" frequency # Hz quality 0
+3	timecounter: Timecounter "hpet0" frequency # Hz quality #
+3	timecounter: Timecounter "i#" frequency # Hz quality #
+3	timecounter: Timecounter "ichlpcib0" frequency # Hz quality #
+3	timecounter: Timecounters tick every # msec
+3	total memory = # MB
+3	vioif0 at virtio2: features: 0x#<EVENT_IDX,INDIRECT_DESC,NOTIFY_ON_EMPTY,CTRL_MAC,CTRL_RX,CTRL_VQ,STATUS,MAC>
+3	vioif0: Ethernet address 52:54:00:12:34:56
+3	virtio0 at pci0 dev 2 function 0
+3	virtio0: allocated # byte for virtqueue 0 for I/O request, size #
+3	virtio0: block device (id 2, rev. 0x#)
+3	virtio0: config interrupting at msix0 vec 0
+3	virtio0: queues interrupting at msix0 vec 1
+3	virtio0: using # byte (# entries) indirect descriptors
+3	virtio1 at pci0 dev 3 function 0
+3	virtio1: allocated # byte for virtqueue 0 for I/O request, size #
+3	virtio1: block device (id 2, rev. 0x#)
+3	virtio1: config interrupting at msix1 vec 0
+3	virtio1: queues interrupting at msix1 vec 1
+3	virtio1: using # byte (# entries) indirect descriptors
+3	virtio2 at pci0 dev 4 function 0
+3	virtio2: allocated # byte for virtqueue 0 for rx0, size #
+3	virtio2: allocated # byte for virtqueue 1 for tx0, size #
+3	virtio2: allocated # byte for virtqueue 2 for control, size 64
+3	virtio2: config interrupting at msix2 vec 0
+3	virtio2: network device (id 1, rev. 0x#)
+3	virtio2: queues interrupting at msix2 vec 1
+3	virtio2: using # byte (# entries) indirect descriptors
+3	vmt0 at cpu0
+3	vmt0: UUID: #-#-#-#-#
+3	vmt0: autoconfiguration error: failed to open backdoor RPC channel (TCLO protocol)
+3	vmware: open failed, eax=0x#, ecx=0x#, edx=0x#
+3	wsbell at spkr0 not configured
+3	wsbell at spkr1 not configured
+3	wsdisplay0 at genfb0 kbdmux 1
+3	wskbd0 at pckbd0 mux 1
+3	wskbd0: connecting to wsdisplay0
+3	wsmouse0 at pms0 mux 0
+3	wsmux1: connecting to wsdisplay0
