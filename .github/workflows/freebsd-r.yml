@@ -31,7 +31,8 @@
 # with rucc.mk (no -k), puts it into the image of the last good freebsd-g run in place of the G
 # kernel (scripts/freebsd/r-image.sh), and the boot job boots that image by BIOS and by UEFI with
 # the smoke suite and kyua, as freebsd-g does. The input boot changes this: ref puts the control
-# kernel into the image, which tests the steps, and none boots nothing.
+# kernel into the image, which tests the steps, and none boots nothing. The record has that kernel
+# as kernel.xz, with its symbol table, so that the address of a panic gives a function.
 #
 # scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
 # and the step summary shows the groups. rucc is built from the head of tamnd/rucc main, or from the
@@ -281,6 +282,14 @@ jobs:
           mkdir -p image
           scripts/freebsd/builder.sh get /build/image/r.img.zst image/freebsd.img.zst
           ls -l image
+          # The kernel of the image with its symbol table, so that an address of a panic gives a
+          # function also without DDB. The debug information is in kernel.debug and is not taken.
+          mkdir -p record
+          scripts/freebsd/builder.sh ssh "xz -T0 -c /build/obj/build/src/amd64.amd64/sys/$KERNCONF/kernel" \
+            > record/kernel.xz || rm -f record/kernel.xz
+          ls -l record/kernel.xz || true
+        env:
+          KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
       - name: copy the record out
         if: always()
         run: |
