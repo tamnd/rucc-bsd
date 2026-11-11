@@ -1,0 +1,347 @@
+# The weekly benchmark run of milestone B8 (plan 13.2 and 13.3): R against G on the runtime gates
+# of 02.5, for FreeBSD 15.1 and NetBSD amd64.
+#
+# The images are the newest of runs on main that have not expired (scripts/bench/artifact.sh):
+#   FreeBSD  G: freebsd-image-15.1-release-graded of freebsd-g. R: freebsd-r-image of freebsd-r,
+#            the world of a freebsd-g run with the kernel that rucc built.
+#   NetBSD   G: netbsd-amd64-serial-image of netbsd-g. R: netbsd-r-amd64-serial-image of
+#            netbsd-r, G's sets with the kernel that rucc built. The pin is the one of
+#            conf/netbsd/trunk.pin, which netbsd-g builds.
+# Each image must have an rb-rc that knows the bench suite, so it must be built after #115.
+#
+# rb-bench is built once per side by scripts/bench/build.sh. Each side compiles bench/rb-bench.c
+# with its own compiler, and G's driver links both objects, so only the code of rb-bench differs:
+#   FreeBSD  in the builder VM, with the rb-cc-ref and rb-cc-rucc shims of rb toolchain. rucc is
+#            built from the head of tamnd/rucc main, as in freebsd-r.
+#   NetBSD   on the runner, with the cross GCC of build.sh tools from the cache of netbsd-g, and
+#            the rucc release of netbsd-r, over a sysroot of the base and comp sets.
+#
+# The boot jobs boot R, then G, RUNS times each (10 by default) on one runner: FreeBSD with
+# scripts/freebsd/boot.sh and the bench suite, NetBSD with rb bench. rb bench writes bench.tsv and
+# runs.tsv, and rb speed --bench applies the gates. Both go to the step summary and the artifact
+# bench-<system>. The runners are shared VMs, not the quiet host of 13.3 (docs/bench-host.md), so
+# a benchmark with a G CV above 1% is reported and not gated. A failed gate does not fail the run.
+
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      systems:
+        description: freebsd, netbsd or both
+        required: false
+        default: both
+      runs:
+        description: Boots per side
+        required: false
+        default: "10"
+      scale:
+        description: rb_bench_scale, the work of each benchmark as a multiple of the default
+        required: false
+        default: "1"
+      only:
+        description: Run only these benchmarks, separated by commas, or empty for all
+        required: false
+        default: ""
+  schedule:
+    - cron: "17 2 * * 6"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  NB_ROOT: /mnt/nb
+  RUNS: ${{ inputs.runs || '10' }}
+  SCALE: ${{ inputs.scale || '1' }}
+  ONLY: ${{ inputs.only || '' }}
+  SYSTEMS: ${{ inputs.systems || 'both' }}
+  RUCC_VERSION: v0.30.15
+  RUCC_SHA256: 32e1cab992940f0563cb9e49bfc3c3ed23192e519ee277fdcf9edfefb8503ddb
+  RB_VM_DIR: /mnt/rb-builder
+  RB_CACHE: /mnt/rb-cache
+  VM_ENV: >-
+    RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
+    RB_HARNESS=/root/harness RB_PIN_NAME=freebsd-15.1 RB_COMPILE_JSONL=/build/out/compile.jsonl
+
+jobs:
+  rb:
+    name: cargo build rb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: bench-rb
+          path: target/release/rb
+          retention-days: 7
+
+  freebsd-build:
+    name: rb-bench for FreeBSD
+    if: inputs.systems != 'netbsd'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directories on /mnt
+        run: |
+          sudo mkdir -p "$RB_CACHE" "$RB_VM_DIR"
+          sudo chown "$USER" "$RB_CACHE" "$RB_VM_DIR"
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: scripts/ci/apt-install.sh qemu-system-x86 qemu-utils sshpass zstd
+      - name: cache the builder image
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/FreeBSD-*.raw.xz
+          key: freebsd-builder-${{ hashFiles('conf/freebsd/builder.conf') }}
+      - name: the commit of tamnd/rucc
+        run: |
+          sha=$(gh api repos/tamnd/rucc/commits/main -q .sha)
+          echo "RUCC_COMMIT=$sha" >> "$GITHUB_ENV"
+          echo "FreeBSD: rucc built in the VM from tamnd/rucc main, commit $sha." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: boot the builder VM
+        run: |
+          scripts/freebsd/builder.sh up
+          tar --exclude=./.git --exclude=./target -cf - . \
+            | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
+      - name: provision
+        run: scripts/freebsd/builder.sh ssh 'sh /root/harness/scripts/freebsd/provision.sh /root/out'
+      - name: rb, rb-cc, rucc and the shims
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
+      - name: build rb-bench with each side's compiler
+        run: |
+          t=/build/toolchain/bin/x86_64-unknown-freebsd15.1
+          scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/bench/build.sh /build/bench $t-rb-cc-ref $t-rb-cc-rucc --sysroot=/" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p rb-bench
+          for side in g r; do
+            scripts/freebsd/builder.sh get "/build/bench/rb-bench-$side" "rb-bench/rb-bench-$side"
+          done
+          scripts/freebsd/builder.sh get /build/bench/build.txt rb-bench/build.txt
+          scripts/freebsd/builder.sh get /root/out/rb-tools.txt rb-bench/rb-tools.txt
+          scripts/freebsd/builder.sh down || true
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: bench-freebsd-rb-bench
+          path: rb-bench
+          retention-days: 7
+
+  freebsd:
+    name: rb bench freebsd-15.1
+    needs: [rb, freebsd-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf zstd
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: bench-rb
+          path: ${{ runner.temp }}/rb
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: bench-freebsd-rb-bench
+          path: ${{ runner.temp }}/rb-bench
+      - name: the images
+        run: |
+          sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
+          {
+            echo "### FreeBSD images"
+            echo
+            scripts/bench/artifact.sh freebsd-image-15.1-release-graded /mnt/rb/g
+            echo
+            scripts/bench/artifact.sh freebsd-r-image /mnt/rb/r
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          for side in g r; do
+            zstd -d -q --rm "/mnt/rb/$side/freebsd.img.zst" -o "/mnt/rb/$side.img"
+          done
+          ls -ls /mnt/rb
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: boot R, then G, ${{ env.RUNS }} times each
+        run: |
+          chmod +x "$RUNNER_TEMP"/rb-bench/rb-bench-*
+          for n in $(seq "$RUNS"); do
+            for side in r g; do
+              RB_BENCH="$RUNNER_TEMP/rb-bench/rb-bench-$side" RB_BENCH_SCALE="$SCALE" RB_BENCH_ONLY="${ONLY//,/ }" \
+                RB_RUN_LIMIT=3600 scripts/freebsd/boot.sh "/mnt/rb/$side.img" uefi bench "/mnt/rb/boots/$side-$n" || true
+            done
+          done
+      - name: rb bench and rb speed
+        if: always()
+        run: |
+          rb=$RUNNER_TEMP/rb/rb
+          chmod +x "$rb"
+          from() { seq "$RUNS" | sed "s|^|/mnt/rb/boots/$1-|" | paste -sd, -; }
+          mkdir -p out
+          {
+            "$rb" bench freebsd-15.1 --g-from "$(from g)" --r-from "$(from r)" \
+              --g-image freebsd-image-15.1-release-graded --r-image freebsd-r-image --dir out || true
+            echo
+            echo '```'
+            "$rb" speed --bench out/freebsd/amd64/15.1/bench.tsv || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          cp "$RUNNER_TEMP/rb-bench/build.txt" out/ || true
+          mkdir -p out/boots
+          for d in /mnt/rb/boots/*; do
+            mkdir -p "out/boots/${d##*/}"
+            cp "$d/boot.json" "$d/console.log" "out/boots/${d##*/}/" 2>/dev/null || true
+            cp -r "$d/results/out/bench" "out/boots/${d##*/}/" 2>/dev/null || true
+          done
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: bench-freebsd
+          path: out
+          retention-days: 30
+
+  netbsd-build:
+    name: rb-bench for NetBSD
+    if: inputs.systems != 'freebsd'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: rucc ${{ env.RUCC_VERSION }}
+        run: |
+          name="rucc-$RUCC_VERSION-x86_64-unknown-linux-gnu"
+          gh release download "$RUCC_VERSION" -R tamnd/rucc -p "$name.tar.gz" -D "$RUNNER_TEMP"
+          echo "$RUCC_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "RUCC=$RUNNER_TEMP/$name/rucc" >> "$GITHUB_ENV"
+          echo "NetBSD: rucc $RUCC_VERSION, the release tarball." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: the sysroot, from the base and comp sets
+        run: |
+          scripts/bench/artifact.sh netbsd-amd64-sets "$NB_ROOT/sets" | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$NB_ROOT/sysroot"
+          for set in base comp; do
+            f=$(find "$NB_ROOT/sets" -name "$set.t*" | head -1)
+            tar -xf "$f" -C "$NB_ROOT/sysroot"
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: build rb-bench with each side's compiler
+        run: |
+          . conf/netbsd/trunk.pin
+          gcc=$(find "$NB_ROOT/tools/bin" -maxdepth 1 -name '*--netbsd*-gcc' | head -1)
+          gnu=$(basename "$gcc" -gcc)
+          scripts/bench/build.sh rb-bench "$gcc" "$RUCC --target=$gnu -fgnuc-version=$NB_PIN_GCC" \
+            "--sysroot=$NB_ROOT/sysroot" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: bench-netbsd-rb-bench
+          path: rb-bench
+          retention-days: 7
+
+  netbsd:
+    name: rb bench netbsd
+    needs: [rb, netbsd-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: bench-rb
+          path: ${{ runner.temp }}/rb
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: bench-netbsd-rb-bench
+          path: ${{ runner.temp }}/rb-bench
+      - name: the images
+        run: |
+          sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
+          {
+            echo "### NetBSD images"
+            echo
+            scripts/bench/artifact.sh netbsd-amd64-serial-image /mnt/rb/g
+            echo
+            scripts/bench/artifact.sh netbsd-r-amd64-serial-image /mnt/rb/r
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          for side in g r; do
+            gzip -d -c "/mnt/rb/$side/netbsd-amd64-serial.img.gz" > "/mnt/rb/$side.img"
+            rm -rf "/mnt/rb/$side"
+            truncate -s 12G "/mnt/rb/$side.img"
+          done
+          ls -ls /mnt/rb
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rb bench and rb speed
+        run: |
+          . conf/netbsd/trunk.pin
+          rb=$RUNNER_TEMP/rb/rb
+          chmod +x "$rb" "$RUNNER_TEMP"/rb-bench/rb-bench-*
+          only=()
+          if [ -n "$ONLY" ]; then only=(--bench-only "$ONLY"); fi
+          {
+            "$rb" bench "netbsd-$NB_PIN_NAME" --g-image /mnt/rb/g.img --r-image /mnt/rb/r.img \
+              --g-bench "$RUNNER_TEMP/rb-bench/rb-bench-g" --r-bench "$RUNNER_TEMP/rb-bench/rb-bench-r" \
+              --runs "$RUNS" --bench-scale "$SCALE" "${only[@]}" --timeout 3600 \
+              --work /mnt/rb/boots --dir out || true
+            echo
+            echo '```'
+            "$rb" speed --bench "out/netbsd/amd64/$NB_PIN_NAME/bench.tsv" || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: keep the results
+        if: always()
+        run: |
+          mkdir -p out/boots
+          cp "$RUNNER_TEMP/rb-bench/build.txt" out/ || true
+          for d in /mnt/rb/boots/*; do
+            [ -d "$d" ] || continue
+            mkdir -p "out/boots/${d##*/}"
+            cp "$d"/*.log "$d"/*.json "out/boots/${d##*/}/" 2>/dev/null || true
+            cp -r "$d/results/bench" "out/boots/${d##*/}/" 2>/dev/null || true
+          done
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: bench-netbsd
+          path: out
+          retention-days: 30
