@@ -96,9 +96,10 @@ pub fn refused(stderr: &str, args: &[String]) -> Option<String> {
         "unknown argument '",
         "unsupported option '",
         "unknown option '",
+        "unknown option `",
     ] {
         if let Some(at) = stderr.find(said) {
-            let flag = stderr[at + said.len()..].split('\'').next()?;
+            let flag = stderr[at + said.len()..].split(['\'', '`']).next()?;
             if args.iter().any(|a| a == flag) {
                 return Some(flag.to_string());
             }
@@ -340,6 +341,12 @@ mod tests {
             Some("-fno-foo")
         );
         assert_eq!(refused("a.c:1:1: error: x\n", &a), None);
+        // rucc quotes the flag with backticks.
+        let a = words("-nostdinc++ a.c");
+        assert_eq!(
+            refused("(command line): error: unknown option `-nostdinc++`\n", &a).as_deref(),
+            Some("-nostdinc++")
+        );
     }
 
     #[test]
