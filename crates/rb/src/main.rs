@@ -23,19 +23,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
-        "baseline" => {
-            let repo = rb::repo::Repo::find()?;
-            let rows = rb_pins::places::Rows::load(&repo.root)?;
-            let pins = rb_pins::pins::PinsFile::load(&repo.root)?;
-            let (report, complete) =
-                rb::baseline::cli::run(args, &repo.root, pins.as_ref(), &rows)?;
-            print!("{report}");
-            Ok(if complete {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            })
-        }
+        "baseline" | "bench" => runs(args),
         "boot" => {
             let repo = rb::repo::Repo::find()?;
             let rows = rb_pins::places::Rows::load(&repo.root)?;
@@ -110,6 +98,20 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         }
         other => Err(format!("unknown command {other}; see rb help")),
     }
+}
+
+/// `rb baseline` and `rb bench`, which boot images many times.
+fn runs(args: &Args) -> Result<ExitCode, String> {
+    let repo = rb::repo::Repo::find()?;
+    let rows = rb_pins::places::Rows::load(&repo.root)?;
+    let pins = rb_pins::pins::PinsFile::load(&repo.root)?;
+    let (report, complete) = if args.command == "bench" {
+        rb::bench::cli::run(args, &repo.root, pins.as_ref(), &rows)?
+    } else {
+        rb::baseline::cli::run(args, &repo.root, pins.as_ref(), &rows)?
+    };
+    print!("{report}");
+    Ok(exit(complete))
 }
 
 /// `rb ctf-diff`, `rb frames`, `rb mixed`, `rb speed` and `rb vec-audit`.

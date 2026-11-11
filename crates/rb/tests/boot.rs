@@ -88,6 +88,7 @@ impl Rig {
             keep: false,
             login: false,
             modules: None,
+            bench: None,
         };
         Rig { top, req }
     }
@@ -349,6 +350,7 @@ fn real_boot() {
         keep: false,
         login: false,
         modules: None,
+        bench: None,
     };
     let o = boot::run(&req).unwrap();
     println!("{}", boot::summary(&o, Path::new(&out)));

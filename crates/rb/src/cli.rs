@@ -45,6 +45,7 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "bench" => return Some(BENCH),
         "baseline" | "boot" | "cross-modules" => return boot_commands(command),
         "census" => Accepts {
             positional: true,
@@ -93,6 +94,36 @@ pub fn accepted(command: &str) -> Option<Accepts> {
 }
 
 /// What the commands that boot images accept.
+/// What `rb bench` accepts: its own options and the boot options it passes on.
+const BENCH: Accepts = Accepts {
+    positional: true,
+    values: &[
+        "g-image",
+        "r-image",
+        "g-bench",
+        "r-bench",
+        "g-from",
+        "r-from",
+        "runs",
+        "dir",
+        "work",
+        "system",
+        "row",
+        "firmware",
+        "bench-scale",
+        "bench-only",
+        "boot-timeout",
+        "timeout",
+        "disk-size",
+        "cpus",
+        "memory",
+        "qemu",
+        "ovmf-code",
+        "ovmf-vars",
+    ],
+    switches: &["keep", "dry-run"],
+};
+
 fn boot_commands(command: &str) -> Option<Accepts> {
     Some(match command {
         "baseline" => Accepts {
@@ -140,6 +171,9 @@ fn boot_commands(command: &str) -> Option<Accepts> {
                 "modules",
                 "modules-only",
                 "modules-skip",
+                "bench",
+                "bench-scale",
+                "bench-only",
                 "boot-timeout",
                 "timeout",
                 "reboots",
@@ -378,10 +412,26 @@ usage:
       suite by default. With --from, the runs are the output directories of earlier rb boot
       commands, and nothing boots. A run in shards, one boot per shard, joins the directories
       of its shards with '+', as in --from smoke+net+lib. Exits 1 when a run did not pass.
-  rb boot --image IMG --out DIR [--suite boot,smoke,tests,modules] [--row ROW]
+  rb bench PIN --g-image IMG --r-image IMG --g-bench FILE --r-bench FILE [--runs N] [--row ROW]
+          [--dir DIR] [--work DIR] [--system freebsd|netbsd] [--bench-scale S]
+          [--bench-only NAME,...] [the options of rb boot]
+  rb bench PIN --g-from DIR,... --r-from DIR,... [--g-image IMG] [--r-image IMG] [--dir DIR]
+      Run the benchmark set of plan 13.2 on G and R (13.3). The first form boots R, then G, N
+      times each, 10 by default, each on a fresh overlay with the bench suite and the rb-bench
+      that its own compiler built, FILE of --g-bench or --r-bench. The boots go to
+      work/bench/<system>/<row>/<version>/r-N and g-N. The second form reads the output
+      directories of earlier boots, and nothing boots. For each benchmark, rb takes the median per
+      side and R's speed against G: G's time over R's, or R's rate over G's, so under 1 is
+      slower. A benchmark is gated with a value in every run of both sides, 3 or more runs, and a
+      CV of at most 1% on G. The report gives the geometric mean of the gated speeds and the
+      benchmarks behind by more than 2%. DIR/<system>/<row>/<version>/bench.tsv gets the summary
+      and runs.tsv every value; DIR is results/bench by default. --bench-scale multiplies the
+      work, and --bench-only runs only the benchmarks named. Exits 1 when a run wrote no results.
+  rb boot --image IMG --out DIR [--suite boot,smoke,tests,modules,bench] [--row ROW]
           [--firmware ovmf|seabios|edk2|u-boot]
           [--tests-only DIR,...] [--tests-except DIR,...] [--tests-repeat N]
           [--modules DIR] [--modules-only NAME,...] [--modules-skip NAME,...]
+          [--bench FILE] [--bench-scale S] [--bench-only NAME,...]
           [--boot-timeout SECS] [--timeout SECS]
           [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
           [--qemu PATH] [--ovmf-code FILE --ovmf-vars FILE] [--edk2-code FILE --edk2-vars FILE]
@@ -398,9 +448,10 @@ usage:
       --tests-repeat N runs the directories of --tests-only N times. The modules suite, on
       NetBSD, loads and unloads each kernel module of the image, or of DIR of --modules, a tree
       of NAME/NAME.kmod that goes on the results disk; --modules-only and --modules-skip choose
-      the modules. On a panic it sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
-      DIR/boot.json. ROW is amd64 by default, and the firmware is the row's test firmware.
-      edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then the S-mode U-Boot of
+      the modules. The bench suite runs the benchmark set once, with the rb-bench of --bench,
+      which goes on the results disk, else the image's. On a panic it sends bt to ddb and stops
+      QEMU. The results go to DIR/results and the outcome to DIR/boot.json. ROW is amd64 by
+      default, and the firmware is the row's test firmware. edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then the S-mode U-Boot of
       riscv64, which loads the EFI loader from the disk.
       Exits 1 when the boot did not pass.
   rb build PIN --cc rucc|ref --root DIR [--row ROW] [--targets T,...] [--src DIR] [--jobs N]

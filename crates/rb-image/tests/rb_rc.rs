@@ -214,6 +214,8 @@ fn scripts_parse() {
         ("rb", guest::RC_SCRIPT),
         ("run", guest::RUN),
         ("tests", guest::TESTS),
+        ("modules", guest::MODULES),
+        ("bench", guest::BENCH),
         ("smoke", guest::SMOKE),
     ] {
         let out = Command::new("sh")
@@ -236,6 +238,7 @@ fn shellcheck() {
         "guest/rb-rc/rb",
         "guest/rb-rc/run.sh",
         "guest/rb-rc/tests.sh",
+        "guest/rb-rc/bench.sh",
         "smoke/smoke.sh",
     ];
     let Ok(out) = Command::new("shellcheck")
@@ -391,5 +394,136 @@ fn modules_load_and_unload_one_at_a_time() {
     // The disk's modules took the place of the image's, which were moved aside.
     assert!(base.join("a/a.kmod").is_file());
     assert!(root.join("stand/modules.image/old/old.kmod").is_file());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// rb-bench built with the host's cc, where it has one, and run at a small scale.
+fn rb_bench(root: &Path) -> Option<PathBuf> {
+    let top = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let bin = root.join("rb-bench");
+    std::fs::create_dir_all(root).unwrap();
+    let Ok(out) = Command::new("cc")
+        .args([
+            "-O1",
+            "-Wall",
+            "-Werror",
+            "-Wno-deprecated-declarations",
+            "-o",
+        ])
+        .arg(&bin)
+        .arg(top.join("bench/rb-bench.c"))
+        .args(["-lpthread", "-lm"])
+        .output()
+    else {
+        eprintln!("no cc on this host, skipped");
+        return None;
+    };
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some(bin)
+}
+
+#[test]
+fn rb_bench_runs_each_benchmark() {
+    let root = std::env::temp_dir().join(format!("rb-image-rb-bench-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let Some(bin) = rb_bench(&root) else { return };
+    let list = Command::new(&bin).arg("-l").output().unwrap();
+    let list = String::from_utf8(list.stdout).unwrap();
+    // kqueue_1000 is only on the BSDs and macOS.
+    assert!(list.lines().count() >= 31, "{list}");
+    let out = Command::new(&bin).args(["-s", "0.0005"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(text.lines().count(), list.lines().count(), "{text}");
+    for (line, listed) in text.lines().zip(list.lines()) {
+        let f: Vec<&str> = line.split('\t').collect();
+        assert_eq!(f.len(), 4, "{line}");
+        assert_eq!(format!("{}\t{}", f[0], f[1]), listed);
+        assert!(f[2].parse::<f64>().unwrap() >= 0.0, "{line}");
+        assert_eq!(f[3], "lower");
+    }
+    // The inputs are the same bytes each time.
+    let generate = |name: &str| {
+        let path = root.join(name);
+        let st = Command::new(&bin)
+            .args(["-g", "lines"])
+            .arg(&path)
+            .arg("1000")
+            .status()
+            .unwrap();
+        assert!(st.success());
+        std::fs::read(path).unwrap()
+    };
+    let a = generate("a");
+    assert_eq!(a, generate("b"));
+    assert_eq!(String::from_utf8(a).unwrap().lines().count(), 1000);
+    let timed = Command::new(&bin)
+        .args(["-x", "tools", "t", "sh", "-c", "exit 3"])
+        .output()
+        .unwrap();
+    assert!(!timed.status.success() && timed.stdout.is_empty());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bench_writes_one_line_per_benchmark() {
+    let root = std::env::temp_dir().join(format!("rb-image-bench-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let Some(bin) = rb_bench(&root) else { return };
+    // The binary comes from the results disk, as rb boot --bench puts it there.
+    let disk = root.join("work/in");
+    std::fs::create_dir_all(&disk).unwrap();
+    std::fs::copy(&bin, disk.join("rb-bench")).unwrap();
+    let script = root.join("bench");
+    std::fs::write(&script, guest::BENCH).unwrap();
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("out"))
+        .env("RB_WORK", root.join("work"))
+        .env("rb_bench_scale", "0.0005")
+        .env(
+            "rb_bench_only",
+            "getpid qsort sh_loop sort gzip_c gzip_d seq_write nothing",
+        )
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        console,
+        "RB-CASE bench/getpid\nRB-CASE bench/qsort\nRB-CASE bench/sh_loop\n\
+         RB-CASE bench/sort\nRB-CASE bench/gzip_c\nRB-CASE bench/gzip_d\n\
+         RB-CASE bench/seq_write\n"
+    );
+    let read = |name: &str| std::fs::read_to_string(root.join("out").join(name)).unwrap();
+    let names: Vec<String> = read("bench.tsv")
+        .lines()
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            assert_eq!(f.len(), 4, "{l}");
+            format!("{} {}", f[0], f[1])
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "syscalls getpid",
+            "libc qsort",
+            "tools sh_loop",
+            "tools sort",
+            "tools gzip_c",
+            "tools gzip_d",
+            "fs seq_write"
+        ]
+    );
+    assert_eq!(read("counts"), "7/7\n");
+    assert_eq!(read("source"), "disk\n");
+    assert_eq!(read("version"), "rb-bench 1\n");
+    // The suite's scratch files are gone.
+    assert!(!root.join("work/bench").exists());
     std::fs::remove_dir_all(&root).unwrap();
 }

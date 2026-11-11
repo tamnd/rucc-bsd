@@ -12,6 +12,9 @@
 # exclusions. rb-rc in the image reads it, runs the suites, and writes its results back to the same
 # disk. This script then unpacks them to OUTDIR/results.
 #
+# The bench suite is the one of guest/rb-rc. RB_BENCH is the rb-bench program to run, which goes on
+# the rb disk. RB_BENCH_SCALE and RB_BENCH_ONLY become rb_bench_scale and rb_bench_only.
+#
 # Console markers and limits:
 #   RB-READY   rb-rc started; within RB_BOOT_LIMIT seconds (default 600)
 #   RB-DONE    the suites finished; within RB_RUN_LIMIT seconds of the start (default 14400)
@@ -28,6 +31,9 @@ out=$4
 : "${RB_VM_CPUS:=2}"
 : "${RB_VM_MEM:=8G}"
 : "${RB_KYUA_FILTERS:=}"
+: "${RB_BENCH:=}"
+: "${RB_BENCH_SCALE:=1}"
+: "${RB_BENCH_ONLY:=}"
 : "${OVMF_CODE:=/usr/share/OVMF/OVMF_CODE_4M.fd}"
 : "${OVMF_VARS:=/usr/share/OVMF/OVMF_VARS_4M.fd}"
 
@@ -44,8 +50,14 @@ RB_POWEROFF=yes
 RB_SMOKE_DISK=vtbd7
 RB_KYUA_FILTERS="$RB_KYUA_FILTERS"
 RB_KYUA_LIMIT=$((RB_RUN_LIMIT - RB_BOOT_LIMIT - 300))
+rb_bench_scale=$RB_BENCH_SCALE
+rb_bench_only="$RB_BENCH_ONLY"
 EOF
 cp "$here/guest/smoke.sh" "$here/guest/kyua.sh" "$here/../../conf/freebsd/image/kyua-exclude" "$out/rb-in/"
+cp "$here/../../guest/rb-rc/bench.sh" "$out/rb-in/"
+if [ -n "$RB_BENCH" ]; then
+	install -m 555 "$RB_BENCH" "$out/rb-in/rb-bench"
+fi
 tar -cf "$out/rb.tar" -C "$out/rb-in" .
 truncate -s 1G "$out/rb.tar"
 for i in 1 2 3 4 5 smoke cam; do
