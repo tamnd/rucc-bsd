@@ -22,8 +22,7 @@
 . "$(dirname "$0")/common.sh"
 
 rucc=$1
-gnu=$(sed -n 's/^MACHINE_GNU_PLATFORM=//p' "$NB_TOOLS/bin/nbmake-$NB_MACHINE" | head -1)
-gnu=${gnu:-x86_64--netbsd}
+gnu=$(nb_gnu "$NB_TOOLS")
 out=$NB_ROOT/replay
 
 cp "$NB_LOGS/shim.tsv" "$NB_LOGS/shim-ref.tsv"
