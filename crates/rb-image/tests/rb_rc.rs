@@ -324,3 +324,72 @@ fn tests_under_the_top_and_again() {
     );
     std::fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn modules_load_and_unload_one_at_a_time() {
+    let root = std::env::temp_dir().join(format!("rb-image-modules-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let base = root.join("stand/modules");
+    std::fs::create_dir_all(base.join("old")).unwrap();
+    std::fs::write(base.join("old/old.kmod"), "").unwrap();
+    let disk = root.join("work/in/modules");
+    for m in ["a", "bad", "builtin", "busy", "skipme"] {
+        std::fs::create_dir_all(disk.join(m)).unwrap();
+        std::fs::write(disk.join(m).join(format!("{m}.kmod")), "").unwrap();
+    }
+    std::fs::create_dir_all(disk.join("notamodule")).unwrap();
+    // Stubs: a loaded module is a file under state. builtin is in the kernel, bad does not load
+    // and busy does not unload.
+    let bin = root.join("bin");
+    let state = root.join("state");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&state).unwrap();
+    for (name, body) in [
+        (
+            "modload",
+            "if [ \"$1\" = bad ]; then echo \"modload: bad: Exec format error\" >&2; exit 1; fi\ntouch \"$STATE/$1\"",
+        ),
+        (
+            "modstat",
+            "echo 'NAME CLASS SOURCE FLAGS REFS SIZE REQUIRES'\nif [ \"$1\" = builtin ] || [ -e \"$STATE/$1\" ]; then echo \"$1 misc filesys - 0 1 -\"; fi",
+        ),
+        (
+            "modunload",
+            "if [ \"$1\" = busy ]; then echo \"modunload: busy: Device busy\" >&2; exit 1; fi\nrm \"$STATE/$1\"",
+        ),
+    ] {
+        let path = bin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let script = root.join("modules");
+    std::fs::write(&script, guest::MODULES).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("out"))
+        .env("PATH", path)
+        .env("STATE", &state)
+        .env("RB_MODULES", &base)
+        .env("RB_WORK", root.join("work"))
+        .env("rb_modules_skip", "skipme")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        console,
+        "RB-CASE modules/a\nRB-CASE modules/bad\nRB-CASE modules/builtin\nRB-CASE modules/busy\n"
+    );
+    let read = |name: &str| std::fs::read_to_string(root.join("out").join(name)).unwrap();
+    assert_eq!(
+        read("modules.tsv"),
+        "a\tpass\t\nbad\tload\tmodload: bad: Exec format error\nbuiltin\tpresent\t\nbusy\tunload\tmodunload: busy: Device busy\nskipme\tskip\t\n"
+    );
+    assert_eq!(read("counts"), "1/3\n");
+    assert_eq!(read("source"), "disk\n");
+    // The disk's modules took the place of the image's, which were moved aside.
+    assert!(base.join("a/a.kmod").is_file());
+    assert!(root.join("stand/modules.image/old/old.kmod").is_file());
+    std::fs::remove_dir_all(&root).unwrap();
+}

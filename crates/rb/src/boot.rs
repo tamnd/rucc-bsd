@@ -225,6 +225,9 @@ pub struct Request {
     pub keep: bool,
     /// Log in as root at the login prompt, and start rb-rc from the results disk.
     pub login: bool,
+    /// A tree of kernel modules, `NAME/NAME.kmod`, that goes on the results disk under
+    /// `modules/` for the modules suite.
+    pub modules: Option<PathBuf>,
 }
 
 /// How a boot ended.
@@ -452,23 +455,57 @@ pub fn login_command() -> String {
 /// The results disk before the boot: an archive with the `rb.conf`, and room after it. With
 /// `login`, the archive also has rb-rc's scripts, for an image that does not have them. With
 /// [`RbConf::scripts_on_disk`] it has them too, for an image whose scripts are older than rb's.
-pub fn results_disk(conf: &RbConf, size: u64, login: bool) -> Result<Vec<u8>, String> {
+/// With `modules`, it has that tree under `modules/`.
+pub fn results_disk(
+    conf: &RbConf,
+    size: u64,
+    login: bool,
+    modules: Option<&Path>,
+) -> Result<Vec<u8>, String> {
     let mut entries = vec![ustar::Entry::file("rb.conf", 0o644, conf.render())];
     if login || conf.scripts_on_disk {
         entries.push(ustar::Entry::dir("rb"));
         for (name, text) in [
             ("run", rb_image::guest::RUN),
+            ("modules", rb_image::guest::MODULES),
             ("smoke", rb_image::guest::SMOKE),
             ("tests", rb_image::guest::TESTS),
         ] {
             entries.push(ustar::Entry::file(&format!("rb/{name}"), 0o555, text));
         }
     }
+    if let Some(dir) = modules {
+        entries.push(ustar::Entry::dir("modules"));
+        tree(dir, "modules", &mut entries)?;
+    }
     let tar = ustar::write(&entries)?;
     if (tar.len() as u64) > size {
         return Err(format!("a results disk of {size} bytes is too small"));
     }
     Ok(tar)
+}
+
+/// The directories and files under `dir`, sorted, as entries under `prefix`.
+fn tree(dir: &Path, prefix: &str, entries: &mut Vec<ustar::Entry>) -> Result<(), String> {
+    let err = |e: std::io::Error| format!("{}: {e}", dir.display());
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .map_err(err)?
+        .map(|e| e.map(|e| e.file_name()))
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    names.sort();
+    for name in names {
+        let path = dir.join(&name);
+        let inside = format!("{prefix}/{}", name.to_string_lossy());
+        if path.is_dir() {
+            entries.push(ustar::Entry::dir(&inside));
+            tree(&path, &inside, entries)?;
+        } else {
+            let data = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            entries.push(ustar::Entry::file(&inside, 0o444, data));
+        }
+    }
+    Ok(())
 }
 
 fn create_file(path: &Path, data: &[u8], size: u64) -> Result<(), String> {
@@ -508,7 +545,7 @@ pub fn prepare(req: &Request) -> Result<(), String> {
     }
     create_file(
         &p.results_disk,
-        &results_disk(&req.conf, req.disk_size, req.login)?,
+        &results_disk(&req.conf, req.disk_size, req.login, req.modules.as_deref())?,
         req.disk_size,
     )?;
     for i in 1..=req.spare_disks {
@@ -962,6 +999,7 @@ mod tests {
             in_place: false,
             keep: false,
             login: false,
+            modules: None,
         }
     }
 
@@ -1068,19 +1106,29 @@ mod tests {
             suites: vec!["boot".into(), "smoke".into()],
             ..RbConf::default()
         };
-        let tar = results_disk(&conf, 1 << 20, false).unwrap();
+        let tar = results_disk(&conf, 1 << 20, false, None).unwrap();
         let entries = ustar::read(&tar).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "rb.conf");
         let text = String::from_utf8(entries[0].data.clone()).unwrap();
         assert!(text.contains("rb_suites='boot smoke'\n"), "{text}");
         assert!(text.contains("rb_poweroff=YES\n"), "{text}");
-        assert!(results_disk(&conf, 512, false).is_err());
+        assert!(results_disk(&conf, 512, false, None).is_err());
         // With --login, rb-rc's scripts come on the disk, where the typed command finds them.
-        let tar = results_disk(&conf, 1 << 20, true).unwrap();
+        let tar = results_disk(&conf, 1 << 20, true, None).unwrap();
         let entries = ustar::read(&tar).unwrap();
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
-        assert_eq!(paths, ["rb.conf", "rb", "rb/run", "rb/smoke", "rb/tests"]);
+        assert_eq!(
+            paths,
+            [
+                "rb.conf",
+                "rb",
+                "rb/run",
+                "rb/modules",
+                "rb/smoke",
+                "rb/tests"
+            ]
+        );
         assert!(entries[2..].iter().all(|e| e.mode == 0o555));
         assert_eq!(entries[2].data, rb_image::guest::RUN.as_bytes());
         let line = login_command();
@@ -1090,6 +1138,39 @@ mod tests {
             "{line}"
         );
         assert!(!line.contains('\n') && !line.contains('"'), "{line}");
+    }
+
+    #[test]
+    fn the_results_disk_holds_the_modules() {
+        let dir = std::env::temp_dir().join(format!("rb-boot-modules-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for m in ["udf", "nfs"] {
+            std::fs::create_dir_all(dir.join(m)).unwrap();
+            std::fs::write(dir.join(m).join(format!("{m}.kmod")), m).unwrap();
+        }
+        let conf = RbConf {
+            suites: vec!["modules".into()],
+            modules_skip: vec!["nfs".into()],
+            ..RbConf::default()
+        };
+        let tar = results_disk(&conf, 1 << 20, false, Some(&dir)).unwrap();
+        let entries = ustar::read(&tar).unwrap();
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "rb.conf",
+                "modules",
+                "modules/nfs",
+                "modules/nfs/nfs.kmod",
+                "modules/udf",
+                "modules/udf/udf.kmod"
+            ]
+        );
+        assert_eq!(entries[5].data, b"udf");
+        let text = String::from_utf8(entries[0].data.clone()).unwrap();
+        assert!(text.contains("rb_modules_skip=nfs\n"), "{text}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1245,6 +1326,8 @@ pub mod cli {
             tests_only: (0..repeat).flat_map(|_| tests_only.clone()).collect(),
             tests_except: list(args, "tests-except"),
             scripts_on_disk: args.has("scripts"),
+            modules_only: list(args, "modules-only"),
+            modules_skip: list(args, "modules-skip"),
             ..RbConf::default()
         };
         Ok(Request {
@@ -1281,6 +1364,7 @@ pub mod cli {
             in_place: args.has("in-place"),
             keep: args.has("keep"),
             login: args.has("login"),
+            modules: args.get("modules").map(PathBuf::from),
         })
     }
 
@@ -1364,7 +1448,7 @@ pub mod cli {
                 ["net/carp", "net/ndp", "net/carp", "net/ndp"]
             );
             assert!(req.conf.scripts_on_disk);
-            let disk = crate::boot::results_disk(&req.conf, 1 << 20, false).unwrap();
+            let disk = crate::boot::results_disk(&req.conf, 1 << 20, false, None).unwrap();
             let names: Vec<String> = rb_image::ustar::read(&disk)
                 .unwrap()
                 .into_iter()

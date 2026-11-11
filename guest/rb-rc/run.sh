@@ -23,6 +23,7 @@
 #   boot     nothing more to run. The boot passes when RB-DONE comes and the VM powers off.
 #   smoke    /usr/libexec/rb/smoke, the smoke suite of plan 12.2.
 #   tests    /usr/libexec/rb/tests, kyua on FreeBSD and atf-run on NetBSD.
+#   modules  /usr/libexec/rb/modules, which loads and unloads each kernel module on NetBSD.
 #
 # Nothing is sent on the network, because the network stack is under test. The console carries
 # only the markers. The results disk carries the rest.
@@ -123,7 +124,7 @@ fi
 RB_SAVE="$0 save"
 export RB_SAVE RB_CONF RB_WORK RB_LIBEXEC
 export rb_suites rb_disk rb_smoke_package rb_smoke_module rb_smoke_spare rb_pkg_dir
-export rb_tests_only rb_tests_except rb_kyua_parallelism
+export rb_tests_only rb_tests_except rb_kyua_parallelism rb_modules_only rb_modules_skip
 
 uname -a > "$out/uname.txt"
 if [ -r /var/run/dmesg.boot ]; then
@@ -141,7 +142,7 @@ for suite in $rb_suites; do
 	boot)
 		result=pass
 		;;
-	smoke | tests)
+	smoke | tests | modules)
 		"$libexec/$suite" "$out/$suite" 2>&1 | tee "$out/$suite.log"
 		result=$(counts "$out/$suite")
 		;;
