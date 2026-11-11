@@ -8,6 +8,9 @@
 //! - flags rucc refuses;
 //! - warnings that `-Werror` makes errors.
 //!
+//! A source the build removed after it compiled it, as a `y.tab.c` that is renamed or deleted, is
+//! counted as no longer on disk and not as a failure, since there is nothing left to compile.
+//!
 //! The diagnostics of each unit are then compared with the reference's, as `rb warnings` does: a
 //! warning rucc gives that the reference did not counts, even when the unit passes (06.9).
 
@@ -17,6 +20,7 @@ use crate::warnings::{self, Diagnostic};
 use harness_shim::record::CompileRecord;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// rucc's arguments for one unit: the persona's, a sysroot when the unit names none, then the
@@ -52,6 +56,8 @@ pub struct Outcome {
     pub unit: String,
     /// Whether it is assembly.
     pub asm: bool,
+    /// Whether the source was no longer on disk, so that rucc did not run.
+    pub gone: bool,
     /// The exit status, or `None` when rucc died on a signal or did not start.
     pub exit: Option<i32>,
     /// rucc's standard error, or why it could not run.
@@ -63,10 +69,10 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    /// Whether rucc failed on the unit.
+    /// Whether rucc failed on the unit. A unit whose source is gone did not fail.
     #[must_use]
     pub fn failed(&self) -> bool {
-        self.exit != Some(0)
+        !self.gone && self.exit != Some(0)
     }
 
     /// The first error rucc gave, else its first line of standard error.
@@ -120,6 +126,17 @@ pub fn check(
 ) -> Outcome {
     let args = args(record, asm, persona, sysroot);
     let unit = absolute(&record.cwd, source);
+    if !Path::new(&record.cwd).join(source).exists() {
+        return Outcome {
+            unit,
+            asm,
+            gone: true,
+            exit: None,
+            stderr: String::new(),
+            refused: None,
+            only_r: Vec::new(),
+        };
+    }
     let ran = Command::new(rucc)
         .args(&args)
         .current_dir(&record.cwd)
@@ -139,6 +156,7 @@ pub fn check(
     Outcome {
         unit,
         asm,
+        gone: false,
         refused: refused(&stderr, &args),
         exit,
         stderr,
@@ -173,6 +191,7 @@ pub fn run(
 pub fn report(title: &str, outcomes: &[Outcome], limit: usize) -> (String, bool) {
     let mut s = String::new();
     let asm = outcomes.iter().filter(|o| o.asm).count();
+    let gone: Vec<&Outcome> = outcomes.iter().filter(|o| o.gone).collect();
     let failed: Vec<&Outcome> = outcomes.iter().filter(|o| o.failed()).collect();
     let mut refused: BTreeMap<&str, usize> = BTreeMap::new();
     for o in &failed {
@@ -186,9 +205,10 @@ pub fn report(title: &str, outcomes: &[Outcome], limit: usize) -> (String, bool)
         .collect();
     let _ = writeln!(
         s,
-        "rb syntax {title}: {} units, {} C and {asm} assembly. Failed: {}, of which {} refused a flag. Passed with a diagnostic the reference did not give: {}.",
+        "rb syntax {title}: {} units, {} C and {asm} assembly, {} no longer on disk. Failed: {}, of which {} refused a flag. Passed with a diagnostic the reference did not give: {}.",
         outcomes.len(),
         outcomes.len() - asm,
+        gone.len(),
         failed.len(),
         refused.values().sum::<usize>(),
         noisy.len()
@@ -206,6 +226,18 @@ pub fn report(title: &str, outcomes: &[Outcome], limit: usize) -> (String, bool)
         }
         if failed.len() > limit {
             let _ = writeln!(s, "  and {} more", failed.len() - limit);
+        }
+    }
+    if !gone.is_empty() {
+        let _ = writeln!(
+            s,
+            "\nUnits no longer on disk, which the build removed after it compiled them:"
+        );
+        for o in gone.iter().take(limit) {
+            let _ = writeln!(s, "  {}", o.unit);
+        }
+        if gone.len() > limit {
+            let _ = writeln!(s, "  and {} more", gone.len() - limit);
         }
     }
     if !noisy.is_empty() {
@@ -226,13 +258,15 @@ pub fn report(title: &str, outcomes: &[Outcome], limit: usize) -> (String, bool)
     (s, failed.is_empty() && noisy.is_empty())
 }
 
-/// Every unit as a line of tab-separated values: the unit, `pass`, `warn` or `fail`, and the
-/// first error or the first diagnostic the reference did not give.
+/// Every unit as a line of tab-separated values: the unit, `pass`, `warn`, `fail` or `gone`, and
+/// the first error or the first diagnostic the reference did not give.
 #[must_use]
 pub fn tsv(outcomes: &[Outcome]) -> String {
     let mut s = String::from("unit\tresult\tfirst\n");
     for o in outcomes {
-        let (result, first) = if o.failed() {
+        let (result, first) = if o.gone {
+            ("gone", String::new())
+        } else if o.failed() {
             ("fail", o.first())
         } else if let Some(d) = o.only_r.first() {
             ("warn", d.line())
@@ -365,6 +399,9 @@ mod tests {
             .arg(&rucc)
             .status()
             .unwrap();
+        for src in ["good.c", "bad.c", "noisy.c", "quiet.c", "start.S"] {
+            std::fs::write(dir.join(src), "").unwrap();
+        }
         let line = |src: &str, err: &str| {
             format!(
                 r#"{{"started":1,"argv":["cc","-c","{src}"],"compiler":"/gcc","cwd":"{}","inputs":[{{"path":"{src}","sha256":"x"}}],"outputs":[{{"path":"x.o","sha256":"y"}}],"wall-seconds":0.1,"exit":0,"stderr":"{err}","slot":"cc"}}"#,
@@ -377,18 +414,21 @@ mod tests {
             line("noisy.c", ""),
             line("quiet.c", "quiet.c:1:1: warning: v [-Wv]\\n"),
             line("start.S", ""),
+            line("y.tab.c", ""),
         ]
         .join("\n");
         let records = parse_log(&log).0;
         let outcomes = run(&records, &rucc.display().to_string(), &[], None, 2);
         std::fs::remove_dir_all(&dir).ok();
-        assert_eq!(outcomes.len(), 5);
+        assert_eq!(outcomes.len(), 6);
         let (text, ok) = report("t", &outcomes, 10);
         assert!(!ok);
+        // The build removed y.tab.c, so it is counted apart and is not a failure.
         assert!(
-            text.contains("5 units, 4 C and 1 assembly. Failed: 1"),
+            text.contains("6 units, 5 C and 1 assembly, 1 no longer on disk. Failed: 1,"),
             "{text}"
         );
+        assert!(text.contains("no longer on disk, which"), "{text}");
         assert!(
             text.contains("bad.c:2: error: expected expression"),
             "{text}"
@@ -397,7 +437,7 @@ mod tests {
         assert!(!text.contains("quiet.c\n"), "{text}");
         let table = tsv(&outcomes);
         assert!(
-            table.contains("\tfail\t") && table.contains("\twarn\t"),
+            table.contains("\tfail\t") && table.contains("\twarn\t") && table.contains("\tgone\t"),
             "{table}"
         );
     }
