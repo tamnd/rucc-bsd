@@ -14,6 +14,8 @@
 #   RB_HARNESS   this repository, copied into the VM
 #   RB_MAKEFLAGS more make flags, such as -k
 #   RB_PHASE     the name of the phase in the logs, the argument by default
+#   RB_TARGET    make's TARGET, amd64 by default, or arm64 or riscv for the B7 rows (rows.toml)
+#   RB_TARGET_ARCH make's TARGET_ARCH, amd64 by default, or aarch64 or riscv64
 #
 # The make command line is the one FreeBSD's own GCC CI jobs use (freebsd-ci, jobs/*-gcc14_build),
 # with our SRCCONF. Each phase appends "phase status seconds obj_kb disk_used_kb" to phases.tsv. On a
@@ -22,8 +24,11 @@ set -u
 phase=$1
 : "${RB_JOBS:=$(sysctl -n hw.ncpu)}"
 : "${RB_KERNCONF:=GENERIC}"
+: "${RB_TARGET:=amd64}"
+: "${RB_TARGET_ARCH:=amd64}"
 # A kernel configuration of rucc-bsd, such as RB-TEST (plan 12.2), is in conf/freebsd/kernel of
-# the harness. make finds it by KERNCONFDIR, and the configurations of the tree in sys/amd64/conf.
+# the harness. make finds it by KERNCONFDIR, and the configurations of the tree in
+# sys/$RB_TARGET/conf.
 kernconfdir=
 if [ -f "${RB_HARNESS:-}/conf/freebsd/kernel/${RB_KERNCONF:-GENERIC}" ]; then
 	kernconfdir="$RB_HARNESS/conf/freebsd/kernel"
@@ -38,7 +43,7 @@ kernel)
 	# WITHOUT_CLEAN is the default, so buildkernel keeps the objects of an earlier buildkernel and
 	# does not compile them again. freebsd-r builds the kernel with rucc and with ref in one object
 	# tree, so each kernel phase starts with no kernel objects.
-	rm -rf "$RB_OBJ$RB_SRC/amd64.amd64/sys/$RB_KERNCONF"
+	rm -rf "$RB_OBJ$RB_SRC/$RB_TARGET.$RB_TARGET_ARCH/sys/$RB_KERNCONF"
 	;;
 toolchain) target=kernel-toolchain ;;
 *) echo "usage: $0 world | kernel | toolchain" >&2; exit 2 ;;
@@ -53,7 +58,7 @@ echo "$phase: make -j$RB_JOBS ${RB_MAKEFLAGS:+$RB_MAKEFLAGS }$target CROSS_TOOLC
 {
 	# shellcheck disable=SC2086
 	make -C "$RB_SRC" -j"$RB_JOBS" ${RB_MAKEFLAGS:-} "$target" \
-		TARGET=amd64 TARGET_ARCH=amd64 KERNCONF="$RB_KERNCONF" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
+		TARGET="$RB_TARGET" TARGET_ARCH="$RB_TARGET_ARCH" KERNCONF="$RB_KERNCONF" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
 		CROSS_TOOLCHAIN="$RB_TOOLCHAIN" \
 		__MAKE_CONF=/dev/null SRCCONF="$RB_SRCCONF" 2>&1
 	echo $? > "$RB_OUT/$phase.status"

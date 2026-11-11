@@ -4,7 +4,9 @@
 #   provision.sh OUTDIR
 #
 # It makes a UFS file system on the second disk at /build, and installs the reference toolchain
-# packages of conf/freebsd/builder.conf from the VM's default package repository. It records in
+# packages of conf/freebsd/builder.conf from the VM's default package repository. With
+# RB_TARGET_ARCH, such as aarch64, it installs the flavor of the same ports for that TARGET_ARCH,
+# aarch64-gcc15 in place of amd64-gcc15, as rb toolchain does for the row. It records in
 # OUTDIR/toolchain.txt the package versions and repository, the SHA-256 of each package file, the
 # CROSS_TOOLCHAIN file the port installs, and what the compiler and linker say they are.
 set -eu
@@ -12,6 +14,9 @@ out=$1
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/../../conf/freebsd/builder.conf"
 mkdir -p "$out"
+arch=${RB_TARGET_ARCH:-amd64}
+RB_TOOLCHAIN_PKGS=$(echo "$RB_TOOLCHAIN_PKGS" | sed "s/amd64-/$arch-/g")
+RB_CROSS_TOOLCHAIN=$(echo "$RB_CROSS_TOOLCHAIN" | sed "s/^amd64-/$arch-/")
 
 if ! mount -p | awk '$2 == "/build"' | grep -q .; then
 	newfs -U -t /dev/vtbd1 > /dev/null
