@@ -27,6 +27,11 @@
 # After the ref build, rb syntax runs every C unit of it, which is G, through the front end of rucc,
 # for the kernel and for the world. The report is syntax.txt in the record.
 #
+# For the world, the job then builds stand, the boot code, again with rucc.mk through make buildenv
+# (scripts/freebsd/stand.sh). boot2, gptboot, gptzfsboot, isoboot, pmbr, the BIOS loaders and the
+# EFI loaders get a rucc size beside the size of the ref build and the limit of the Makefile of
+# stand, in stand.md of the record and in the step summary. boot2.ld must be at most 7680 bytes.
+#
 # When the replay of the kernel has no failed unit and no stopped unit, the job builds the kernel
 # with rucc.mk (no -k), puts it into the image of the last good freebsd-g run in place of the G
 # kernel (scripts/freebsd/r-image.sh), and the boot job boots that image by BIOS and by UEFI with
@@ -228,6 +233,16 @@ jobs:
             done'
         env:
           KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
+      - name: the boot code with rucc
+        # After the ref build and the replay, because the rucc build of stand writes over the ref
+        # objects of stand. The sizes of the ref build are taken first.
+        if: always() && env.RB_TARGET == 'world'
+        timeout-minutes: 60
+        continue-on-error: true
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/stand.sh ref"
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+            sh /root/harness/scripts/freebsd/stand.sh > /root/out/stand.md 2>&1; cat /root/out/stand.md"
       - name: the kernel to boot
         id: boot
         if: always() && env.RB_TARGET == 'kernel'
@@ -321,7 +336,8 @@ jobs:
             fi
             cat record/r-image.txt 2>/dev/null || true
             echo '```'
-            for run in replay rucc r; do
+            cat record/stand.md 2>/dev/null || true
+            for run in replay rucc r stand; do
               f=compile/compile-$run.jsonl.xz
               [ -f "$f" ] || continue
               echo
