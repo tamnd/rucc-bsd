@@ -15,6 +15,17 @@ results/
       g-<run>.failed                    the cases that failed in that run
 ```
 
+Benchmark results (plan 13.2 and 13.3) have their own tree:
+
+```
+results/
+  bench/<system>/<row>/<version>/
+    bench.tsv                           the summary of one rb bench: R's speed against G per benchmark
+    runs.tsv                            every value of every run
+```
+
+`<version>` is the pin name without the system, for example `15.1` for `freebsd-15.1`.
+
 `<pin>` is the pin name in `conf/netbsd/trunk.pin`, for example `trunk`. `<commit>` is the short hash of the pinned tree. `<run>` is the GitHub Actions run ID. R runs use the prefix `r-` in the same place when they exist.
 
 ## The `.counts` format
@@ -42,6 +53,26 @@ One `key=value` pair per line. The first lines describe the run. The counts foll
 ## The `.failed` format
 
 One line per failed case: the test program, a tab, and the case name. The lines are sorted.
+
+## The benchmark files
+
+`rb bench` writes both files. The bench suite of rb-rc (`guest/rb-rc/bench.sh`) runs the set once per boot with the `rb-bench` program (`bench/rb-bench.c`) that each side's own compiler built. `rb bench` boots R, then G, 10 times each by default.
+
+`bench.tsv` starts with `#` lines, one `# key<TAB>value` each: `pin`, `system`, `row`, `made`, `g-image`, `r-image`, `rb-bench` (the version of the program), `runs`, `g-runs` and `r-runs` (the runs of each side that wrote results), and `geomean` when a benchmark is gated. Then a header line and one line per benchmark:
+
+| Column | Meaning |
+|---|---|
+| `group`, `name` | the group of plan 13.2, such as `syscalls`, and the benchmark |
+| `better` | `lower` for a time in seconds, `higher` for a rate |
+| `g_median`, `r_median` | the median over the runs of each side |
+| `g_cv`, `r_cv` | the coefficient of variation of each side, `-` with fewer than two values |
+| `g_runs`, `r_runs` | the runs of each side with a value |
+| `speed` | R's speed against G: G's time over R's, or R's rate over G's; under 1 is slower |
+| `gated` | `yes`, or why not: fewer than 3 runs, a run with no value, or a CV on G above 1% |
+
+`runs.tsv` has the columns `side` (`g` or `r`), `run`, `group`, `name`, `value` and `better`.
+
+The headline is the geometric mean of the gated speeds. `rb speed` applies the gates of 02.5 to it.
 
 ## How the files are used
 

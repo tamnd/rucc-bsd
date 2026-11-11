@@ -49,7 +49,7 @@ rb_start()
 	RB_POWEROFF="yes"
 	# shellcheck disable=SC1091
 	. "${work}/rb.conf"
-	export RB_SMOKE_DISK RB_KYUA_FILTERS RB_KYUA_LIMIT
+	export RB_SMOKE_DISK RB_KYUA_FILTERS RB_KYUA_LIMIT rb_bench_scale rb_bench_only
 
 	# A kernel with DDB prints a backtrace on a panic and resets, so QEMU exits instead of waiting.
 	# A kernel without DDB, like GENERIC of a release, prints the backtrace and reboots anyway.
@@ -73,6 +73,11 @@ rb_start()
 			rb_say "RB-SUITE kyua"
 			sh ${work}/kyua.sh ${out}/kyua
 			;;
+		bench)
+			# The bench suite of guest/rb-rc, with the rb-bench of the rb disk.
+			rb_say "RB-SUITE bench"
+			RB_WORK=${work} RB_BENCH=${work}/rb-bench sh ${work}/bench.sh ${out}/bench
+			;;
 		*)
 			echo "unknown suite ${s}" >> ${out}/errors.txt
 			;;
@@ -82,7 +87,7 @@ rb_start()
 	dmesg -a > ${out}/dmesg.end 2>/dev/null || dmesg > ${out}/dmesg.end
 	rc=0
 	tar -cf "${rb_disk}" -C "${work}" . || rc=$?
-	rb_say "RB-DONE tar=${rc} smoke=$(cat ${out}/smoke/counts 2>/dev/null) kyua=$(cat ${out}/kyua/counts 2>/dev/null)"
+	rb_say "RB-DONE tar=${rc} smoke=$(cat ${out}/smoke/counts 2>/dev/null) kyua=$(cat ${out}/kyua/counts 2>/dev/null) bench=$(cat ${out}/bench/counts 2>/dev/null)"
 
 	if [ "${RB_POWEROFF}" = "yes" ]; then
 		shutdown -p now

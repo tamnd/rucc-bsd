@@ -6,6 +6,7 @@
 
 pub mod attribution;
 pub mod baseline;
+pub mod bench;
 pub mod boot;
 pub mod build;
 pub mod cases;

@@ -3,13 +3,13 @@
 //! `rb image` writes it into the image. `rb boot` can put another one on the results disk, and
 //! rb-rc then reads that one after the image's. The file is shell: one `rb_<name>=<value>` line
 //! per setting that is not the default. The settings are listed in `guest/rb-rc/run.sh`,
-//! `guest/rb-rc/tests.sh` and `smoke/smoke.sh`.
+//! `guest/rb-rc/tests.sh`, `guest/rb-rc/bench.sh` and `smoke/smoke.sh`.
 
 use harness_agent::job::quote;
 use std::fmt::Write as _;
 
 /// The suites rb-rc knows (plan 12.2).
-pub const SUITES: &[&str] = &["boot", "smoke", "tests", "modules"];
+pub const SUITES: &[&str] = &["boot", "smoke", "tests", "modules", "bench"];
 
 /// The settings of one boot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +41,10 @@ pub struct RbConf {
     pub modules_only: Vec<String>,
     /// The modules suite does not load these modules.
     pub modules_skip: Vec<String>,
+    /// The bench suite multiplies the work of each benchmark by this number.
+    pub bench_scale: Option<String>,
+    /// The bench suite runs only these benchmarks.
+    pub bench_only: Vec<String>,
     /// Run the suites with the scripts on the results disk, under `rb/`, and not with the
     /// image's. rb-rc unpacks the disk to `$work/in`, so the line `libexec="$work/in/rb"` does
     /// it, also with the rb-rc of an older image.
@@ -62,6 +66,8 @@ impl Default for RbConf {
             kyua_parallelism: None,
             modules_only: Vec::new(),
             modules_skip: Vec::new(),
+            bench_scale: None,
+            bench_only: Vec::new(),
             scripts_on_disk: false,
         }
     }
@@ -122,10 +128,14 @@ impl RbConf {
         for (name, list) in [
             ("modules_only", &self.modules_only),
             ("modules_skip", &self.modules_skip),
+            ("bench_only", &self.bench_only),
         ] {
             if !list.is_empty() {
                 set(name, &list.join(" "));
             }
+        }
+        if let Some(v) = &self.bench_scale {
+            set("bench_scale", v);
         }
         if self.scripts_on_disk {
             s.push_str("libexec=\"$work/in/rb\"\n");
@@ -164,9 +174,13 @@ mod tests {
             tests_except: vec!["net".into(), "lib".into()],
             kyua_parallelism: Some(2),
             modules_skip: vec!["vmm".into(), "nvmm".into()],
+            bench_scale: Some("0.5".into()),
+            bench_only: vec!["getpid".into(), "sort".into()],
             ..RbConf::default()
         };
         let text = conf.render();
+        assert!(text.contains("rb_bench_scale=0.5\n"), "{text}");
+        assert!(text.contains("rb_bench_only='getpid sort'\n"), "{text}");
         assert!(text.contains("rb_suites='boot tests'\n"), "{text}");
         assert!(text.contains("rb_disk=''\n"), "{text}");
         assert!(text.contains("rb_poweroff=NO\n"), "{text}");

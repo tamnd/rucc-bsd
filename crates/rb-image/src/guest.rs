@@ -14,6 +14,8 @@ pub const RUN: &str = include_str!("../../../guest/rb-rc/run.sh");
 pub const TESTS: &str = include_str!("../../../guest/rb-rc/tests.sh");
 /// `/usr/libexec/rb/modules`, the modules suite of rb cross-modules.
 pub const MODULES: &str = include_str!("../../../guest/rb-rc/modules.sh");
+/// `/usr/libexec/rb/bench`, the bench suite of rb bench.
+pub const BENCH: &str = include_str!("../../../guest/rb-rc/bench.sh");
 /// `/usr/libexec/rb/smoke`, the smoke suite.
 pub const SMOKE: &str = include_str!("../../../smoke/smoke.sh");
 
@@ -46,6 +48,7 @@ pub fn files(conf: &RbConf) -> Vec<GuestFile> {
         file("etc/rc.d/rb", 0o555, RC_SCRIPT),
         file("usr/libexec/rb/run", 0o555, RUN),
         file("usr/libexec/rb/modules", 0o555, MODULES),
+        file("usr/libexec/rb/bench", 0o555, BENCH),
         file("usr/libexec/rb/smoke", 0o555, SMOKE),
         file("usr/libexec/rb/tests", 0o555, TESTS),
         file("etc/rb.conf", 0o644, &conf.render()),
@@ -87,7 +90,8 @@ mod tests {
         assert!(SMOKE.contains("RB-CHECK"));
         assert!(TESTS.contains("kyua") && TESTS.contains("atf-run"));
         assert!(MODULES.contains("modload") && MODULES.contains("RB-CASE"));
-        for s in [RC_SCRIPT, RUN, MODULES, SMOKE, TESTS] {
+        assert!(BENCH.contains("rb-bench") && BENCH.contains("RB-CASE"));
+        for s in [RC_SCRIPT, RUN, MODULES, BENCH, SMOKE, TESTS] {
             assert!(s.starts_with("#!/bin/sh\n"));
         }
     }
@@ -102,6 +106,7 @@ mod tests {
                 "etc/rc.d/rb",
                 "usr/libexec/rb/run",
                 "usr/libexec/rb/modules",
+                "usr/libexec/rb/bench",
                 "usr/libexec/rb/smoke",
                 "usr/libexec/rb/tests",
                 "etc/rb.conf"
