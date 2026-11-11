@@ -236,7 +236,7 @@ impl Seen {
                 self.panic_case.clone_from(&self.case);
             }
         }
-        if text.trim_end().ends_with("login:") {
+        if login_prompt(text) {
             self.login = true;
         }
     }
@@ -298,6 +298,14 @@ pub fn decode_base64(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Whether the text is a login prompt: `login:` alone or after a space, as getty prints it. The
+/// text is often a part of a line, so a word that ends in `login:`, such as the ATF case
+/// `t_getlogin:getlogin_r_err` cut after its colon, is not a prompt, and no marker of rb-rc is.
+fn login_prompt(text: &str) -> bool {
+    let text = text.trim();
+    !text.starts_with("RB-") && (text == "login:" || text.ends_with(" login:"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,6 +322,30 @@ mod tests {
         assert!(seen.login && !seen.ddb);
         assert_eq!(lines.finish().as_deref(), Some("login: "));
         assert_eq!(lines.finish(), None);
+    }
+
+    #[test]
+    fn a_word_that_ends_in_login_is_not_a_prompt() {
+        assert!(login_prompt("login: "));
+        assert!(login_prompt("netbsd login: "));
+        let mut lines = Lines::default();
+        let mut seen = Seen::default();
+        lines.push(b"RB-CASE lib/libc/sys/t_getlogin:");
+        seen.prompt(&lines.partial());
+        assert!(!seen.login);
+        assert_eq!(
+            lines.push(b"getlogin_r_err\r\n"),
+            ["RB-CASE lib/libc/sys/t_getlogin:getlogin_r_err"]
+        );
+        seen.prompt(&lines.partial());
+        for text in [
+            "t_getlogin:",
+            "lib/libc/sys/t_getlogin:",
+            "RB-CASE x login:",
+        ] {
+            seen.prompt(text);
+        }
+        assert!(!seen.login);
     }
 
     #[test]

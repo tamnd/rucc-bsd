@@ -9,7 +9,9 @@
 # Run it after the image job of the netbsd-g run has finished. The image artifact is kept 7 days.
 #
 # The jobs check out the commit of the netbsd-g run, not the head of the branch, so that its rb
-# reads the configuration files (rows.toml and the others) that it was built with.
+# reads the configuration files (rows.toml and the others) that it was built with. With rb=main,
+# the jobs check out the head of main and use an rb built from it, for a fix in rb that the guest
+# does not see, such as how rb boot reads the console. The image stays the one of the run.
 
 name: netbsd-baseline
 
@@ -25,6 +27,11 @@ on:
         type: choice
         options: ["3", "1"]
         default: "3"
+      rb:
+        description: The rb and the commit to use, of the netbsd-g run or of the head of main
+        type: choice
+        options: ["run", "main"]
+        default: "run"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.run_id }}
@@ -45,14 +52,39 @@ jobs:
         run: |
           sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
           echo "netbsd-g run $RUN_ID is of $sha." | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$RB" = main ]; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+            echo "rb and the configuration are of main at $sha." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ inputs.run_id }}
+          RB: ${{ inputs.rb }}
+
+  rb:
+    name: cargo build rb
+    needs: source
+    if: inputs.rb == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: rb-main
+          path: target/release/rb
+          retention-days: 7
 
   atf:
     name: run ${{ matrix.run }} ATF ${{ matrix.shard }}
-    needs: source
+    needs: [source, rb]
+    if: ${{ !cancelled() && needs.source.result == 'success' && needs.rb.result != 'failure' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:
@@ -91,11 +123,17 @@ jobs:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v8.0.1
+        if: inputs.rb != 'main'
         with:
           name: rb-linux-x86_64
           path: ${{ runner.temp }}/rb
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        if: inputs.rb == 'main'
+        with:
+          name: rb-main
+          path: ${{ runner.temp }}/rb
       - name: shard name
         run: echo "SHARD_NAME=$(echo "$SHARD" | tr ':,' '--')" >> "$GITHUB_ENV"
       - name: rb boot with the tests suite
@@ -137,8 +175,8 @@ jobs:
 
   baseline:
     name: rb baseline
-    needs: [source, atf]
-    if: always() && needs.source.result == 'success'
+    needs: [source, rb, atf]
+    if: always() && needs.source.result == 'success' && needs.rb.result != 'failure'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
@@ -155,11 +193,17 @@ jobs:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v8.0.1
+        if: inputs.rb != 'main'
         with:
           name: rb-linux-x86_64
           path: ${{ runner.temp }}/rb
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        if: inputs.rb == 'main'
+        with:
+          name: rb-main
+          path: ${{ runner.temp }}/rb
       - name: rb baseline
         run: |
           chmod +x "$RUNNER_TEMP/rb/rb"
@@ -181,7 +225,7 @@ jobs:
               runs/netbsd-baseline-run-"$n"-*/results/tests/atf/*.tps || true
           done
           {
-            echo "Image and rb from netbsd-g run $RUN_ID."
+            echo "Image from netbsd-g run $RUN_ID. rb from: $RB (run or main)."
             echo
             cat out/baseline.md
             echo
@@ -203,6 +247,7 @@ jobs:
         env:
           RUNS: ${{ inputs.runs }}
           RUN_ID: ${{ inputs.run_id }}
+          RB: ${{ inputs.rb }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
