@@ -5,7 +5,7 @@
 #
 # NetBSD only. It loads each kernel module, one at a time, with "modload NAME", checks that
 # modstat lists it, and unloads it with modunload. The modules are those of the image, under
-# /stand/MACHINE/RELEASE/modules. When the results disk has a directory "modules" (rb boot
+# /stand/MACHINE/RELEASE/modules. When the results disk has a directory "kmods" (rb boot
 # --modules DIR), that directory takes the place of the image's first. So a module that a module
 # needs comes from the same build.
 #
@@ -32,7 +32,7 @@
 out=$1
 mkdir -p "$out"
 base=${RB_MODULES:-/stand/$(uname -m)/$(sysctl -n kern.osrelease)/modules}
-disk=${RB_WORK:-/var/rb}/in/modules
+disk=${RB_WORK:-/var/rb}/in/kmods
 
 if [ -d "$disk" ]; then
 	rm -rf "$base.image"

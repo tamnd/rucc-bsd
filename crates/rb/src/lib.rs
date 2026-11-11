@@ -12,6 +12,7 @@ pub mod cases;
 pub mod census;
 pub mod cli;
 pub mod console;
+pub mod crossmodules;
 pub mod ctf;
 pub mod ctfdiff;
 pub mod demands;

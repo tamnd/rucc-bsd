@@ -45,7 +45,7 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
-        "baseline" | "boot" => return boot_commands(command),
+        "baseline" | "boot" | "cross-modules" => return boot_commands(command),
         "census" => Accepts {
             positional: true,
             values: &["objdir", "skip", "objects", "limit"],
@@ -155,6 +155,34 @@ fn boot_commands(command: &str) -> Option<Accepts> {
                 "u-boot",
             ],
             switches: &["in-place", "keep", "login", "scripts", "dry-run"],
+        },
+        "cross-modules" => Accepts {
+            positional: false,
+            values: &[
+                "image",
+                "out",
+                "attempts",
+                "gg",
+                "rg",
+                "gr",
+                "rr",
+                "limit",
+                "row",
+                "firmware",
+                "modules",
+                "modules-only",
+                "modules-skip",
+                "boot-timeout",
+                "timeout",
+                "reboots",
+                "disk-size",
+                "cpus",
+                "memory",
+                "qemu",
+                "ovmf-code",
+                "ovmf-vars",
+            ],
+            switches: &["keep", "login", "scripts"],
         },
         _ => return None,
     })
@@ -347,8 +375,7 @@ usage:
       --tests-repeat N runs the directories of --tests-only N times. The modules suite, on
       NetBSD, loads and unloads each kernel module of the image, or of DIR of --modules, a tree
       of NAME/NAME.kmod that goes on the results disk; --modules-only and --modules-skip choose
-      the modules. On a panic it
-      sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
+      the modules. On a panic it sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
       DIR/boot.json. ROW is amd64 by default, and the firmware is the row's test firmware.
       edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then the S-mode U-Boot of
       riscv64, which loads the EFI loader from the disk.
@@ -380,6 +407,17 @@ usage:
       the report stop after N lines, 50 by default. When a call was delegated under bring-up, the
       first line says the build is ungraded, and the report lists each delegated unit with what
       rucc said about it.
+  rb cross-modules --image IMG --out DIR [--modules DIR] [--attempts N] [--modules-skip NAME,...]
+          [the options of rb boot]
+  rb cross-modules --gg DIR [--rg DIR] [--gr DIR] [--rr DIR] [--limit N]
+      Load the kernel modules of one build into the kernel of another (plan 09.3). The first
+      form runs one cell: it boots IMG with the modules suite, with the modules of --modules or
+      else the image's, to DIR/boot-N. When a boot stops in a panic or a timeout while a module
+      loads, the module gets that result, and the next boot skips it, up to N boots, 8 by
+      default. DIR/modules.tsv gets each module's result. Exits 1 unless every module passed.
+      The second form compares the cells, each the DIR of the first form. In a cell name the
+      first letter is the kernel and the second the modules. A module that passes in GG and not
+      in another cell is a finding. Exits 1 when there is a finding.
   rb ctf-diff --g FILE|DIR --r FILE|DIR [--g-log LOG --r-log LOG] [--out DIR] [--limit N]
       Compare the CTF of G's and R's kernels and modules. Each side is an ELF file with a
       .SUNW_ctf section, or a directory, where the files with one are paired by their path under
