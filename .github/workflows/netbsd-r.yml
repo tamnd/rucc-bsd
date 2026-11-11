@@ -436,9 +436,9 @@ jobs:
           path: target/release/rb
           retention-days: 7
 
-  # rb flags-diff, sections-diff and symbols-diff of the rucc leg against the ref leg, which is G's
-  # compiler through the same shims. The objects of the ref leg are under /mnt/cmp/ref and those
-  # of the rucc leg under /mnt/cmp/rucc. None of them fails the run.
+  # rb flags-diff, sections-diff, symbols-diff and vec-audit of the rucc leg against the ref leg,
+  # which is G's compiler through the same shims. The objects of the ref leg are under
+  # /mnt/cmp/ref and those of the rucc leg under /mnt/cmp/rucc. None of them fails the run.
   compare:
     name: rb compares the rucc kernel with the ref kernel
     needs: [kernel, rb]
@@ -463,7 +463,7 @@ jobs:
         with:
           name: netbsd-r-objects-rucc
           path: /mnt/cmp/rucc
-      - name: rb flags-diff, sections-diff and symbols-diff
+      - name: rb flags-diff, sections-diff, symbols-diff and vec-audit
         run: |
           rb="$RUNNER_TEMP/rb/rb"
           chmod +x "$rb"
@@ -479,11 +479,12 @@ jobs:
             run "$tool" "${g[@]}" "${r[@]}"
             "$rb" "$tool" "${g[@]}" "${r[@]}" --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
           done
+          run vec-audit "${g[@]}" "${r[@]}" --limit 100000
           {
             echo "### rb compares the rucc kernel with the ref kernel"
             echo
             echo '```'
-            for f in mk-diff flags-diff sections-diff symbols-diff; do
+            for f in mk-diff flags-diff sections-diff symbols-diff vec-audit; do
               if [ -f "$out/$f.txt" ]; then echo "rb $f:"; head -4 "$out/$f.txt"; echo; fi
             done
             echo '```'

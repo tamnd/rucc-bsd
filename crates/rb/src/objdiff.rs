@@ -655,7 +655,13 @@ pub struct Unit {
 /// the same object, the last one counts.
 #[must_use]
 pub fn units(records: &[CompileRecord], root: &str) -> BTreeMap<String, Unit> {
-    let mut out = BTreeMap::new();
+    records.iter().filter_map(|r| unit(r, root)).collect()
+}
+
+/// The object one call made, keyed as in [`units`], or `None` when the call compiled no C or
+/// C++ unit to an object, or failed.
+#[must_use]
+pub fn unit(r: &CompileRecord, root: &str) -> Option<(String, Unit)> {
     let rooted = |path: String| {
         if root.is_empty() {
             path
@@ -663,30 +669,24 @@ pub fn units(records: &[CompileRecord], root: &str) -> BTreeMap<String, Unit> {
             path.replace(root, "<root>")
         }
     };
-    for r in records {
-        let slot = r.slot.as_deref().unwrap_or("cc");
-        if !r.is_unit() || !r.succeeded() || !matches!(slot, "cc" | "c++") {
-            continue;
-        }
-        let Some(output) = r
-            .outputs
-            .iter()
-            .map(|o| o.path.as_str())
-            .find(|p| is_object(p))
-        else {
-            continue;
-        };
-        let source = r
-            .inputs
-            .iter()
-            .map(|i| i.path.as_str())
-            .find(|p| !is_object(p) && Path::new(p).extension().is_none_or(|e| e != "a"))
-            .map(|p| rooted(absolute(&r.cwd, p)))
-            .unwrap_or_default();
-        let path = absolute(&r.cwd, output);
-        out.insert(rooted(path.clone()), Unit { path, source });
+    let slot = r.slot.as_deref().unwrap_or("cc");
+    if !r.is_unit() || !r.succeeded() || !matches!(slot, "cc" | "c++") {
+        return None;
     }
-    out
+    let output = r
+        .outputs
+        .iter()
+        .map(|o| o.path.as_str())
+        .find(|p| is_object(p))?;
+    let source = r
+        .inputs
+        .iter()
+        .map(|i| i.path.as_str())
+        .find(|p| !is_object(p) && Path::new(p).extension().is_none_or(|e| e != "a"))
+        .map(|p| rooted(absolute(&r.cwd, p)))
+        .unwrap_or_default();
+    let path = absolute(&r.cwd, output);
+    Some((rooted(path.clone()), Unit { path, source }))
 }
 
 /// What one pair of objects gave.
