@@ -137,6 +137,9 @@ fn boot_commands(command: &str) -> Option<Accepts> {
                 "tests-only",
                 "tests-except",
                 "tests-repeat",
+                "modules",
+                "modules-only",
+                "modules-skip",
                 "boot-timeout",
                 "timeout",
                 "reboots",
@@ -324,9 +327,10 @@ usage:
       suite by default. With --from, the runs are the output directories of earlier rb boot
       commands, and nothing boots. A run in shards, one boot per shard, joins the directories
       of its shards with '+', as in --from smoke+net+lib. Exits 1 when a run did not pass.
-  rb boot --image IMG --out DIR [--suite boot,smoke,tests] [--row ROW]
+  rb boot --image IMG --out DIR [--suite boot,smoke,tests,modules] [--row ROW]
           [--firmware ovmf|seabios|edk2|u-boot]
           [--tests-only DIR,...] [--tests-except DIR,...] [--tests-repeat N]
+          [--modules DIR] [--modules-only NAME,...] [--modules-skip NAME,...]
           [--boot-timeout SECS] [--timeout SECS]
           [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
           [--qemu PATH] [--ovmf-code FILE --ovmf-vars FILE] [--edk2-code FILE --edk2-vars FILE]
@@ -340,7 +344,10 @@ usage:
       which then also holds rb-rc's scripts, and it waits for RB-READY. With --scripts, the
       results disk holds the suite scripts of this rb, and rb-rc runs them and not the image's.
       On NetBSD a directory of --tests-only can be under the top, such as net/carp, and
-      --tests-repeat N runs the directories of --tests-only N times. On a panic it
+      --tests-repeat N runs the directories of --tests-only N times. The modules suite, on
+      NetBSD, loads and unloads each kernel module of the image, or of DIR of --modules, a tree
+      of NAME/NAME.kmod that goes on the results disk; --modules-only and --modules-skip choose
+      the modules. On a panic it
       sends bt to ddb and stops QEMU. The results go to DIR/results and the outcome to
       DIR/boot.json. ROW is amd64 by default, and the firmware is the row's test firmware.
       edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then the S-mode U-Boot of

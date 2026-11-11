@@ -9,7 +9,7 @@ use harness_agent::job::quote;
 use std::fmt::Write as _;
 
 /// The suites rb-rc knows (plan 12.2).
-pub const SUITES: &[&str] = &["boot", "smoke", "tests"];
+pub const SUITES: &[&str] = &["boot", "smoke", "tests", "modules"];
 
 /// The settings of one boot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +37,10 @@ pub struct RbConf {
     pub tests_except: Vec<String>,
     /// kyua's parallelism.
     pub kyua_parallelism: Option<u32>,
+    /// The modules suite loads only these modules.
+    pub modules_only: Vec<String>,
+    /// The modules suite does not load these modules.
+    pub modules_skip: Vec<String>,
     /// Run the suites with the scripts on the results disk, under `rb/`, and not with the
     /// image's. rb-rc unpacks the disk to `$work/in`, so the line `libexec="$work/in/rb"` does
     /// it, also with the rb-rc of an older image.
@@ -56,6 +60,8 @@ impl Default for RbConf {
             tests_only: Vec::new(),
             tests_except: Vec::new(),
             kyua_parallelism: None,
+            modules_only: Vec::new(),
+            modules_skip: Vec::new(),
             scripts_on_disk: false,
         }
     }
@@ -113,6 +119,14 @@ impl RbConf {
         if let Some(n) = self.kyua_parallelism {
             set("kyua_parallelism", &n.to_string());
         }
+        for (name, list) in [
+            ("modules_only", &self.modules_only),
+            ("modules_skip", &self.modules_skip),
+        ] {
+            if !list.is_empty() {
+                set(name, &list.join(" "));
+            }
+        }
         if self.scripts_on_disk {
             s.push_str("libexec=\"$work/in/rb\"\n");
         }
@@ -149,6 +163,7 @@ mod tests {
             smoke_package: Some("it's".into()),
             tests_except: vec!["net".into(), "lib".into()],
             kyua_parallelism: Some(2),
+            modules_skip: vec!["vmm".into(), "nvmm".into()],
             ..RbConf::default()
         };
         let text = conf.render();
@@ -158,6 +173,8 @@ mod tests {
         assert!(text.contains(r"rb_smoke_package='it'\''s'"), "{text}");
         assert!(text.contains("rb_tests_except='net lib'\n"), "{text}");
         assert!(text.contains("rb_kyua_parallelism=2\n"), "{text}");
+        assert!(text.contains("rb_modules_skip='vmm nvmm'\n"), "{text}");
+        assert!(!text.contains("rb_modules_only"), "{text}");
         assert!(!text.contains("libexec"), "{text}");
         let conf = RbConf {
             scripts_on_disk: true,

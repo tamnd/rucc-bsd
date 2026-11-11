@@ -81,6 +81,7 @@ fn request(top: &Path, out: &Path) -> Request {
         in_place: false,
         keep: false,
         login: false,
+        modules: None,
     }
 }
 
