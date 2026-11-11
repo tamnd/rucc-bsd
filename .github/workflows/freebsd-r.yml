@@ -24,6 +24,9 @@
 # compares the diagnostics of each unit of the ref build and of the replay, and rb sections-diff and
 # rb symbols-diff compare their objects. None of them fails the run.
 #
+# After the ref build, rb syntax runs every C unit of it, which is G, through the front end of rucc,
+# for the kernel and for the world. The report is syntax.txt in the record.
+#
 # When the replay of the kernel has no failed unit and no stopped unit, the job builds the kernel
 # with rucc.mk (no -k), puts it into the image of the last good freebsd-g run in place of the G
 # kernel (scripts/freebsd/r-image.sh), and the boot job boots that image by BIOS and by UEFI with
@@ -147,6 +150,15 @@ jobs:
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk \
             RB_PHASE=$RB_TARGET-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh $RB_TARGET"
+      - name: rb syntax over the ref build
+        timeout-minutes: 90
+        continue-on-error: true
+        run: |
+          # shellcheck disable=SC2016
+          scripts/freebsd/builder.sh ssh 'cd /root/harness && out=/root/out &&
+            /build/rb/bin/rb syntax freebsd-15.1 --log /build/out/compile-ref.jsonl --rucc /build/rb/bin/rucc \
+              --jobs "$(sysctl -n hw.ncpu)" --limit 100 --out "$out/syntax.tsv" > "$out/syntax.txt" 2>&1
+            echo "rb syntax exited $?" >> "$out/syntax.txt"; head -1 "$out/syntax.txt"'
       - name: compile every unit of the ref build with rucc
         # A unit stops after 300 s. The step stops after its limit, and the steps after it still run.
         timeout-minutes: ${{ (inputs.target || 'kernel') == 'world' && 200 || 120 }}
@@ -309,7 +321,7 @@ jobs:
               echo
               python3 -I scripts/freebsd/r-report.py "$f" --tsv "record/failed-units-$run.tsv"
             done
-            for tool in mk-diff flags-diff warnings sections-diff symbols-diff; do
+            for tool in syntax mk-diff flags-diff warnings sections-diff symbols-diff; do
               [ -f "record/$tool.txt" ] || continue
               echo
               echo "#### rb $tool"
