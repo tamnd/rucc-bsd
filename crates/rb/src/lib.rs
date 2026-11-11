@@ -30,6 +30,7 @@ pub mod repo;
 pub mod scan;
 pub mod sets;
 pub mod shims;
+pub mod speed;
 pub mod syntax;
 pub mod toolchain;
 pub mod vecaudit;
