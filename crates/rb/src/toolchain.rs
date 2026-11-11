@@ -137,8 +137,12 @@ impl Expected {
             cross_prefix: None,
         };
         if pin.system == "freebsd" {
-            let t = &toolchains.toolchain[&persona.reference];
-            let prefix = cross_prefix(toolchains, &persona.reference)?;
+            let name = persona.reference_for(row, toolchains);
+            let t = toolchains
+                .toolchain
+                .get(&name)
+                .ok_or_else(|| format!("toolchains.toml has no {name}"))?;
+            let prefix = cross_prefix(toolchains, &name)?;
             let path = |v: &Option<String>| PathBuf::from(v.clone().unwrap_or_default());
             expected.reference = Some([
                 path(&t.cc),

@@ -2,6 +2,7 @@
 //! rucc wears for it (plan 04.3).
 
 use crate::pins::Pin;
+use crate::places::Row;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -190,6 +191,26 @@ impl Persona {
             self.target_os
                 .replace("{version}", &two_places(&pin.version))
         )
+    }
+
+    /// The reference toolchain of a row. A FreeBSD persona names the amd64 flavor of a port, such
+    /// as `amd64-gcc15`. A row with another `TARGET_ARCH` takes the flavor of that `TARGET_ARCH`,
+    /// such as `aarch64-gcc15`, when `toolchains.toml` lists it.
+    #[must_use]
+    pub fn reference_for(&self, row: &Row, toolchains: &Toolchains) -> String {
+        let flavor = row
+            .freebsd
+            .target_arch
+            .as_deref()
+            .filter(|_| self.system == "freebsd")
+            .and_then(|arch| {
+                let port = self.reference.strip_prefix("amd64-")?;
+                Some(format!("{arch}-{port}"))
+            });
+        match flavor {
+            Some(name) if toolchains.toolchain.contains_key(&name) => name,
+            _ => self.reference.clone(),
+        }
     }
 
     /// The arguments rucc gets in front of the build's: the target and the persona (05.4).
@@ -413,6 +434,46 @@ binutils = "2.46"
                 "--target=x86_64-unknown-netbsd11.99",
                 "-fgnuc-version=14.4.0"
             ]
+        );
+    }
+
+    #[test]
+    fn a_row_takes_the_flavor_of_its_target_arch() {
+        let mut personas = files().0;
+        let toolchains = Toolchains::parse(
+            "[toolchain.amd64-gcc15]\nsystem = \"freebsd\"\nkind = \"pkg\"\nrepopath = \"a.pkg\"\nsha256 = \"x\"\n\n[toolchain.aarch64-gcc15]\nsystem = \"freebsd\"\nkind = \"pkg\"\nrepopath = \"b.pkg\"\nsha256 = \"y\"\n",
+        )
+        .unwrap();
+        personas.persona[0].reference = "amd64-gcc15".into();
+        let row = |arch: Option<&str>| -> Row {
+            let names = arch.map_or_else(String::new, |a| format!("target_arch = \"{a}\""));
+            toml::from_str(&format!(
+                "from = {{}}\nrucc_arch = \"x\"\nfreebsd = {{ {names} }}\nnetbsd = {{}}\n"
+            ))
+            .unwrap()
+        };
+        let freebsd = &personas.persona[0];
+        assert_eq!(
+            freebsd.reference_for(&row(Some("aarch64")), &toolchains),
+            "aarch64-gcc15"
+        );
+        assert_eq!(
+            freebsd.reference_for(&row(Some("amd64")), &toolchains),
+            "amd64-gcc15"
+        );
+        // No riscv64-gcc15 in the file, and no TARGET_ARCH: the persona's own reference.
+        assert_eq!(
+            freebsd.reference_for(&row(Some("riscv64")), &toolchains),
+            "amd64-gcc15"
+        );
+        assert_eq!(
+            freebsd.reference_for(&row(None), &toolchains),
+            "amd64-gcc15"
+        );
+        // A NetBSD persona keeps its reference.
+        assert_eq!(
+            personas.persona[1].reference_for(&row(Some("aarch64")), &toolchains),
+            "tools"
         );
     }
 
