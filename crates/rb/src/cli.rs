@@ -358,6 +358,7 @@ fn graded_commands(command: &str) -> Option<Accepts> {
             positional: false,
             values: &[
                 "g", "r", "g-root", "r-root", "g-text", "r-text", "build", "units", "limit",
+                "bench",
             ],
             switches: &[],
         },
@@ -631,7 +632,7 @@ usage:
       as rb warnings does. --out writes one line per unit as tab-separated values. Exits 1 when a
       unit failed or has such a warning.
   rb speed [--g LOG --r LOG [--g-root DIR --r-root DIR]] [--g-text FILE,... --r-text FILE,...]
-          [--build NAME] [--units FILE] [--limit N]
+          [--bench FILE,...] [--build NAME] [--units FILE] [--limit N]
       The compile time and size gates of 02.5 (plan 13.4). LOG is the compile.jsonl of each
       build, and units are paired by object as for rb flags-diff. Only C units and .S files of the
       C compiler slot count; probes, links, C++ units and failed calls do not. R's summed user and
@@ -642,7 +643,9 @@ usage:
       FILE of --g-text is compared with the FILE of --r-text in the same place, such as the
       kernel and libc.so: the size of R's executable sections must be within 5% of G's. --build
       names the build in the report, and --units writes each paired unit as tab-separated
-      values. Exits 1 when a gate fails.
+      values. Each FILE of --bench is the bench.tsv of an rb bench: the geometric mean of R's
+      speed over the gated benchmarks must be at least 0.98, and no gated benchmark may be below
+      0.95. The report lists every benchmark more than 2% behind. Exits 1 when a gate fails.
   rb test (--gg RUNS | --gg-image IMG | --baseline DIR) [--rg RUNS | --rg-image IMG]
           [--gr RUNS | --gr-image IMG] [--rr RUNS | --rr-image IMG] [--out DIR] [--work DIR]
           [--limit N] [the options of rb boot] [--dry-run]
