@@ -332,7 +332,7 @@ fn modules_load_and_unload_one_at_a_time() {
     let base = root.join("stand/modules");
     std::fs::create_dir_all(base.join("old")).unwrap();
     std::fs::write(base.join("old/old.kmod"), "").unwrap();
-    let disk = root.join("work/in/modules");
+    let disk = root.join("work/in/kmods");
     for m in ["a", "bad", "builtin", "busy", "skipme"] {
         std::fs::create_dir_all(disk.join(m)).unwrap();
         std::fs::write(disk.join(m).join(format!("{m}.kmod")), "").unwrap();

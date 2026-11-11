@@ -226,7 +226,7 @@ pub struct Request {
     /// Log in as root at the login prompt, and start rb-rc from the results disk.
     pub login: bool,
     /// A tree of kernel modules, `NAME/NAME.kmod`, that goes on the results disk under
-    /// `modules/` for the modules suite.
+    /// `kmods/` for the modules suite.
     pub modules: Option<PathBuf>,
 }
 
@@ -455,7 +455,8 @@ pub fn login_command() -> String {
 /// The results disk before the boot: an archive with the `rb.conf`, and room after it. With
 /// `login`, the archive also has rb-rc's scripts, for an image that does not have them. With
 /// [`RbConf::scripts_on_disk`] it has them too, for an image whose scripts are older than rb's.
-/// With `modules`, it has that tree under `modules/`.
+/// With `modules`, it has that tree under `kmods/`. The name is not `modules`, which is the
+/// directory of the modules suite in the results.
 pub fn results_disk(
     conf: &RbConf,
     size: u64,
@@ -475,8 +476,8 @@ pub fn results_disk(
         }
     }
     if let Some(dir) = modules {
-        entries.push(ustar::Entry::dir("modules"));
-        tree(dir, "modules", &mut entries)?;
+        entries.push(ustar::Entry::dir("kmods"));
+        tree(dir, "kmods", &mut entries)?;
     }
     let tar = ustar::write(&entries)?;
     if (tar.len() as u64) > size {
@@ -833,8 +834,12 @@ fn collect(req: &Request, seen: &Seen) -> Result<Option<String>, String> {
     let entries = ustar::read_disk(&paths(req).results_disk).unwrap_or_default();
     let results = req.out.join("results");
     // What rb wrote before the boot is not a result: the rb.conf, and rb-rc's scripts with
-    // --login.
-    let ours = |path: &str| path == "rb.conf" || path == "rb" || path.starts_with("rb/");
+    // --login, and the modules of --modules.
+    let ours = |path: &str| {
+        ["rb.conf", "rb", "kmods"].contains(&path)
+            || path.starts_with("rb/")
+            || path.starts_with("kmods/")
+    };
     if entries.iter().any(|e| !ours(&e.path)) {
         ustar::unpack(&entries, &results)?;
         return Ok(Some("disk".into()));
@@ -970,10 +975,10 @@ pub fn summary(o: &Outcome, out: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn request() -> Request {
+    pub(crate) fn request() -> Request {
         Request {
             image: "/img/fb.img".into(),
             out: "/runs/1".into(),
@@ -1160,11 +1165,11 @@ mod tests {
             paths,
             [
                 "rb.conf",
-                "modules",
-                "modules/nfs",
-                "modules/nfs/nfs.kmod",
-                "modules/udf",
-                "modules/udf/udf.kmod"
+                "kmods",
+                "kmods/nfs",
+                "kmods/nfs/nfs.kmod",
+                "kmods/udf",
+                "kmods/udf/udf.kmod"
             ]
         );
         assert_eq!(entries[5].data, b"udf");
