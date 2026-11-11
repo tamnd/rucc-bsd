@@ -40,7 +40,8 @@ if [ -n "$first" ]; then
 	echo "**First failed call:** \`$slot\` on \`${file:-no source file}\` in \`${dir#"$NB_OBJ/"}\`."
 	echo
 	echo '```'
-	(cd "$dir" && RB_SHIM_LOG="" "${NB_TOOLDIR:-$NB_ROOT/tools-r}/bin/x86_64--netbsd-$([ "$slot" = cc ] && echo gcc || echo cpp)" \
+	tooldir=${NB_TOOLDIR:-$NB_ROOT/tools-r}
+	(cd "$dir" && RB_SHIM_LOG="" "$tooldir/bin/$(nb_gnu "$tooldir")-$([ "$slot" = cc ] && echo gcc || echo cpp)" \
 		"${args[@]}" 2>&1 >/dev/null | head -40)
 	echo '```'
 	echo

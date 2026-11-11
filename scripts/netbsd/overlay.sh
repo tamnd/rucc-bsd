@@ -4,7 +4,8 @@
 #   overlay.sh RUCC
 #   overlay.sh ref
 #
-# The R TOOLDIR ($NB_ROOT/tools-r) is a copy of $NB_TOOLS in which two names change:
+# The R TOOLDIR ($NB_ROOT/tools-r) is a copy of $NB_TOOLS in which two names change. The names
+# carry the GNU platform of the tools (nb_gnu), x86_64--netbsd for amd64:
 #   bin/x86_64--netbsd-gcc   is conf/netbsd/toolchain/shim-cc.sh, which runs RUCC;
 #   bin/x86_64--netbsd-cpp   is conf/netbsd/toolchain/shim-cpp.sh, which runs RUCC -E.
 # The reference programs stay beside them as x86_64--netbsd-gcc.ref and x86_64--netbsd-cpp.ref.
@@ -25,8 +26,7 @@ mode=$1
 rucc=
 if [ "$mode" != ref ]; then rucc=$(command -v "$mode"); fi
 dst=${NB_TOOLDIR_R:-$NB_ROOT/tools-r}
-gnu=$(sed -n 's/^MACHINE_GNU_PLATFORM=//p' "$NB_TOOLS/bin/nbmake-$NB_MACHINE" | head -1)
-gnu=${gnu:-x86_64--netbsd}
+gnu=$(nb_gnu "$NB_TOOLS")
 target=${RB_RUCC_TARGET:-$gnu}
 
 export LC_ALL=C

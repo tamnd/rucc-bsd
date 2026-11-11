@@ -48,3 +48,16 @@ nb_du() {
 nb_summary() {
 	if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '%s\n' "$*" >> "$GITHUB_STEP_SUMMARY"; fi
 }
+
+# The GNU platform of a TOOLDIR, such as x86_64--netbsd, aarch64--netbsd or riscv64--netbsd: the
+# prefix of the one C compiler in its bin. The nbmake wrapper does not name it.
+nb_gnu() {
+	local gcc
+	gcc=$(cd "${1:-$NB_TOOLS}/bin" && find . -maxdepth 1 -name '*--netbsd*-gcc' | head -1)
+	gcc=${gcc#./}
+	if [ -z "$gcc" ]; then
+		echo "no *--netbsd*-gcc in ${1:-$NB_TOOLS}/bin" >&2
+		return 1
+	fi
+	echo "${gcc%-gcc}"
+}
