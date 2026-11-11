@@ -32,6 +32,9 @@
 # summary. Then scripts/netbsd/stand.sh builds the boot code of sys/arch/i386/stand again with
 # rucc and gives the size of each file of /usr/mdec beside the size from the control. The rucc and
 # target inputs apply as for the kernel, and g_run and atf do not apply.
+# The control build takes about 100 minutes and is the same for each run of the same pin. The run
+# that builds it keeps it as an artifact (scripts/netbsd/control.sh), and a later run with the
+# same pin and scripts restores that artifact and goes straight to the replay.
 #
 # The ref leg of the kernel and the ref build of the world also run rb syntax: every C unit of
 # that build, which is G, through the front end of rucc (scripts/netbsd/syntax.sh). shim-ref.sh
@@ -367,11 +370,52 @@ jobs:
           echo "rucc $RUCC_VERSION, the release tarball" >> "$GITHUB_STEP_SUMMARY"
         env:
           GH_TOKEN: ${{ github.token }}
+      # The control depends only on the tools, the pinned tree and the scripts that build and keep
+      # it. A run that built it keeps it as an artifact named by the hash of those scripts
+      # (scripts/netbsd/control.sh), and a later run restores it in place of the build.
+      - name: the control of an earlier run
+        id: control
+        run: |
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=10" \
+            -q '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty')
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [ -n "$run" ]; then
+            echo "The control build is that of run $run, from the artifact $NAME." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: netbsd-r-control-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'conf/netbsd/toolchain/shim-ref.sh', 'scripts/netbsd/common.sh', 'scripts/netbsd/fetch.sh', 'scripts/netbsd/overlay.sh', 'scripts/netbsd/control.sh', 'scripts/netbsd/stand.sh') }}
+      - uses: actions/download-artifact@v8.0.1
+        if: steps.control.outputs.run != ''
+        with:
+          name: ${{ steps.control.outputs.name }}
+          path: /mnt/nb/control
+          run-id: ${{ steps.control.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: restore the control
+        id: restore
+        if: steps.control.outputs.run != ''
+        run: |
+          scripts/netbsd/control.sh restore "$NB_ROOT/control/control.tar.zst"
+          rm -rf "$NB_ROOT/control"
       - name: build.sh distribution with ref, the control
         id: ref
+        if: steps.control.outputs.run == ''
         run: |
           scripts/netbsd/overlay.sh ref
           NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh distribution-ref -u distribution
+          scripts/netbsd/control.sh save "$NB_ROOT/control/control.tar.zst"
+      - uses: actions/upload-artifact@v7.0.1
+        if: steps.ref.outcome == 'success'
+        with:
+          name: ${{ steps.control.outputs.name }}
+          path: /mnt/nb/control/control.tar.zst
+          compression-level: 0
+          retention-days: 30
+      - name: remove the kept control
+        if: steps.ref.outcome == 'success'
+        run: rm -rf "$NB_ROOT/control"
       - uses: actions/download-artifact@v8.0.1
         with:
           name: rb-linux-x86_64
@@ -406,7 +450,7 @@ jobs:
               | xz -T0 > "$NB_ROOT/logs/replay-errors.tar.xz" || true
           fi
       - name: the boot code with rucc
-        if: always() && steps.ref.outcome == 'success'
+        if: always() && (steps.ref.outcome == 'success' || steps.restore.outcome == 'success')
         continue-on-error: true
         run: NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/stand.sh >> "$GITHUB_STEP_SUMMARY"
       - name: compress the logs
