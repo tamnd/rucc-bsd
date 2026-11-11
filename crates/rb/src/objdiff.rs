@@ -500,7 +500,8 @@ pub fn sections(g: &Object, r: &Object) -> Vec<Finding> {
 }
 
 /// The symbols each linker set section of an object defines, by set, with the number of entries
-/// of each name. The name of a local symbol loses the `.N` of [`unnumbered`].
+/// of each name. The name of a local symbol loses the `.N` of [`unnumbered`]. A mapping symbol is
+/// not an entry (see [`is_mapping`]).
 #[must_use]
 pub fn linker_sets(o: &Object) -> BTreeMap<String, BTreeMap<String, usize>> {
     let mut out: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
@@ -510,7 +511,7 @@ pub fn linker_sets(o: &Object) -> BTreeMap<String, BTreeMap<String, usize>> {
         }
     }
     for sym in &o.symbols {
-        if sym.defined && is_linker_set(&sym.section) {
+        if sym.defined && is_linker_set(&sym.section) && !is_mapping(sym) {
             let name = if sym.binding == elf::STB_LOCAL.0 {
                 unnumbered(&sym.name)
             } else {
@@ -523,6 +524,15 @@ pub fn linker_sets(o: &Object) -> BTreeMap<String, BTreeMap<String, usize>> {
         }
     }
     out
+}
+
+/// Whether a symbol is a mapping symbol: a local symbol with no type whose name starts with `$`,
+/// such as the `$d` and `$x` of aarch64 and riscv64. gas writes one where data or code starts in a
+/// section, so each linker set section of an aarch64 object from gas has a `$d`. It tells a
+/// disassembler what the bytes are and is not a name of the program.
+#[must_use]
+pub fn is_mapping(sym: &Symbol) -> bool {
+    sym.binding == elf::STB_LOCAL.0 && sym.kind == elf::STT_NOTYPE.0 && sym.name.starts_with('$')
 }
 
 /// A name without the `.N` that GCC and rucc append to a static local, such as the
@@ -1018,6 +1028,47 @@ mod tests {
             [("section size", true), ("linker set entry only in G", true)]
         );
         assert_eq!(found[1].what, "set_x: __set_x_sym_a");
+    }
+
+    #[test]
+    fn a_mapping_symbol_is_not_a_linker_set_entry() {
+        let sym = |name: &str, kind: u8| Symbol {
+            name: name.into(),
+            binding: elf::STB_LOCAL.0,
+            kind,
+            visibility: 0,
+            size: 0,
+            section: "set_x".into(),
+            defined: true,
+        };
+        let o = |symbols: Vec<Symbol>| Object {
+            sections: vec![Section {
+                name: "set_x".into(),
+                kind: elf::SHT_PROGBITS.0,
+                flags: 0x3,
+                entsize: 0,
+                size: 8,
+                group: String::new(),
+            }],
+            symbols,
+            groups: BTreeSet::new(),
+            properties: Vec::new(),
+        };
+        let entry = || sym("__set_x_sym_a", elf::STT_OBJECT.0);
+        let g = o(vec![
+            sym("$d", elf::STT_NOTYPE.0),
+            sym("$x.1", elf::STT_NOTYPE.0),
+            entry(),
+        ]);
+        let r = o(vec![entry()]);
+        assert!(sections(&g, &r).is_empty());
+        assert_eq!(linker_sets(&g)["set_x"].len(), 1);
+        // A name with `$` and a type is a name of the program.
+        let g = o(vec![sym("$d", elf::STT_OBJECT.0), entry()]);
+        assert_eq!(
+            kinds(&sections(&g, &r)),
+            [("linker set entry only in G", true)]
+        );
     }
 
     #[test]
