@@ -112,11 +112,13 @@ jobs:
       MINUTES: ${{ matrix.minutes }}
     steps:
       - uses: actions/checkout@v7.0.1
+      # ipxe-qemu has efi-virtio.rom, the option ROM that QEMU loads for virtio-net-pci on the
+      # aarch64 virt machine. qemu-system-arm only recommends it, and QEMU does not start without it.
       - name: QEMU and the firmware
         run: |
           sudo apt-get update -q
           sudo apt-get install -qy --no-install-recommends qemu-utils xz-utils \
-            qemu-system-arm qemu-efi-aarch64 qemu-system-misc opensbi u-boot-qemu
+            qemu-system-arm qemu-efi-aarch64 ipxe-qemu qemu-system-misc opensbi u-boot-qemu
           qemu-system-aarch64 --version | head -n 1
       - uses: actions/download-artifact@v8.0.1
         with:
