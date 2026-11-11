@@ -602,10 +602,27 @@ jobs:
           chmod +x "$RUNNER_TEMP/rb/rb"
           gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
           truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
-          # shellcheck disable=SC2086
-          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
-            --out "$RUNNER_TEMP/atf-$SHARD_NAME" --suite boot,smoke,tests $TESTS --timeout 18000 \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          out="$RUNNER_TEMP/atf-$SHARD_NAME"
+          boot() {
+            # shellcheck disable=SC2086
+            "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+              --out "$out" --suite boot,smoke,tests $TESTS --timeout 18000 \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          status=0
+          boot || status=$?
+          # The x86_xstate ptrace cases can panic the G and the R kernel in fpu_lwp_area (#65).
+          # It is a race in NetBSD and not a rucc difference. A boot that panics in this way is
+          # made once more. The first boot goes to panic-65 in the shard's directory.
+          if [ "$status" -ne 0 ] && python3 scripts/netbsd/fpu-panic.py "$out/boot.json"; then
+            echo "The boot panicked as in #65. It is made once more." | tee -a "$GITHUB_STEP_SUMMARY"
+            mv "$out" "$out.panic-65"
+            status=0
+            boot || status=$?
+            mkdir -p "$out"
+            mv "$out.panic-65" "$out/panic-65"
+          fi
+          exit "$status"
         env:
           TESTS: ${{ matrix.tests }}
       - name: counts
