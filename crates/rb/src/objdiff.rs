@@ -8,6 +8,8 @@
 //! - the section names;
 //! - the flags, type, entry size and group of each section both objects have;
 //! - the size of each data section;
+//! - the properties in `.note.gnu.property`, such as the BTI and PAC bits of
+//!   `AARCH64_FEATURE_1_AND`, decoded;
 //! - the entries of each linker set (`set_*` and `link_set_*`). An entry that is a static local
 //!   is compared without the `.N` that each compiler appends to its name in its own order.
 //!
@@ -75,6 +77,8 @@ pub struct Object {
     pub symbols: Vec<Symbol>,
     /// The signatures of the groups.
     pub groups: BTreeSet<String>,
+    /// The properties of `.note.gnu.property`, decoded, in file order.
+    pub properties: Vec<String>,
 }
 
 /// Read an ELF object.
@@ -98,8 +102,10 @@ fn read_elf<Elf: FileHeader<Endian = Endianness>>(data: &[u8]) -> Result<Object,
         }
         groups.insert(name);
     }
+    let machine = file.elf_header().e_machine(endian);
     let mut names = BTreeMap::new();
     let mut sections = Vec::new();
+    let mut properties = Vec::new();
     for section in file.sections() {
         let header = section.elf_section_header();
         let name = section.name().unwrap_or_default().to_string();
@@ -107,6 +113,19 @@ fn read_elf<Elf: FileHeader<Endian = Endianness>>(data: &[u8]) -> Result<Object,
         let kind = header.sh_type(endian);
         if kind == elf::SHT_NULL {
             continue;
+        }
+        if name == ".note.gnu.property" {
+            let bad = |e: object::Error| format!("{name}: {e}");
+            if let Some(mut notes) = header.notes(endian, data).map_err(bad)? {
+                while let Some(note) = notes.next().map_err(bad)? {
+                    let Some(mut list) = note.gnu_properties(endian) else {
+                        continue;
+                    };
+                    while let Some(p) = list.next().map_err(bad)? {
+                        properties.push(property(machine, p.pr_type().0, p.pr_data(), endian));
+                    }
+                }
+            }
         }
         sections.push(Section {
             kind: kind.0,
@@ -148,7 +167,67 @@ fn read_elf<Elf: FileHeader<Endian = Endianness>>(data: &[u8]) -> Result<Object,
         sections,
         symbols,
         groups,
+        properties,
     })
+}
+
+/// One GNU property in words: its name, then its bits by name, such as
+/// `AARCH64_FEATURE_1_AND: BTI PAC`. A type or a bit without a name is in hex, and data that is
+/// not one word is in bytes.
+fn property(machine: elf::Machine, kind: u32, data: &[u8], endian: Endianness) -> String {
+    const AARCH64: &[(u32, &str)] = &[(1, "BTI"), (2, "PAC"), (4, "GCS")];
+    const X86: &[(u32, &str)] = &[(1, "IBT"), (2, "SHSTK")];
+    const RISCV: &[(u32, &str)] = &[(1, "ZICFILP"), (2, "ZICFISS"), (4, "ZICFILP-FUNC-SIG")];
+    let (name, bits): (String, &[(u32, &str)]) = match (machine, kind) {
+        (_, 1) => ("STACK_SIZE".into(), &[]),
+        (_, 2) => ("NO_COPY_ON_PROTECTED".into(), &[]),
+        (_, 0xb000_8000) => ("1_NEEDED".into(), &[(1, "INDIRECT_EXTERN_ACCESS")]),
+        (elf::EM_AARCH64, 0xc000_0000) => ("AARCH64_FEATURE_1_AND".into(), AARCH64),
+        (elf::EM_AARCH64, 0xc000_0001) => ("AARCH64_FEATURE_PAUTH".into(), &[]),
+        (elf::EM_RISCV, 0xc000_0000) => ("RISCV_FEATURE_1_AND".into(), RISCV),
+        (elf::EM_386 | elf::EM_X86_64, 0xc000_0002) => ("X86_FEATURE_1_AND".into(), X86),
+        (elf::EM_386 | elf::EM_X86_64, 0xc000_8001) => ("X86_FEATURE_2_NEEDED".into(), &[]),
+        (elf::EM_386 | elf::EM_X86_64, 0xc000_8002) => ("X86_ISA_1_NEEDED".into(), &[]),
+        (elf::EM_386 | elf::EM_X86_64, 0xc001_0001) => ("X86_FEATURE_2_USED".into(), &[]),
+        (elf::EM_386 | elf::EM_X86_64, 0xc001_0002) => ("X86_ISA_1_USED".into(), &[]),
+        _ => (format!("{kind:#x}"), &[]),
+    };
+    let Ok(word) = <[u8; 4]>::try_from(data) else {
+        let bytes = data.iter().fold(String::new(), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        });
+        return format!("{name}: bytes {bytes}");
+    };
+    let mut rest = if endian == Endianness::Little {
+        u32::from_le_bytes(word)
+    } else {
+        u32::from_be_bytes(word)
+    };
+    let mut words = Vec::new();
+    for &(bit, bit_name) in bits {
+        if rest & bit != 0 {
+            words.push(bit_name.to_string());
+            rest &= !bit;
+        }
+    }
+    if rest != 0 {
+        words.push(format!("{rest:#x}"));
+    }
+    let value = if words.is_empty() {
+        "none".to_string()
+    } else {
+        words.join(" ")
+    };
+    format!("{name}: {value}")
+}
+
+fn properties(o: &Object) -> String {
+    if o.properties.is_empty() {
+        "none".into()
+    } else {
+        o.properties.join(", ")
+    }
 }
 
 /// The `readelf` letters of section flags.
@@ -383,6 +462,14 @@ pub fn sections(g: &Object, r: &Object) -> Vec<Finding> {
             let what = format!("{name}: {} bytes in G, {} in R", a.size, b.size);
             out.push(finding("section size", free_size(a), what));
         }
+    }
+    if g.properties != r.properties {
+        let what = format!(
+            ".note.gnu.property: {} in G, {} in R",
+            properties(g),
+            properties(r)
+        );
+        out.push(finding("GNU property", None, what));
     }
     for name in g.groups.difference(&r.groups) {
         out.push(finding("group only in G", free_symbol(name), name.clone()));
@@ -919,6 +1006,7 @@ mod tests {
                 })
                 .collect(),
             groups: BTreeSet::new(),
+            properties: Vec::new(),
         };
         let g = o(&["__set_x_sym_a.4", "__set_x_sym_a.5", "__set_x_sym_b.3"]);
         let r = o(&["__set_x_sym_a.1", "__set_x_sym_a.3", "__set_x_sym_b.5"]);
@@ -972,6 +1060,68 @@ mod tests {
         assert!(free_size(&s(".data", 1, 3)).is_none());
         assert!(free_size(&s("set_x", 1, 2)).is_none());
         assert!(free_size(&s(".eh_frame", 1, 2)).is_some());
+    }
+
+    /// An aarch64 object with `AARCH64_FEATURE_1_AND` set to `bits`, or with no
+    /// `.note.gnu.property` when `bits` is `None`.
+    fn aarch64(bits: Option<u32>) -> Object {
+        let mut obj = Writer::new(BinaryFormat::Elf, Architecture::Aarch64, Endianness::Little);
+        let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+        obj.append_section_data(text, &[0; 4], 4);
+        if let Some(bits) = bits {
+            obj.add_elf_gnu_property_u32(elf::GNU_PROPERTY_AARCH64_FEATURE_1_AND, bits);
+        }
+        read(&obj.write().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn gnu_properties_are_decoded_and_compared() {
+        let both = aarch64(Some(3));
+        assert_eq!(both.properties, ["AARCH64_FEATURE_1_AND: BTI PAC"]);
+        assert!(sections(&both, &aarch64(Some(3))).is_empty());
+        assert_eq!(
+            aarch64(Some(0x11)).properties,
+            ["AARCH64_FEATURE_1_AND: BTI 0x10"]
+        );
+        assert_eq!(aarch64(Some(0)).properties, ["AARCH64_FEATURE_1_AND: none"]);
+        let found = sections(&both, &aarch64(Some(1)));
+        assert_eq!(kinds(&found), [("GNU property", true)]);
+        assert_eq!(
+            found[0].what,
+            ".note.gnu.property: AARCH64_FEATURE_1_AND: BTI PAC in G, \
+             AARCH64_FEATURE_1_AND: BTI in R"
+        );
+        let found = sections(&both, &aarch64(None));
+        assert_eq!(
+            kinds(&found),
+            [("section only in G", true), ("GNU property", true)]
+        );
+        assert!(
+            found[1].what.ends_with("in G, none in R"),
+            "{}",
+            found[1].what
+        );
+        let x86 = property(
+            elf::EM_X86_64,
+            0xc000_0002,
+            &[3, 0, 0, 0],
+            Endianness::Little,
+        );
+        assert_eq!(x86, "X86_FEATURE_1_AND: IBT SHSTK");
+        let isa = property(
+            elf::EM_X86_64,
+            0xc000_8002,
+            &[1, 0, 0, 0],
+            Endianness::Little,
+        );
+        assert_eq!(isa, "X86_ISA_1_NEEDED: 0x1");
+        let size = property(
+            elf::EM_X86_64,
+            1,
+            &[0x10, 0, 0, 0, 0, 0, 0, 0],
+            Endianness::Little,
+        );
+        assert_eq!(size, "STACK_SIZE: bytes 1000000000000000");
     }
 
     #[test]
