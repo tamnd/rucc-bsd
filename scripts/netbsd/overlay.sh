@@ -31,6 +31,7 @@ target=${RB_RUCC_TARGET:-$gnu}
 
 export LC_ALL=C
 : > "$NB_LOGS/shim.tsv"
+rm -rf "$NB_LOGS/shim.tsv.err"
 rm -rf "$dst"
 cp -a "$NB_TOOLS" "$dst"
 rm -f "$dst/bin/nbmake-$NB_MACHINE" "$dst/bin/nbmake-$NB_MACHINE-"*

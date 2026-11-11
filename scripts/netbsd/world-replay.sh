@@ -30,7 +30,7 @@ cp "$NB_LOGS/shim.tsv" "$NB_LOGS/shim-ref.tsv"
 # overlay.sh removes the nbmake wrapper of the control build, and stand.sh needs it.
 cp "${NB_TOOLDIR_R:-$NB_ROOT/tools-r}/bin/nbmake-$NB_MACHINE" "$NB_ROOT/nbmake-r"
 python3 -I "$NB_HERE/shim-records.py" "$NB_LOGS/shim-ref.tsv" G "$NB_OBJ" "$NB_OBJ" \
-	> "$NB_LOGS/compile-ref.jsonl"
+	"$NB_LOGS/shim.tsv.err" > "$NB_LOGS/compile-ref.jsonl"
 "$NB_HERE/overlay.sh" "$rucc"
 
 : > "$NB_LOGS/replay-timeouts.txt"
