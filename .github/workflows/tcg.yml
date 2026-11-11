@@ -101,9 +101,13 @@ jobs:
                             "kernel": "GENERIC64"})
               if cadence in ("weekly", "r") and system == "freebsd":
                   fb = rows[row]["freebsd"]
+                  # gcc cannot build the arm64 modules: they are -fPIC, and there the "i"
+                  # operand of the asm goto of sys/sdt.h is an impossible constraint. So both
+                  # builds of the aarch64 kernel leave the modules out.
                   fr.append({"name": name, "row": row, "target": fb["target"],
                              "target_arch": fb["target_arch"],
                              "triple": f"{rows[row]['rucc_arch']}-unknown-freebsd15.1",
+                             "vars": "NO_MODULES=yes" if row == "aarch64" else "",
                              "kernel": "GENERIC"})
               if cadence == "r":
                   continue
@@ -360,6 +364,7 @@ jobs:
         RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=freebsd-15.1
         RB_COMPILE_JSONL=/build/out/compile.jsonl RB_ROW=${{ matrix.row }}
         RB_TARGET=${{ matrix.target }} RB_TARGET_ARCH=${{ matrix.target_arch }}
+        RB_MAKEVARS=${{ matrix.vars }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
