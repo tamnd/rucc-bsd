@@ -31,6 +31,14 @@
 # rucc GENERIC image, and GR and RR load the rucc modules in place of the modules of the sets.
 # The cross-modules-report job compares the cells with GG.
 #
+# With mixed, a case that fails with the rucc kernel and passes with G's, the mixed job runs rb
+# mixed (plan 12.7) to find the object of the rucc kernel that makes the case fail. It builds
+# the GENERIC kernel with the ref TOOLDIR, so that the kernel's object directory is complete, and
+# puts G's sets in place. Then each step of rb mixed puts the rucc object of the first k units
+# and the ref object of the rest in that directory, links the kernel, makes the image and runs
+# the case's ATF directory three times (scripts/netbsd/mixed.sh). The case is good when it passed
+# at least once. A step takes about 10 minutes, and a search of the GENERIC kernel about 14 steps.
+#
 # A manual run with build=world does none of the above. Its world job builds "build.sh
 # distribution" through the control TOOLDIR, then compiles every unit of that build again with
 # rucc (scripts/netbsd/world-replay.sh, after the replay of freebsd-r.yml). So every unit of the
@@ -78,6 +86,10 @@ on:
         description: Build the kernel modules with rucc and run rb cross-modules, when g_run is given
         type: boolean
         default: false
+      mixed:
+        description: An ATF case, DIR/PROGRAM:CASE, for rb mixed to find the rucc object that makes it fail, when g_run is given
+        required: false
+        default: ""
 
 # A manual run is its own group, so that a push to the branch does not cancel it.
 concurrency:
@@ -1014,6 +1026,108 @@ jobs:
         with:
           name: netbsd-r-cross-modules
           path: ${{ runner.temp }}/out
+          retention-days: 14
+
+  # rb mixed over the objects of the two kernel legs. The objects of the ref leg are under
+  # /mnt/cmp/ref and those of the rucc leg under /mnt/cmp/rucc, as in the compare job, and the
+  # link takes them from /mnt/nb/obj. The CTF of the rucc kernel must have the layout of every
+  # named type of G's kernel. response, the struct of sys/dev/ic/tpm.c, is allowed: tpm.c has two
+  # structs of that name, and G's CTF and rucc's keep a different one (tamnd/rucc#4385).
+  mixed:
+    name: rb mixed ${{ inputs.mixed }}
+    needs: [rb, kernel]
+    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && inputs.mixed != '' && needs.rb.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      CASE: ${{ inputs.mixed }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT" /mnt/cmp
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT" /mnt/cmp
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: host packages, QEMU and OVMF
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev qemu-system-x86 qemu-utils ovmf
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: build.sh kernel=GENERIC with the ref TOOLDIR
+        run: |
+          scripts/netbsd/overlay.sh ref
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh kernel-ref -u kernel=GENERIC > /dev/null
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-objects-ref
+          path: /mnt/cmp/ref
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-objects-rucc
+          path: /mnt/cmp/rucc
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-kernel
+          path: ${{ runner.temp }}/r-kernel
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-amd64-sets
+          path: /mnt/nb/release
+          run-id: ${{ inputs.g_run }}
+          github-token: ${{ github.token }}
+      - name: the objects, G's sets and G's kernel
+        run: |
+          for leg in ref rucc; do tar -xJf "/mnt/cmp/$leg/objects.tar.xz" -C "/mnt/cmp/$leg"; done
+          mkdir -p "$NB_ROOT/release/amd64" "$NB_ROOT/destdir"
+          if [ -d "$NB_ROOT/release/binary" ]; then mv "$NB_ROOT/release/binary" "$NB_ROOT/release/amd64/"; fi
+          tar -C "$NB_ROOT/destdir" -xf "$NB_ROOT/release/destdir-meta.tar"
+          rm "$NB_ROOT/release/destdir-meta.tar"
+          tar -xJOf "$NB_ROOT/release/amd64/binary/sets/kern-GENERIC.tar.xz" ./netbsd > "$RUNNER_TEMP/g-netbsd"
+          "$NB_ROOT/tools/bin/nbmake-amd64" -C "$NB_ROOT/src/etc" obj
+      - name: rb mixed
+        run: |
+          chmod +x "$RB"
+          mkdir -p "$OUT"
+          status=0
+          # rb mixed runs the link and the test with sh -c, which expands their variables.
+          # shellcheck disable=SC2016
+          "$RB" mixed --g /mnt/cmp/ref/compile.jsonl --g-root /mnt/cmp/ref \
+            --r /mnt/cmp/rucc/compile.jsonl --r-root /mnt/cmp/rucc --into "$NB_ROOT" \
+            --ctf-g "$RUNNER_TEMP/g-netbsd" --ctf-r "$RUNNER_TEMP/r-kernel/netbsd" --allow-types response \
+            --link 'scripts/netbsd/mixed.sh link' --test 'scripts/netbsd/mixed.sh test "$RB" "$OUT" "$CASE" 3' \
+            > "$OUT/mixed.md" || status=$?
+          { echo "### rb mixed $CASE"; echo; cat "$OUT/mixed.md"; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+        env:
+          RB: ${{ runner.temp }}/rb/rb
+          OUT: ${{ runner.temp }}/mixed
+      - name: the logs
+        if: always()
+        run: cp "$NB_ROOT"/logs/mixed-* "$NB_ROOT/logs/phases.tsv" "$RUNNER_TEMP/mixed/" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-mixed
+          path: ${{ runner.temp }}/mixed
           retention-days: 14
 
   report:

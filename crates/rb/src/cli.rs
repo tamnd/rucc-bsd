@@ -304,6 +304,22 @@ fn graded_commands(command: &str) -> Option<Accepts> {
             values: &["g", "r", "g-root", "r-root", "limit", "top"],
             switches: &[],
         },
+        "mixed" => Accepts {
+            positional: false,
+            values: &[
+                "g",
+                "r",
+                "g-root",
+                "r-root",
+                "into",
+                "link",
+                "test",
+                "ctf-g",
+                "ctf-r",
+                "allow-types",
+            ],
+            switches: &["dry-run"],
+        },
         "test" => Accepts {
             positional: false,
             values: &[
@@ -469,6 +485,18 @@ usage:
       live-image target with its files added, and grows the image to SIZE. The suites go in
       /etc/rb.conf, boot only by default. --packages copies a local package repository to
       /var/db/rb-pkg. The logs go to --work, IMG.work by default. --dry-run prints the commands.
+  rb mixed --g LOG --r LOG [--g-root DIR --r-root DIR] --into DIR --ctf-g K --ctf-r K
+          [--allow-types T,T] (--link CMD --test CMD | --dry-run)
+      Find the object that makes R fail, by bisection over builds that mix R's and G's objects. The
+      objects are the units both compile logs have, sorted by path. Step k copies R's objects of the
+      first k units and G's of the rest to the object's path with DIR of --into in place of the
+      build's root, and runs CMD of --link and CMD of --test with sh -c. The test exits 0 when the
+      result behaves as G does, 125 when it cannot tell, and with another status when it fails as R
+      does. A mix that does not link counts as 125. RB_MIXED_R and RB_MIXED_UNITS give k and the
+      count. All of G's objects must be good and all of R's bad. rb mixed does not run when the CTF
+      of the two kernels K, read as rb ctf-diff reads them, has a named type that differs and that
+      --allow-types does not name. --dry-run pairs the objects and checks the CTF only. Exits 1 when
+      no object was found.
   rb mk-diff PIN [--row ROW] (--dir DIR | --g G [--r R]) [--src DIR] [--conf CONF]
           [--kernel DIR|G,R] [--work DIR] [--divergences FILE]
       Read the make variables that depend on the compiler, in G's and R's configuration, and
