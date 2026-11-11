@@ -138,6 +138,8 @@ jobs:
           "$RUNNER_TEMP/rb/rb" boot --image "$IMAGE" --out "$RUNNER_TEMP/out" --row "$ROW" \
             --login --suite "$SUITE" $TESTS --timeout $(((MINUTES - 10) * 60)) \
             | tee -a "$GITHUB_STEP_SUMMARY"
+      # A boot that did not get far has no console log or no counts, and a nightly boot has no
+      # tests suite. None of that fails this step, which only reports: rb boot has the result.
       - name: summary
         if: always()
         run: |
@@ -145,8 +147,10 @@ jobs:
             echo "### $NAME $SHARD: the console's RB- lines"
             echo
             echo '```'
-            grep -a '^RB-' "$RUNNER_TEMP/out/console.log" 2>/dev/null
-            cat "$RUNNER_TEMP/out/results/tests/counts" 2>/dev/null
+            grep -a '^RB-' "$RUNNER_TEMP/out/console.log" 2>/dev/null || true
+            for suite in smoke tests; do
+              cat "$RUNNER_TEMP/out/results/$suite/counts" 2>/dev/null || true
+            done
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           rm -rf "$RUNNER_TEMP/image"
