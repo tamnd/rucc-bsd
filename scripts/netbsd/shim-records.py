@@ -10,7 +10,12 @@ be unpacked side by side and paired by rb with --g-root and --r-root.
 
 A record has the fields that rb flags-diff, rb sections-diff and rb symbols-diff read: the
 arguments, the directory, the exit status, the slot, the side, the source as the input and the
-object as the output. The shims keep no time, no environment and no hashes, so those are empty.
+object as the output. The shims keep no start time, no environment and no hashes, so those are
+empty.
+
+LOG.rusage, when it exists, has a line "WALL USER SYSTEM MAXRSS<TAB>LOG LINE" for each call that
+the shims timed with GNU time. A record of such a call has its wall-seconds, user-seconds,
+system-seconds and peak-rss-kb, which rb speed reads for the compile CPU and RSS gates.
 
 ERRDIR is the LOG.err that shim-ref.sh writes: the standard error of each call that wrote any,
 in a file named by the first 16 hex digits of the SHA-256 of its log line. With ERRDIR, a record
@@ -38,7 +43,29 @@ def stderr(errdir, raw):
         return ""
 
 
-def record(line, side, old, new, said=""):
+def rusage(log):
+    """The timed calls of LOG.rusage: the log line, in bytes, to (wall, user, system, max RSS)."""
+    times = {}
+    try:
+        f = open(log + ".rusage", "rb")
+    except OSError:
+        return times
+    with f:
+        for raw in f:
+            head, tab, line = raw.rstrip(b"\n").partition(b"\t")
+            fields = head.split()
+            if not tab or len(fields) != 4:
+                continue
+            try:
+                wall, user, system = (float(x) for x in fields[:3])
+                rss = int(fields[3])
+            except ValueError:
+                continue
+            times[line] = (wall, user, system, rss)
+    return times
+
+
+def record(line, side, old, new, said="", timed=None):
     fields = line.rstrip("\n").split("\t")
     if len(fields) < 3:
         return None
@@ -69,6 +96,12 @@ def record(line, side, old, new, said=""):
         "slot": slot,
         "side": side,
     }
+    if timed:
+        wall, user, system, rss = timed
+        out["wall-seconds"] = wall
+        out["user-seconds"] = user
+        out["system-seconds"] = system
+        out["peak-rss-kb"] = rss
     if said:
         out["stderr"] = said
     return out
@@ -79,10 +112,12 @@ def main():
         sys.exit("usage: shim-records.py LOG G|R FROM TO [ERRDIR]")
     log, side, old, new = sys.argv[1:5]
     errdir = sys.argv[5] if len(sys.argv) == 6 else None
+    times = rusage(log)
     with open(log, "rb") as f:
         for raw in f:
             line = raw.decode("utf-8", "replace")
-            r = record(line, side, old, new, stderr(errdir, raw))
+            timed = times.get(raw.rstrip(b"\n"))
+            r = record(line, side, old, new, stderr(errdir, raw), timed)
             if r is not None:
                 print(json.dumps(r))
 

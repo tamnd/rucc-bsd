@@ -7,10 +7,16 @@
 #   "cpp IN OUT" writes to OUT, so a second operand becomes "-o OUT";
 #   an input with no C or assembler suffix is preprocessed as C (gcc/cppspec.cc), so such an input,
 #   or standard input, gets "-x c" when the command line has no -x.
-# The log line is that of shim-cc.sh with "cpp" in the third field.
+# The log line is that of shim-cc.sh with "cpp" in the third field, and LOG.rusage as there.
 
 rucc=@RUCC@
 log=${RB_SHIM_LOG-@LOG@}
+timer=@TIME@
+use=
+if [ -n "$log" ] && [ -n "$timer" ]; then use=$(mktemp "${TMPDIR:-/tmp}/rb-shim.XXXXXXXX"); fi
+run() {
+	if [ -n "$use" ]; then "$timer" -f '%e %U %S %M' -o "$use" "$@"; else "$@"; fi
+}
 fixed=(--target=@TARGET@ -fgnuc-version=@GNUC@)
 sysroot=--sysroot=@SYSROOT@
 opts=()
@@ -62,11 +68,15 @@ if [ $lang = no ]; then
 	*) x=(-x c) ;;
 	esac
 fi
-"$rucc" -E "${fixed[@]}" ${sysroot:+"$sysroot"} "${opts[@]}" "${x[@]}" "$in" "${out[@]}"
+run "$rucc" -E "${fixed[@]}" ${sysroot:+"$sysroot"} "${opts[@]}" "${x[@]}" "$in" "${out[@]}"
 status=$?
 if [ -n "$log" ]; then
 	line="$status	$PWD	cpp"
 	for a in "$@"; do line+="	$a"; done
 	printf '%s\n' "$line" >> "$log"
+fi
+if [ -n "$use" ]; then
+	printf '%s\t%s\n' "$(tail -n 1 "$use")" "$line" >> "$log.rusage"
+	rm -f "$use"
 fi
 exit $status

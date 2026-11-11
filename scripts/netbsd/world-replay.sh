@@ -27,6 +27,7 @@ gnu=$(nb_gnu "$NB_TOOLS")
 out=$NB_ROOT/replay
 
 cp "$NB_LOGS/shim.tsv" "$NB_LOGS/shim-ref.tsv"
+if [ -f "$NB_LOGS/shim.tsv.rusage" ]; then cp "$NB_LOGS/shim.tsv.rusage" "$NB_LOGS/shim-ref.tsv.rusage"; fi
 python3 -I "$NB_HERE/shim-records.py" "$NB_LOGS/shim-ref.tsv" G "$NB_OBJ" "$NB_OBJ" \
 	"$NB_LOGS/shim.tsv.err" > "$NB_LOGS/compile-ref.jsonl"
 "$NB_HERE/overlay.sh" "$rucc"

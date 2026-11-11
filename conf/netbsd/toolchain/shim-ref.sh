@@ -7,20 +7,30 @@
 #
 # The reference's standard error also goes to a file in LOG.err, named by the first 16 hex digits
 # of the SHA-256 of the log line, so that shim-records.py can give rb the diagnostics of G. A call
-# that wrote nothing on standard error leaves no file.
+# that wrote nothing on standard error leaves no file. LOG.rusage is as in shim-cc.sh.
 
 log=${RB_SHIM_LOG-@LOG@}
 if [ -z "$log" ]; then
 	exec "$0.ref" "$@"
 fi
 mkdir -p "$log.err"
+timer=@TIME@
+use=
+if [ -n "$log" ] && [ -n "$timer" ]; then use=$(mktemp "${TMPDIR:-/tmp}/rb-shim.XXXXXXXX"); fi
+run() {
+	if [ -n "$use" ]; then "$timer" -f '%e %U %S %M' -o "$use" "$@"; else "$@"; fi
+}
 err=$(mktemp "$log.err/call.XXXXXXXX")
-"$0.ref" "$@" 2> "$err"
+run "$0.ref" "$@" 2> "$err"
 status=$?
 cat "$err" >&2
 line="$status	$PWD	@SLOT@"
 for a in "$@"; do line+="	$a"; done
 printf '%s\n' "$line" >> "$log"
+if [ -n "$use" ]; then
+	printf '%s\t%s\n' "$(tail -n 1 "$use")" "$line" >> "$log.rusage"
+	rm -f "$use"
+fi
 if [ -s "$err" ]; then
 	mv -f "$err" "$log.err/$(printf '%s' "$line" | sha256sum | cut -c1-16)"
 else

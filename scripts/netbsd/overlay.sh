@@ -31,7 +31,11 @@ target=${RB_RUCC_TARGET:-$gnu}
 
 export LC_ALL=C
 : > "$NB_LOGS/shim.tsv"
+: > "$NB_LOGS/shim.tsv.rusage"
 rm -rf "$NB_LOGS/shim.tsv.err"
+# The shims time each call with GNU time when the host has it, for the rusage of the records.
+timer=
+if /usr/bin/time -f %e -o /dev/null true 2> /dev/null; then timer=/usr/bin/time; fi
 rm -rf "$dst"
 cp -a "$NB_TOOLS" "$dst"
 rm -f "$dst/bin/nbmake-$NB_MACHINE" "$dst/bin/nbmake-$NB_MACHINE-"*
@@ -42,7 +46,7 @@ for slot in cc:gcc cpp:cpp; do
 	mv "$dst/bin/$name" "$dst/bin/$name.ref"
 	if [ "$mode" = ref ]; then shim=ref; fi
 	sed -e "s|@SLOT@|${slot%%:*}|" -e "s|@RUCC@|$rucc|" -e "s|@LOG@|$NB_LOGS/shim.tsv|" \
-		-e "s|@TARGET@|$target|" -e "s|@GNUC@|$NB_PIN_GCC|" -e "s|@SYSROOT@|$NB_DEST|" \
+		-e "s|@TARGET@|$target|" -e "s|@GNUC@|$NB_PIN_GCC|" -e "s|@SYSROOT@|$NB_DEST|" -e "s|@TIME@|$timer|" \
 		"$NB_REPO/conf/netbsd/toolchain/shim-$shim.sh" > "$dst/bin/$name"
 	chmod 755 "$dst/bin/$name"
 done
