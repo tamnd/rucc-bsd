@@ -458,6 +458,38 @@ jobs:
             for tool in sections-diff symbols-diff; do
               "$rb" "$tool" $pair --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
             done'
+      # The R image, R kernel with G world (plan 12.6). When the rucc build had no failed unit,
+      # the kernel is built with rucc again, now with its modules, since the ref build overwrote
+      # it, and installed into the release image of the row in place of the kernel there.
+      - name: make buildkernel with rucc, for the image
+        id: kernel
+        if: always()
+        continue-on-error: true
+        run: |
+          status=$(scripts/freebsd/builder.sh ssh 'cat /root/out/kernel-rucc.status' || true)
+          if [ "$status" != 0 ]; then
+            echo "The rucc kernel had failed units, so this run has no R image." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_MAKEVARS= RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+            RB_PHASE=kernel-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
+          echo "built=true" >> "$GITHUB_OUTPUT"
+      - name: put the kernel into the release image
+        if: always() && steps.kernel.outputs.built == 'true'
+        continue-on-error: true
+        run: |
+          g=$(scripts/tcg/image.sh "$NAME" "$RUNNER_TEMP/g" 8G)
+          qemu-img convert -f qcow2 -O raw "$g" "$RUNNER_TEMP/g/g.img"
+          rm -f "$g"
+          zstd -q -T0 --rm "$RUNNER_TEMP/g/g.img" -o "$RUNNER_TEMP/g/g.img.zst"
+          scripts/freebsd/builder.sh ssh 'mkdir -p /build/image'
+          scripts/freebsd/builder.sh put "$RUNNER_TEMP/g/g.img.zst" /build/image/g.img.zst
+          rm -rf "$RUNNER_TEMP/g"
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_IMAGE=/build/image/r.img \
+            sh /root/harness/scripts/freebsd/r-image.sh /build/image/g.img.zst"
+          mkdir -p image
+          scripts/freebsd/builder.sh get /build/image/r.img.zst image/freebsd.img.zst
+          ls -l image
       - name: copy the record out
         if: always()
         run: |
@@ -527,4 +559,77 @@ jobs:
           path: |
             record
             compile
+          retention-days: 14
+      - uses: actions/upload-artifact@v7.0.1
+        if: always() && hashFiles('image/freebsd.img.zst') != ''
+        with:
+          name: tcg-${{ matrix.name }}-r-image
+          path: image/freebsd.img.zst
+          compression-level: 0
+          retention-days: 7
+
+  # The R image of each FreeBSD row, booted to the smoke suite. A row whose R kernel had failed
+  # units has no image, and its boot stops after the download.
+  freebsd-r-boot:
+    name: ${{ matrix.name }} R image boot
+    needs: [rb, freebsd-r]
+    if: always() && needs.rb.outputs.any_fr == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.rb.outputs.fr) }}
+    env:
+      NAME: ${{ matrix.name }}
+      ROW: ${{ matrix.row }}
+      MINUTES: 150
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: the R image
+        id: image
+        continue-on-error: true
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: tcg-${{ matrix.name }}-r-image
+          path: ${{ runner.temp }}/image
+      - name: QEMU and the firmware
+        if: steps.image.outcome == 'success'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends qemu-utils zstd \
+            qemu-system-arm qemu-efi-aarch64 ipxe-qemu qemu-system-misc opensbi u-boot-qemu
+      - uses: actions/download-artifact@v8.0.1
+        if: steps.image.outcome == 'success'
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      # The image grows its root file system to the disk at its first boot.
+      - name: rb boot
+        if: steps.image.outcome == 'success'
+        run: |
+          set -o pipefail
+          image="$RUNNER_TEMP/image/freebsd.img"
+          zstd -d -q --rm --sparse "$image.zst" -o "$image"
+          truncate -s 16G "$image"
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          "$RUNNER_TEMP/rb/rb" boot --image "$image" --out "$RUNNER_TEMP/out" --row "$ROW" \
+            --login --suite boot,smoke --timeout $(((MINUTES - 10) * 60)) \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: summary
+        if: always() && steps.image.outcome == 'success'
+        run: |
+          {
+            echo "### $NAME R image: the console's RB- lines"
+            echo
+            echo '```'
+            grep -a '^RB-' "$RUNNER_TEMP/out/console.log" 2>/dev/null || true
+            cat "$RUNNER_TEMP/out/results/smoke/counts" 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -rf "$RUNNER_TEMP/image"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always() && steps.image.outcome == 'success'
+        with:
+          name: tcg-${{ matrix.name }}-r-boot
+          path: ${{ runner.temp }}/out
           retention-days: 14
