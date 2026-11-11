@@ -9,7 +9,7 @@
 # harness copy in RB_HARNESS. For rucc, it also builds rucc from the tarball of RUCC_COMMIT of
 # tamnd/rucc. The binaries go to /build/rb/bin.
 #
-# Then rb toolchain RB_PIN_NAME writes /build/toolchain: the shims in bin, and ref.mk and rucc.mk.
+# Then rb toolchain RB_PIN_NAME --row RB_ROW writes /build/toolchain: the shims in bin, and ref.mk and rucc.mk.
 # The shims write one record per compiler call to RB_COMPILE_JSONL. A rucc that is not the pinned
 # release makes the build ungraded. OUTDIR/rb-tools.txt records the versions and the checks.
 set -eu
@@ -18,6 +18,7 @@ side=$2
 commit=${3:-}
 : "${RB_HARNESS:=/root/harness}"
 : "${RB_PIN_NAME:=freebsd-15.1}"
+: "${RB_ROW:=amd64}"
 : "${RB_COMPILE_JSONL:=/build/out/compile.jsonl}"
 : "${RB_JOBS:=$(sysctl -n hw.ncpu)}"
 export RUSTUP_HOME=/build/rust/rustup CARGO_HOME=/build/rust/cargo
@@ -71,10 +72,10 @@ fi
 
 {
 	echo
-	echo "# rb toolchain $RB_PIN_NAME --cc $side, in $(($(date +%s) - start))s from the start of rb-tools.sh"
+	echo "# rb toolchain $RB_PIN_NAME --row $RB_ROW --cc $side, in $(($(date +%s) - start))s from the start of rb-tools.sh"
 } >> "$out/rb-tools.txt"
 # shellcheck disable=SC2086
-"$bin/rb" toolchain "$RB_PIN_NAME" --dir /build/toolchain --cc "$side" --log "$RB_COMPILE_JSONL" \
+"$bin/rb" toolchain "$RB_PIN_NAME" --row "$RB_ROW" --dir /build/toolchain --cc "$side" --log "$RB_COMPILE_JSONL" \
 	--shim "$bin/rb-cc" $rucc_flags >> "$out/rb-tools.txt" 2>&1 || status=$?
 cat "$out/rb-tools.txt"
 exit "${status:-0}"
