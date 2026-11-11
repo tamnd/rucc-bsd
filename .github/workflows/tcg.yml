@@ -26,6 +26,11 @@
 # mk-diff, flags-diff, warnings, sections-diff and symbols-diff. Both R jobs use the same commit of
 # tamnd/rucc.
 #
+# When the rucc kernel of a row links, its R job puts it into the release image of the row, and the
+# r-boot job boots that image to the smoke suite: the R kernel with the G world (plan 12.6).
+# scripts/freebsd/r-image.sh installs the kernel into the root file system, and
+# scripts/netbsd/r-image.sh puts it into the EFI system partition.
+#
 # A manual run takes the cadence, the rows and the rucc ref. The r cadence builds R only.
 
 name: tcg
@@ -68,6 +73,7 @@ jobs:
       any_r: ${{ steps.plan.outputs.any_r }}
       fr: ${{ steps.plan.outputs.fr }}
       any_fr: ${{ steps.plan.outputs.any_fr }}
+      images: ${{ steps.plan.outputs.images }}
       rucc_commit: ${{ steps.rucc.outputs.commit }}
       any_boot: ${{ steps.plan.outputs.any_boot }}
     steps:
@@ -128,6 +134,8 @@ jobs:
               out.write(f"any_r={'true' if r else 'false'}\n")
               out.write(f"fr={json.dumps({'include': fr})}\n")
               out.write(f"any_fr={'true' if fr else 'false'}\n")
+              images = [{"name": b["name"], "row": b["row"]} for b in r + fr]
+              out.write(f"images={json.dumps({'include': images})}\n")
               out.write(f"any_boot={'true' if include else 'false'}\n")
           print(f"### {cadence}: {len(include)} boots, {len(r) + len(fr)} R builds\n")
           for b in include:
@@ -267,7 +275,7 @@ jobs:
       - name: host packages
         run: |
           sudo apt-get update -q
-          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev mtools zstd
       - name: fetch the source sets
         run: scripts/netbsd/fetch.sh
       - name: build.sh tools
@@ -313,6 +321,25 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           NAME: ${{ matrix.name }}
+      # The R image, R kernel with G world (plan 12.6): when the rucc leg linked the kernel, it
+      # goes into the release image of the row, as scripts/netbsd/r-image.sh says.
+      - name: put the kernel into the release image
+        if: always()
+        continue-on-error: true
+        run: |
+          kernel="$NB_ROOT/cmp/rucc/obj/sys/arch/$NB_MACHINE/compile/$KERNEL/netbsd"
+          if [ ! -f "$kernel" ]; then
+            echo "The rucc leg did not link the kernel, so this run has no R image." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          g=$(scripts/tcg/image.sh "$NAME" "$RUNNER_TEMP/g" 16G)
+          scripts/netbsd/r-image.sh "$g" "$kernel"
+          mkdir -p image
+          zstd -q -T0 --rm "$g" -o image/netbsd.img.zst
+          rm -rf "$RUNNER_TEMP/g"
+          ls -l image
+        env:
+          NAME: ${{ matrix.name }}
       - name: compress the logs and the objects
         if: always()
         run: |
@@ -334,6 +361,13 @@ jobs:
             /mnt/nb/cmp/*/objects.tar.xz
             /mnt/nb/logs
           retention-days: 14
+      - uses: actions/upload-artifact@v7.0.1
+        if: always() && hashFiles('image/netbsd.img.zst') != ''
+        with:
+          name: tcg-${{ matrix.name }}-r-image
+          path: image/netbsd.img.zst
+          compression-level: 0
+          retention-days: 7
 
   # R for the FreeBSD rows of a weekly run, in the builder VM of freebsd-r.yml: the row's kernel
   # with rucc (make -k) and with the reference, the replay of every unit of the reference build with
@@ -568,17 +602,19 @@ jobs:
           compression-level: 0
           retention-days: 7
 
-  # The R image of each FreeBSD row, booted to the smoke suite. A row whose R kernel had failed
-  # units has no image, and its boot stops after the download.
-  freebsd-r-boot:
+  # The R image of each row, booted to the smoke suite. A row whose rucc kernel had failed units
+  # has no image, and its boot stops after the download. A NetBSD R image boots its kernel from the
+  # EFI system partition through boot.cfg, and the step fails when the console does not show the
+  # banner of that boot.cfg.
+  r-boot:
     name: ${{ matrix.name }} R image boot
-    needs: [rb, freebsd-r]
-    if: always() && needs.rb.outputs.any_fr == 'true'
+    needs: [rb, netbsd-r, freebsd-r]
+    if: always() && (needs.rb.outputs.any_r == 'true' || needs.rb.outputs.any_fr == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.rb.outputs.fr) }}
+      matrix: ${{ fromJSON(needs.rb.outputs.images) }}
     env:
       NAME: ${{ matrix.name }}
       ROW: ${{ matrix.row }}
@@ -608,13 +644,18 @@ jobs:
         if: steps.image.outcome == 'success'
         run: |
           set -o pipefail
-          image="$RUNNER_TEMP/image/freebsd.img"
+          image="$RUNNER_TEMP/image/${NAME%%-*}.img"
           zstd -d -q --rm --sparse "$image.zst" -o "$image"
           truncate -s 16G "$image"
           chmod +x "$RUNNER_TEMP/rb/rb"
           "$RUNNER_TEMP/rb/rb" boot --image "$image" --out "$RUNNER_TEMP/out" --row "$ROW" \
             --login --suite boot,smoke --timeout $(((MINUTES - 10) * 60)) \
             | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "${NAME%%-*}" = netbsd ] && ! grep -aq 'rb R image: the rucc kernel' "$RUNNER_TEMP/out/console.log"; then
+            echo "The console does not show the banner of the R boot.cfg, so the rucc kernel did not boot." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
       - name: summary
         if: always() && steps.image.outcome == 'success'
         run: |
