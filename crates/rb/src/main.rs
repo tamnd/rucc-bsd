@@ -97,8 +97,12 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             print!("{text}");
             Ok(exit(ok))
         }
-        "ctf-diff" => {
-            let (text, ok) = rb::ctfdiff::cli::run_cli(args)?;
+        "ctf-diff" | "vec-audit" => {
+            let (text, ok) = if args.command == "ctf-diff" {
+                rb::ctfdiff::cli::run_cli(args)?
+            } else {
+                rb::vecaudit::cli::run(args)?
+            };
             print!("{text}");
             Ok(exit(ok))
         }

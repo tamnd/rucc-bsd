@@ -73,7 +73,7 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["arch"],
             switches: &[],
         },
-        "sections-diff" | "symbols-diff" => Accepts {
+        "sections-diff" | "symbols-diff" | "vec-audit" => Accepts {
             positional: false,
             values: &["g", "r", "g-root", "r-root", "jobs", "limit"],
             switches: &[],
@@ -516,6 +516,15 @@ usage:
       the same as in the TOOLDIR of build.sh tools, except the two shim names and rb-shim.toml.
       rucc must be the release of [rucc.binary_sha256], and no bring-up class may be on, or
       --ungraded must be given. Exits 1 when a check fails.
+  rb vec-audit --g LOG --r LOG [--g-root DIR --r-root DIR] [--jobs N] [--limit N]
+      Decode each object of R whose compile command leaves out the FPU, such as with -mno-sse or
+      -msoft-float, and list each vector or x87 instruction in it: one that names an xmm, ymm,
+      zmm, mm, st, mask or tile register, or is an x87 instruction. LOG is the compile.jsonl of
+      each build, and objects are paired as for rb sections-diff. A mnemonic is allowed when G's
+      object of the same unit has it too, as in inline asm that uses the FPU by design; else it is
+      a finding, with the functions it is in. Objects not for x86-64 are skipped. Each list stops
+      after N lines, 20 by default. Exits 1 when there is a finding, an object cannot be read or no
+      object was decoded.
   rb version
   rb warnings --g LOG --r LOG [--g-root DIR --r-root DIR] [--limit N]
       Compare the warnings of each unit in two builds. LOG is the compile.jsonl of each build, and

@@ -29,4 +29,5 @@ pub mod sets;
 pub mod shims;
 pub mod syntax;
 pub mod toolchain;
+pub mod vecaudit;
 pub mod warnings;
