@@ -20,14 +20,19 @@
 # sections-diff and symbols-diff. The rucc leg does not fail the run.
 #
 # For each FreeBSD row of the run, the freebsd-r job does what the kernel run of freebsd-r.yml does,
-# at the FreeBSD 15.1 pin, in the builder VM under KVM: the row's GENERIC kernel with rucc
-# (make -k) and with the reference, the aarch64-gcc15 or riscv64-gcc15 package, then every unit of
+# at the FreeBSD 15.1 pin, or at the stable-14 pin for a row of series 14 such as i386, in the
+# builder VM under KVM: the row's GENERIC kernel with rucc (make -k) and with the reference, the
+# {TARGET_ARCH}-gcc15 package, such as aarch64-gcc15, then every unit of
 # the reference build compiled again with rucc (scripts/freebsd/replay.py), and rb's comparison:
 # mk-diff, flags-diff, warnings, sections-diff and symbols-diff. Both R jobs use the same commit of
 # tamnd/rucc.
 #
+# The NetBSD kernel is GENERIC64, or GENERIC on i386, and the FreeBSD kernel is GENERIC. The kernel
+# input names another configuration of the tree, such as GENERIC_PAE of NetBSD i386.
+#
 # When the rucc kernel of a row links, its R job puts it into the release image of the row, and the
-# r-boot job boots that image to the smoke suite: the R kernel with the G world (plan 12.6).
+# r-boot job boots that image to the smoke suite: the R kernel with the G world (plan 12.6). A row
+# with no image in conf/tcg/images.conf, such as i386, gets no R image.
 # scripts/freebsd/r-image.sh installs the kernel into the root file system, and
 # scripts/netbsd/r-image.sh puts it into the EFI system partition.
 #
@@ -36,7 +41,8 @@
 # does what the world job of netbsd-r.yml does, and freebsd-r-world what the world run of
 # freebsd-r.yml does. The step summary gives the failed units by cause.
 #
-# A manual run takes the cadence, the rows and the rucc ref. The r cadence builds R only.
+# A manual run takes the cadence, the rows, the rucc ref, the kernel, and whether to build the R
+# world. The r cadence builds R only.
 
 name: tcg
 
@@ -57,6 +63,13 @@ on:
       rucc:
         description: The branch or commit of tamnd/rucc that the weekly R builds use
         default: main
+      kernel:
+        description: The kernel configuration of the R builds, or empty for the GENERIC of each row
+        default: ""
+      world:
+        description: Build the R world of each row beside its kernel
+        type: boolean
+        default: true
 
 # One run of each cadence at a time. A scheduled run waits for the one before it, and is not
 # cancelled, so the queue holds at most one more.
@@ -79,6 +92,7 @@ jobs:
       fr: ${{ steps.plan.outputs.fr }}
       any_fr: ${{ steps.plan.outputs.any_fr }}
       images: ${{ steps.plan.outputs.images }}
+      any_image: ${{ steps.plan.outputs.any_image }}
       rucc_commit: ${{ steps.rucc.outputs.commit }}
       any_boot: ${{ steps.plan.outputs.any_boot }}
     steps:
@@ -88,6 +102,8 @@ jobs:
         env:
           CADENCE: ${{ inputs.cadence || (github.event.schedule == '23 1 * * 0' && 'weekly' || 'nightly') }}
           ROWS: ${{ inputs.rows || 'freebsd-aarch64 freebsd-riscv64 netbsd-aarch64 netbsd-riscv64' }}
+          KERNEL: ${{ inputs.kernel }}
+          WORLD: ${{ inputs.world }}
         run: |
           python3 -I - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
           import json, os, tomllib
@@ -100,6 +116,14 @@ jobs:
               "freebsd": [["only", "sys"], ["only", "lib"], ["except", "sys,lib"]],
               "netbsd": [["only", "net"], ["only", "lib"], ["except", "net,lib"]],
           }
+          # The GENERIC kernel of each NetBSD machine, and the FreeBSD pin of each series: the pin
+          # of conf/freebsd/pins.conf and its name in pins.toml. The i386 row is of stable/14.
+          nb_kernels = {"i386": "GENERIC"}
+          fb_pins = {"14": ("stable-14", "freebsd-stable-14"), "15": ("15.1-release", "freebsd-15.1")}
+          # The rows with a release image in conf/tcg/images.conf. Only they get an R image.
+          with open("conf/tcg/images.conf") as f:
+              images = {line.split()[0] for line in f if line.strip() and not line.startswith("#")}
+          kernel = os.environ["KERNEL"]
           include = []
           r = []
           fr = []
@@ -109,17 +133,20 @@ jobs:
                   nb = rows[row]["netbsd"]
                   r.append({"name": name, "row": row, "machine": nb["machine"],
                             "arch": nb["machine_arch"], "vars": " ".join(nb.get("make", [])),
-                            "kernel": "GENERIC64"})
+                            "kernel": kernel or nb_kernels.get(row, "GENERIC64"),
+                            "image": name in images})
               if cadence in ("weekly", "r") and system == "freebsd":
                   fb = rows[row]["freebsd"]
                   # gcc cannot build the arm64 modules: they are -fPIC, and there the "i"
                   # operand of the asm goto of sys/sdt.h is an impossible constraint. So both
                   # builds of the aarch64 kernel leave the modules out.
+                  pin, pin_name = fb_pins[fb.get("series", ["15"])[0]]
                   fr.append({"name": name, "row": row, "target": fb["target"],
                              "target_arch": fb["target_arch"],
                              "triple": f"{rows[row]['rucc_arch']}-unknown-freebsd15.1",
                              "vars": "NO_MODULES=yes" if row == "aarch64" else "",
-                             "kernel": "GENERIC"})
+                             "kernel": kernel or "GENERIC", "pin": pin, "pin_name": pin_name,
+                             "image": name in images})
               if cadence == "r":
                   continue
               if cadence == "nightly":
@@ -139,14 +166,17 @@ jobs:
               out.write(f"any_r={'true' if r else 'false'}\n")
               out.write(f"fr={json.dumps({'include': fr})}\n")
               out.write(f"any_fr={'true' if fr else 'false'}\n")
-              images = [{"name": b["name"], "row": b["row"]} for b in r + fr]
+              images = [{"name": b["name"], "row": b["row"]} for b in r + fr if b["image"]]
               out.write(f"images={json.dumps({'include': images})}\n")
+              out.write(f"any_image={'true' if images else 'false'}\n")
               out.write(f"any_boot={'true' if include else 'false'}\n")
           print(f"### {cadence}: {len(include)} boots, {len(r) + len(fr)} R builds\n")
           for b in include:
               print(f"- {b['name']} {b['shard']}")
           for b in r + fr:
               print(f"- {b['name']} R kernel {b['kernel']}")
+          if r + fr and os.environ.get("WORLD", "true") == "false":
+              print("\nNo R world: the world input is false.")
           EOF
       - uses: Swatinem/rust-cache@v2.9.2
       - name: cargo build
@@ -327,7 +357,7 @@ jobs:
       # The R image, R kernel with G world (plan 12.6): when the rucc leg linked the kernel, it
       # goes into the release image of the row, as scripts/netbsd/r-image.sh says.
       - name: put the kernel into the release image
-        if: always()
+        if: always() && matrix.image
         continue-on-error: true
         run: |
           kernel="$NB_ROOT/cmp/rucc/obj/sys/arch/$NB_MACHINE/compile/$KERNEL/netbsd"
@@ -392,13 +422,14 @@ jobs:
       KERNCONF: ${{ matrix.kernel }}
       KOBJ: /build/obj/build/src/${{ matrix.target }}.${{ matrix.target_arch }}/sys/${{ matrix.kernel }}
       RUCC_COMMIT: ${{ needs.rb.outputs.rucc_commit }}
-      RB_PIN: 15.1-release
+      RB_PIN: ${{ matrix.pin }}
+      PIN_NAME: ${{ matrix.pin_name }}
       RB_CACHE: /mnt/rb-cache
       RB_VM_DIR: /mnt/rb-builder
       VM_ENV: >-
         RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
         RB_SRCCONF=/root/harness/conf/freebsd/graded.conf RB_HARNESS=/root/harness
-        RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=freebsd-15.1
+        RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=${{ matrix.pin_name }}
         RB_COMPILE_JSONL=/build/out/compile.jsonl RB_ROW=${{ matrix.row }}
         RB_TARGET=${{ matrix.target }} RB_TARGET_ARCH=${{ matrix.target_arch }}
         RB_MAKEVARS=${{ matrix.vars }}
@@ -480,13 +511,13 @@ jobs:
           # The ref objects are under /build/obj and the replay objects are at the same paths under
           # /build/replay, so the roots pair them.
           # shellcheck disable=SC2016
-          scripts/freebsd/builder.sh ssh "cd /root/harness && export ROW=$ROW KOBJ=$KOBJ && "'
+          scripts/freebsd/builder.sh ssh "cd /root/harness && export ROW=$ROW KOBJ=$KOBJ PIN_NAME=$PIN_NAME && "'
             rb=/build/rb/bin/rb; ref=/build/out/compile-ref.jsonl; out=/root/out
             run() { "$rb" "$@" > "$out/$1.txt" 2>&1 || echo "rb $1 exited $?" >> "$out/$1.txt"; }
             RB_COMPILE_LOG=/build/out/compile-mk-diff.jsonl; export RB_COMPILE_LOG
-            run mk-diff freebsd-15.1 --row "$ROW" --dir /build/toolchain --src /build/src \
+            run mk-diff $PIN_NAME --row "$ROW" --dir /build/toolchain --src /build/src \
               --work "$out/mk-diff" --kernel "$KOBJ"
-            run flags-diff freebsd-15.1 --row "$ROW" --g "$ref" --r /build/out/compile-rucc.jsonl --paired-only
+            run flags-diff $PIN_NAME --row "$ROW" --g "$ref" --r /build/out/compile-rucc.jsonl --paired-only
             pair="--g $ref --r /build/out/compile-replay.jsonl --g-root /build/obj --r-root /build/replay/build/obj"
             for tool in warnings sections-diff symbols-diff; do
               run "$tool" $pair
@@ -499,7 +530,7 @@ jobs:
       # it, and installed into the release image of the row in place of the kernel there.
       - name: make buildkernel with rucc, for the image
         id: kernel
-        if: always()
+        if: always() && matrix.image
         continue-on-error: true
         run: |
           status=$(scripts/freebsd/builder.sh ssh 'cat /root/out/kernel-rucc.status' || true)
@@ -611,7 +642,7 @@ jobs:
   r-boot:
     name: ${{ matrix.name }} R image boot
     needs: [rb, netbsd-r, freebsd-r]
-    if: always() && (needs.rb.outputs.any_r == 'true' || needs.rb.outputs.any_fr == 'true')
+    if: always() && needs.rb.outputs.any_image == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     strategy:
@@ -683,7 +714,7 @@ jobs:
   netbsd-r-world:
     name: ${{ matrix.name }} R world
     needs: rb
-    if: needs.rb.outputs.any_r == 'true'
+    if: needs.rb.outputs.any_r == 'true' && (github.event_name != 'workflow_dispatch' || inputs.world)
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -814,7 +845,7 @@ jobs:
   freebsd-r-world:
     name: ${{ matrix.name }} R world
     needs: rb
-    if: needs.rb.outputs.any_fr == 'true'
+    if: needs.rb.outputs.any_fr == 'true' && (github.event_name != 'workflow_dispatch' || inputs.world)
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     strategy:
@@ -824,13 +855,13 @@ jobs:
       NAME: ${{ matrix.name }}
       TRIPLE: ${{ matrix.triple }}
       RUCC_COMMIT: ${{ needs.rb.outputs.rucc_commit }}
-      RB_PIN: 15.1-release
+      RB_PIN: ${{ matrix.pin }}
       RB_CACHE: /mnt/rb-cache
       RB_VM_DIR: /mnt/rb-builder
       VM_ENV: >-
         RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
         RB_SRCCONF=/root/harness/conf/freebsd/graded.conf RB_HARNESS=/root/harness
-        RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=freebsd-15.1
+        RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=${{ matrix.pin_name }}
         RB_COMPILE_JSONL=/build/out/compile.jsonl RB_ROW=${{ matrix.row }}
         RB_TARGET=${{ matrix.target }} RB_TARGET_ARCH=${{ matrix.target_arch }}
     steps:

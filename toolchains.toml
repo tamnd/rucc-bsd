@@ -128,6 +128,40 @@ pkg_sum = "2$nyx4nsiiqzp5g8ypwpsdgcahyyyquk7eb19s4u3t3r8c8bk7aprsahab7jin33g1xz6
 binutils = "2.44"
 cross_prefix = "/usr/local/riscv64-unknown-freebsd15.1/bin/"
 
+# The i386 row (B12) builds G with the i386 flavor of the same ports. The persona's reference
+# amd64-gcc15 becomes i386-gcc15 there. The two were read on 11 November 2026.
+[toolchain.i386-gcc15]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "i386-gcc15"
+version = "15.2.0_1"
+origin = "devel/freebsd-gcc15"
+repopath = "All/Hashed/i386-gcc15-15.2.0_1~2$x9hyw8st.pkg"
+size = 49307899
+sha256 = "76a52be10de9f05e8e3f4a43886cdcc70cae89d9b6cec300ba85d5b85366001c"
+pkg_sum = "2$x9hyw8stbqac78ypi9z539ziz8aa46nhu877qpnjzyxbnfc9y8pa1k14yi6d5uwuojw3d18wofyoeytf4paqf6tzyu4wsfeqc413peb"
+needs = ["i386-binutils"]
+gcc = "15.2.0"
+cc = "/usr/local/bin/i386-unknown-freebsd15.1-gcc15"
+cxx = "/usr/local/bin/i386-unknown-freebsd15.1-g++15"
+cpp = "/usr/local/bin/i386-unknown-freebsd15.1-cpp15"
+cross_toolchain = "i386-gcc15"
+
+[toolchain.i386-binutils]
+system = "freebsd"
+kind = "pkg"
+repo = "https://pkg.freebsd.org/FreeBSD:15:amd64/quarterly"
+package = "i386-binutils"
+version = "2.44,1"
+origin = "devel/binutils"
+repopath = "All/Hashed/i386-binutils-2.44,1~2$b5dczody.pkg"
+size = 2602523
+sha256 = "4932e9b2addc3d60897aef825dec8b186da972844bbd89ad1839aca50747bbd0"
+pkg_sum = "2$b5dczodygqnjh8n1r6zu83xszs9s4fke68h5zm8615ebu5ik369ig5er8m3y8djpyp5xdbtj9sdet4hc1qqm6jmaab6xohky1a7ywzn"
+binutils = "2.44"
+cross_prefix = "/usr/local/i386-unknown-freebsd15.1/bin/"
+
 [toolchain.netbsd-current-tools]
 system = "netbsd"
 kind = "build.sh tools"
