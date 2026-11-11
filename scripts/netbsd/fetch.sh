@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Fetch the pinned NetBSD tree into $NB_SRC.
 #
-# The abbreviated pin is resolved with the GitHub API and must give the full hash in the pin file.
+# A release pin (NB_PIN_SETS) names the source sets of the release with their SHA512. Each set is
+# downloaded, checked and unpacked without its usr/src prefix. The files keep the times in the
+# sets, which are the same in every job.
+#
+# For a commit pin, the abbreviated pin is resolved with the GitHub API and must give the full hash in the pin file.
 # Then only that commit is fetched, with depth 1, and the checkout is checked against the hash.
 #
 # Every file in the tree gets the commit's time as its modification time. A git checkout gives
@@ -10,6 +14,24 @@
 # newer than its sources, as it was in the job that built it.
 
 . "$(dirname "$0")/common.sh"
+
+if [ -n "${NB_PIN_SETS:-}" ]; then
+	start=$(date +%s)
+	mkdir -p "$NB_SRC" "$NB_ROOT/sets"
+	for set in $NB_PIN_SETS; do
+		name=${set%%=*}
+		curl -fsSL --retry 3 -o "$NB_ROOT/sets/$name" "$NB_PIN_SETS_URL/$name"
+		echo "${set#*=}  $NB_ROOT/sets/$name" | sha512sum -c -
+		tar -xzf "$NB_ROOT/sets/$name" -C "$NB_SRC" --strip-components=2
+		rm -f "$NB_ROOT/sets/$name"
+	done
+	end=$(date +%s)
+	printf 'fetch\t0\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' $((end - start)) "$(nb_du "$NB_SRC")" \
+		"$(nb_du "$NB_OBJ")" "$(nb_du "$NB_TOOLS")" "$(nb_du "$NB_DEST")" "$(nb_du "$NB_REL")" \
+		"$(df -Pm "$NB_ROOT" | awk 'NR == 2 { print $4 }')" >> "$NB_LOGS/phases.tsv"
+	echo "fetch: the $NB_PIN_NAME source sets in $((end - start)) s, $(nb_du "$NB_SRC") MiB"
+	exit 0
+fi
 
 full=$(gh api "repos/$NB_PIN_REPO/commits/$NB_PIN_SHORT" --jq .sha)
 if [ "$full" != "$NB_PIN_COMMIT" ]; then
