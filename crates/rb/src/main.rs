@@ -97,15 +97,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             print!("{text}");
             Ok(exit(ok))
         }
-        "ctf-diff" | "frames" | "vec-audit" => {
-            let (text, ok) = match args.command.as_str() {
-                "ctf-diff" => rb::ctfdiff::cli::run_cli(args)?,
-                "frames" => rb::frames::cli::run(args)?,
-                _ => rb::vecaudit::cli::run(args)?,
-            };
-            print!("{text}");
-            Ok(exit(ok))
-        }
+        "ctf-diff" | "frames" | "mixed" | "vec-audit" => graded(args),
         "cross-modules" | "test" => test(args),
         "warnings" => {
             let (text, ok) = rb::warnings::cli::run(args)?;
@@ -118,6 +110,18 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         }
         other => Err(format!("unknown command {other}; see rb help")),
     }
+}
+
+/// `rb ctf-diff`, `rb frames`, `rb mixed` and `rb vec-audit`.
+fn graded(args: &Args) -> Result<ExitCode, String> {
+    let (text, ok) = match args.command.as_str() {
+        "ctf-diff" => rb::ctfdiff::cli::run_cli(args)?,
+        "frames" => rb::frames::cli::run(args)?,
+        "mixed" => rb::mixed::cli::run(args)?,
+        _ => rb::vecaudit::cli::run(args)?,
+    };
+    print!("{text}");
+    Ok(exit(ok))
 }
 
 /// `rb census`.
