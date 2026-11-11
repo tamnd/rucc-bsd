@@ -7,7 +7,9 @@
 # Steps:
 #   1. Print "RB-READY <uname -a>" on the console.
 #   2. Read the results disk. If it holds a tar archive with an rb.conf, that file overrides the
-#      rb.conf of the image. rb boot uses this to choose the suites at boot time.
+#      rb.conf of the image. rb boot uses this to choose the suites at boot time. The archive is
+#      unpacked to $work/in, and the rb.conf of rb boot --scripts sets libexec to $work/in/rb,
+#      so the suites run with the scripts on the disk.
 #   3. Save uname and dmesg.
 #   4. Run each suite of rb_suites. Print "RB-SUITE <name>" before it and "RB-SUITE-END <name>
 #      <counts>" after it.

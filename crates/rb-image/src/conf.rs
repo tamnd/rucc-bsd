@@ -37,6 +37,10 @@ pub struct RbConf {
     pub tests_except: Vec<String>,
     /// kyua's parallelism.
     pub kyua_parallelism: Option<u32>,
+    /// Run the suites with the scripts on the results disk, under `rb/`, and not with the
+    /// image's. rb-rc unpacks the disk to `$work/in`, so the line `libexec="$work/in/rb"` does
+    /// it, also with the rb-rc of an older image.
+    pub scripts_on_disk: bool,
 }
 
 impl Default for RbConf {
@@ -52,6 +56,7 @@ impl Default for RbConf {
             tests_only: Vec::new(),
             tests_except: Vec::new(),
             kyua_parallelism: None,
+            scripts_on_disk: false,
         }
     }
 }
@@ -108,6 +113,9 @@ impl RbConf {
         if let Some(n) = self.kyua_parallelism {
             set("kyua_parallelism", &n.to_string());
         }
+        if self.scripts_on_disk {
+            s.push_str("libexec=\"$work/in/rb\"\n");
+        }
         s
     }
 }
@@ -150,5 +158,11 @@ mod tests {
         assert!(text.contains(r"rb_smoke_package='it'\''s'"), "{text}");
         assert!(text.contains("rb_tests_except='net lib'\n"), "{text}");
         assert!(text.contains("rb_kyua_parallelism=2\n"), "{text}");
+        assert!(!text.contains("libexec"), "{text}");
+        let conf = RbConf {
+            scripts_on_disk: true,
+            ..RbConf::default()
+        };
+        assert!(conf.render().ends_with("\nlibexec=\"$work/in/rb\"\n"));
     }
 }
