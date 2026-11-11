@@ -189,7 +189,7 @@ Anything else that differs means a make decision went differently. It is traced 
 - refused flags;
 - warnings that would be errors.
 
-Each failure is reported with the unit and its first diagnostic. B2's exit criterion is that it passes for every C unit of both systems' graded configurations (16.3).
+Each failure is reported with the unit and its first diagnostic. A source that the build removed after it compiled it, such as a `y.tab.c`, is counted as no longer on disk and is not a failure. B2's exit criterion is that it passes for every C unit of both systems' graded configurations (16.3).
 
 ## 05.8 Probes are not units
 
