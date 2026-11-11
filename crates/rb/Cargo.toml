@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 harness-agent.workspace = true
 harness-shim.workspace = true
+harness-stats.workspace = true
 iced-x86.workspace = true
 miniz_oxide.workspace = true
 object.workspace = true

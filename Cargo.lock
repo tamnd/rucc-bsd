@@ -100,6 +100,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "harness-stats"
+version = "0.1.0"
+source = "git+https://github.com/tamnd/rucc-harness?tag=v0.1.0#63c5a6dbe9c35097a799dfffdc5b215eab347422"
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -196,6 +201,7 @@ version = "0.0.1"
 dependencies = [
  "harness-agent",
  "harness-shim",
+ "harness-stats",
  "iced-x86",
  "miniz_oxide",
  "object",

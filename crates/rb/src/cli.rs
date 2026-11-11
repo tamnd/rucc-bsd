@@ -320,6 +320,13 @@ fn graded_commands(command: &str) -> Option<Accepts> {
             ],
             switches: &["dry-run"],
         },
+        "speed" => Accepts {
+            positional: false,
+            values: &[
+                "g", "r", "g-root", "r-root", "g-text", "r-text", "build", "units", "limit",
+            ],
+            switches: &[],
+        },
         "test" => Accepts {
             positional: false,
             values: &[
@@ -572,6 +579,19 @@ usage:
       first error, the flags rucc refused, and the units with a warning G did not give, compared
       as rb warnings does. --out writes one line per unit as tab-separated values. Exits 1 when a
       unit failed or has such a warning.
+  rb speed [--g LOG --r LOG [--g-root DIR --r-root DIR]] [--g-text FILE,... --r-text FILE,...]
+          [--build NAME] [--units FILE] [--limit N]
+      The compile time and size gates of 02.5 (plan 13.4). LOG is the compile.jsonl of each
+      build, and units are paired by object as for rb flags-diff. Only C units and .S files of the
+      C compiler slot count; probes, links, C++ units and failed calls do not. R's summed user and
+      system CPU time must be at most 0.5 of G's, and no call of R's C compiler may use more than
+      1.5 GiB. The report gives the percentiles of the per unit ratio and the N units with the
+      worst one, 50 by default, over units where G took at least 10 ms, the wall time of each
+      build, and R's probes slower than 20 ms. A unit in one build only fails the gates. Each
+      FILE of --g-text is compared with the FILE of --r-text in the same place, such as the
+      kernel and libc.so: the size of R's executable sections must be within 5% of G's. --build
+      names the build in the report, and --units writes each paired unit as tab-separated
+      values. Exits 1 when a gate fails.
   rb test (--gg RUNS | --gg-image IMG | --baseline DIR) [--rg RUNS | --rg-image IMG]
           [--gr RUNS | --gr-image IMG] [--rr RUNS | --rr-image IMG] [--out DIR] [--work DIR]
           [--limit N] [the options of rb boot] [--dry-run]
