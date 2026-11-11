@@ -135,8 +135,7 @@ jobs:
           fail-on-cache-miss: true
       - name: host packages
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+          scripts/ci/apt-install.sh zlib1g-dev
       - name: fetch the pinned tree
         run: scripts/netbsd/fetch.sh
         env:
