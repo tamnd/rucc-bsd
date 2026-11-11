@@ -2,6 +2,7 @@
 """Shell scripts that compile every unit of a G build again with another shim.
 
     replay.py LOG --shim PATH --out DIR [--shards N] [--objects DIR] [--timeout S] [--timeouts FILE]
+              [--stderr]
 
 LOG is the compile.jsonl of a build through rb-cc-ref, or the same file compressed with xz. A
 unit is a call of the C compiler slot that is not a probe, has a C or assembly input and has -c.
@@ -13,7 +14,9 @@ each object with its G object when the roots are given.
 
 The units go round-robin into DIR/replay-0.sh to DIR/replay-(N-1).sh, 4 by default, to run at
 the same time. Each line ends with "|| true", so one failed unit does not stop the script. The
-shim writes the records; the scripts print nothing of their own.
+shim writes the records; the scripts print nothing of their own. With --stderr, the standard
+error of each unit goes to a file next to the object, with .err in place of .o, for a shim that
+does not record the diagnostics itself.
 
 timeout(1) stops a unit after S seconds, 300 by default, so one unit that does not stop cannot
 hold its script. A stopped unit has no record, so its source goes on a line of FILE when --timeouts
@@ -91,6 +94,7 @@ def main():
     ap.add_argument("--objects")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--timeouts")
+    ap.add_argument("--stderr", action="store_true")
     a = ap.parse_args()
     objects = a.objects or os.path.join(a.out, "objects")
     os.makedirs(a.out, exist_ok=True)
@@ -110,7 +114,8 @@ def main():
         args = redirect(argv[1:], obj, os.path.splitext(obj)[0] + ".d")
         cmd = " ".join(shlex.quote(x) for x in [a.shim, *args])
         mkdir = f"mkdir -p {shlex.quote(os.path.dirname(obj))}"
-        run = f"timeout -k 10 {a.timeout} {cmd} > /dev/null 2>&1"
+        err = shlex.quote(os.path.splitext(obj)[0] + ".err") if a.stderr else "&1"
+        run = f"timeout -k 10 {a.timeout} {cmd} > /dev/null 2>{err}"
         if a.timeouts:
             source = next(i["path"] for i in inputs if i["path"].endswith(SOURCES))
             note = shlex.quote(f"{a.timeout}s {source}")

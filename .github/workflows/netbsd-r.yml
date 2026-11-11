@@ -23,6 +23,13 @@
 # the report job compares the ATF counts with the G counts of the pin in results/netbsd. The
 # rucc kernel job then also builds RB-TEST (conf/netbsd/kernel/RB-TEST), and the image and boot
 # jobs run once for GENERIC and once for RB-TEST. The ATF shards boot GENERIC.
+#
+# A manual run with build=world does none of the above. Its world job builds "build.sh
+# distribution" through the control TOOLDIR, then compiles every unit of that build again with
+# rucc (scripts/netbsd/world-replay.sh, after the replay of freebsd-r.yml). So every unit of the
+# world gets a rucc result, also the units that an earlier failure would hide in a rucc build.
+# scripts/netbsd/replay-report.py puts the counts and the failed units by cause in the step
+# summary. The rucc and target inputs apply as for the kernel, and g_run and atf do not apply.
 
 name: netbsd-r
 
@@ -30,6 +37,11 @@ name: netbsd-r
 on:
   workflow_dispatch:
     inputs:
+      build:
+        description: What to build, the GENERIC kernel or the world
+        type: choice
+        options: [kernel, world]
+        default: kernel
       rucc:
         description: A branch or commit of tamnd/rucc to build instead of the pinned release
         required: false
@@ -98,6 +110,7 @@ jobs:
   kernel:
     name: GENERIC kernel with ${{ matrix.cc }}
     needs: [tools, rb]
+    if: inputs.build != 'world'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     continue-on-error: ${{ matrix.cc == 'rucc' }}
@@ -282,6 +295,92 @@ jobs:
           path: /mnt/nb/logs
           retention-days: 14
 
+  world:
+    name: world with rucc
+    needs: tools
+    if: inputs.build == 'world'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      RB_RUCC_TARGET: ${{ inputs.target }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: host packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rucc ${{ inputs.rucc }} from source
+        if: inputs.rucc != ''
+        run: |
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$REF"
+          cargo build --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "$RUNNER_TEMP/rucc-src/target/release" >> "$GITHUB_PATH"
+          echo "rucc built from $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.rucc }}
+      - name: rucc ${{ env.RUCC_VERSION }}
+        if: inputs.rucc == ''
+        run: |
+          name="rucc-$RUCC_VERSION-x86_64-unknown-linux-gnu"
+          gh release download "$RUCC_VERSION" -R tamnd/rucc -p "$name.tar.gz" -D "$RUNNER_TEMP"
+          echo "$RUCC_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+          echo "rucc $RUCC_VERSION, the release tarball" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: build.sh distribution with ref, the control
+        run: |
+          scripts/netbsd/overlay.sh ref
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh distribution-ref -u distribution
+      - name: compile every unit of the ref build with rucc
+        # A unit stops after 300 s. The step stops after its limit, and the steps after it still run.
+        timeout-minutes: 220
+        continue-on-error: true
+        run: NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh replay -- scripts/netbsd/world-replay.sh rucc
+      - name: the result of the replay
+        if: always()
+        run: |
+          units=$(awk 'NR == 1 { print $1 }' "$NB_ROOT/logs/replay.txt" 2>/dev/null || true)
+          {
+            if [ -f "$NB_ROOT/logs/phases.tsv" ]; then scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"; fi
+            echo
+            python3 -I scripts/netbsd/replay-report.py "${units:-0}" "$NB_ROOT/logs/shim.tsv" \
+              "$NB_ROOT/logs/replay-timeouts.txt" "$NB_ROOT/logs/replay-failed.tsv"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # The standard error of each failed unit, for the causes the summary leaves out.
+          if [ -s "$NB_ROOT/logs/replay-failed.tsv" ]; then
+            cut -f5 "$NB_ROOT/logs/replay-failed.tsv" | tar -T - -cf - 2>/dev/null \
+              | xz -T0 > "$NB_ROOT/logs/replay-errors.tar.xz" || true
+          fi
+      - name: compress the logs
+        if: always()
+        run: |
+          rm -f "$NB_ROOT"/logs/compile-ref.jsonl
+          xz -T0 "$NB_ROOT"/logs/*.log "$NB_ROOT"/logs/*.tsv 2>/dev/null || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-logs-world
+          path: /mnt/nb/logs
+          retention-days: 14
+
   rb:
     name: cargo build rb
     runs-on: ubuntu-24.04
@@ -303,7 +402,7 @@ jobs:
   compare:
     name: rb compares the rucc kernel with the ref kernel
     needs: [kernel, rb]
-    if: always() && needs.rb.result == 'success'
+    if: always() && inputs.build != 'world' && needs.rb.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -363,7 +462,7 @@ jobs:
     needs: [rb, kernel]
     # The kernel job fails when any step of build.sh fails, also after the link. The kernel
     # artifact is there when a kernel linked, and the download below fails when it is not.
-    if: always() && inputs.g_run != ''
+    if: always() && inputs.build != 'world' && inputs.g_run != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -474,7 +573,7 @@ jobs:
     name: boot and smoke with the rucc ${{ matrix.kernel }} kernel
     needs: [rb, image]
     # Each leg needs only its own image, so a failed image of the other kernel does not skip it.
-    if: ${{ !cancelled() && inputs.g_run != '' && needs.rb.result == 'success' }}
+    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -559,7 +658,7 @@ jobs:
     name: ATF ${{ matrix.shard }} with the rucc kernel
     needs: [rb, image]
     # The shards boot the GENERIC image only, so a failed RB-TEST image does not skip them.
-    if: ${{ !cancelled() && inputs.g_run != '' && inputs.atf && needs.rb.result == 'success' }}
+    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && inputs.atf && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:
@@ -656,7 +755,7 @@ jobs:
   report:
     name: report
     needs: [kernel, image, boot, atf]
-    if: always() && inputs.g_run != ''
+    if: always() && inputs.build != 'world' && inputs.g_run != ''
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
