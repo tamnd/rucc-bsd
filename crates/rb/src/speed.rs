@@ -15,9 +15,14 @@
 //! - R's text, the size of the executable sections of the kernel and of `libc.so`, is within 5%
 //!   of G's.
 //!
+//! With `--bench`, the runtime gates of 02.5 over the `bench.tsv` of `rb bench`: the geometric
+//! mean of R's speed over the gated benchmarks is at least 0.98, and no gated benchmark is below
+//! 0.95. The report also lists every benchmark more than 2% behind, gated or not.
+//!
 //! The per unit ratio, its percentiles and the worst units use only units where G took at least
 //! [`MIN_SECONDS`], because the clock of `rusage` counts in ticks and a 2 ms unit can show 0.
 
+use crate::bench::{BEHIND, Row, parse_summary};
 use crate::objdiff::unit;
 use harness_shim::record::CompileRecord;
 use std::collections::BTreeMap;
@@ -357,6 +362,126 @@ impl Compile {
     }
 }
 
+/// The least geometric mean of R's speed over the gated benchmarks (02.5).
+pub const GEOMEAN_LIMIT: f64 = 0.98;
+
+/// The least speed of R in any gated benchmark (02.5).
+pub const BENCH_LIMIT: f64 = 0.95;
+
+/// The runtime gates over the `bench.tsv` of one `rb bench`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Runtime {
+    /// The file.
+    pub path: String,
+    /// Its benchmarks.
+    pub rows: Vec<Row>,
+}
+
+impl Runtime {
+    /// Read a `bench.tsv`.
+    pub fn read(path: &Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let rows = parse_summary(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(Runtime {
+            path: path.display().to_string(),
+            rows,
+        })
+    }
+
+    /// The gated benchmarks that have a speed.
+    fn gated(&self) -> impl Iterator<Item = (&Row, f64)> {
+        self.rows
+            .iter()
+            .filter(|r| r.not_gated.is_none())
+            .filter_map(|r| r.speed.map(|s| (r, s)))
+    }
+
+    /// The geometric mean of the gated speeds.
+    #[must_use]
+    pub fn geomean(&self) -> Option<f64> {
+        let speeds: Vec<f64> = self.gated().map(|(_, s)| s).collect();
+        harness_stats::geometric_mean(&speeds)
+    }
+
+    /// The gated benchmarks below [`BENCH_LIMIT`].
+    #[must_use]
+    pub fn slow(&self) -> Vec<&Row> {
+        self.gated()
+            .filter(|(_, s)| *s < BENCH_LIMIT)
+            .map(|(r, _)| r)
+            .collect()
+    }
+
+    /// Every benchmark more than 2% behind, gated or not, slowest first.
+    #[must_use]
+    pub fn behind(&self) -> Vec<&Row> {
+        let mut v: Vec<&Row> = self
+            .rows
+            .iter()
+            .filter(|r| r.speed.is_some_and(|s| s < BEHIND))
+            .collect();
+        v.sort_by(|a, b| {
+            a.speed
+                .partial_cmp(&b.speed)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        v
+    }
+
+    /// Whether both gates pass. With no gated benchmark, they fail.
+    #[must_use]
+    pub fn passed(&self) -> bool {
+        self.geomean().is_some_and(|g| g >= GEOMEAN_LIMIT) && self.slow().is_empty()
+    }
+
+    /// The report.
+    #[must_use]
+    pub fn report(&self) -> String {
+        let mut out = String::new();
+        let gated = self.gated().count();
+        let _ = writeln!(
+            out,
+            "runtime: {}: {} benchmarks, {gated} gated",
+            self.path,
+            self.rows.len()
+        );
+        match self.geomean() {
+            Some(g) => {
+                let _ = writeln!(
+                    out,
+                    "geometric mean of R's speed: {g:.4} (gate >= {GEOMEAN_LIMIT}): {}",
+                    verdict(g >= GEOMEAN_LIMIT)
+                );
+            }
+            None => {
+                let _ = writeln!(out, "geometric mean of R's speed: no gated benchmark: fail");
+            }
+        }
+        let slow = self.slow();
+        let _ = writeln!(
+            out,
+            "gated benchmarks below {BENCH_LIMIT}: {}: {}",
+            slow.len(),
+            verdict(slow.is_empty())
+        );
+        let behind = self.behind();
+        let _ = writeln!(out, "benchmarks behind by more than 2%: {}", behind.len());
+        for r in behind {
+            let _ = writeln!(
+                out,
+                "  {:<8.4} {}/{}{}",
+                r.speed.unwrap_or_default(),
+                r.group,
+                r.name,
+                r.not_gated
+                    .as_ref()
+                    .map_or_else(String::new, |w| format!(" (not gated: {w})"))
+            );
+        }
+        out
+    }
+}
+
 /// `pass` or `fail`.
 fn verdict(passed: bool) -> &'static str {
     if passed { "pass" } else { "fail" }
@@ -425,7 +550,7 @@ impl Text {
 
 /// The command line half.
 pub mod cli {
-    use super::{Text, compare, text_size};
+    use super::{Runtime, Text, compare, text_size};
     use crate::cli::Args;
     use harness_shim::record::read_log;
     use std::fmt::Write as _;
@@ -454,8 +579,9 @@ pub mod cli {
         if logs.0.is_some() != logs.1.is_some() {
             return Err("give both --g and --r, the compile.jsonl of each build".into());
         }
-        if logs.0.is_none() && g_text.is_empty() {
-            return Err("give --g and --r, or --g-text and --r-text".into());
+        let bench = list(args, "bench");
+        if logs.0.is_none() && g_text.is_empty() && bench.is_empty() {
+            return Err("give --g and --r, --g-text and --r-text, or --bench".into());
         }
         let limit = args
             .get("limit")
@@ -503,6 +629,11 @@ pub mod cli {
             };
             let _ = writeln!(out, "{}", text.line());
             ok &= text.passed();
+        }
+        for path in &bench {
+            let runtime = Runtime::read(Path::new(path))?;
+            out.push_str(&runtime.report());
+            ok &= runtime.passed();
         }
         let _ = writeln!(out, "gates: {}", super::verdict(ok));
         Ok((out, ok))
@@ -600,6 +731,73 @@ mod tests {
         assert!(!text(1000, 1051).passed());
         assert!(!text(1000, 949).passed());
         assert!(text(1000, 1000).line().contains("libc.so"));
+    }
+
+    #[test]
+    fn the_runtime_gates() {
+        let row = |name: &str, speed: Option<f64>, gated: bool| Row {
+            group: "g".into(),
+            name: name.into(),
+            speed,
+            not_gated: (!gated).then(|| "G CV 2.00%".to_string()),
+        };
+        let runtime = |rows| Runtime {
+            path: "bench.tsv".into(),
+            rows,
+        };
+        // 0.99 * 1.0 * 0.97: a geometric mean of 0.9866, no gated speed below 0.95.
+        let ok = runtime(vec![
+            row("a", Some(0.99), true),
+            row("b", Some(1.0), true),
+            row("c", Some(0.97), true),
+            row("noisy", Some(0.5), false),
+            row("missing", None, true),
+        ]);
+        assert!((ok.geomean().unwrap() - 0.986_6).abs() < 1e-3);
+        assert!(ok.slow().is_empty());
+        assert!(ok.passed());
+        let behind: Vec<&str> = ok.behind().iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(behind, ["noisy", "c"]);
+        let report = ok.report();
+        assert!(report.contains("3 gated"), "{report}");
+        assert!(
+            report.contains("g/noisy (not gated: G CV 2.00%)"),
+            "{report}"
+        );
+
+        // One gated benchmark at 0.94 fails, though the mean passes.
+        let one_slow = runtime(vec![
+            row("a", Some(1.1), true),
+            row("b", Some(1.0), true),
+            row("c", Some(0.94), true),
+        ]);
+        assert!(one_slow.geomean().unwrap() >= GEOMEAN_LIMIT);
+        assert_eq!(one_slow.slow().len(), 1);
+        assert!(!one_slow.passed());
+
+        // A low mean fails, and so does a file with nothing gated.
+        assert!(!runtime(vec![row("a", Some(0.96), true)]).passed());
+        assert!(!runtime(vec![row("a", Some(1.0), false)]).passed());
+    }
+
+    #[test]
+    fn the_runtime_gates_read_a_bench_tsv() {
+        let dir = std::env::temp_dir().join(format!("rb-speed-bench-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bench.tsv");
+        std::fs::write(
+            &path,
+            "# pin\tnetbsd-11\n\
+             group\tname\tbetter\tg_median\tr_median\tg_cv\tr_cv\tg_runs\tr_runs\tspeed\tgated\n\
+             syscalls\tgetpid\tlower\t1\t1\t0.001\t0.001\t10\t10\t1.0000\tyes\n\
+             tools\tsort\tlower\t1\t2\t0.03\t0.001\t10\t10\t0.5000\tG CV 3.00%\n",
+        )
+        .unwrap();
+        let runtime = Runtime::read(&path).unwrap();
+        assert_eq!(runtime.rows.len(), 2);
+        assert!(runtime.passed());
+        assert_eq!(runtime.behind().len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
