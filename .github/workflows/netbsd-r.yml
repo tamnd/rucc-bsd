@@ -29,7 +29,9 @@
 # rucc (scripts/netbsd/world-replay.sh, after the replay of freebsd-r.yml). So every unit of the
 # world gets a rucc result, also the units that an earlier failure would hide in a rucc build.
 # scripts/netbsd/replay-report.py puts the counts and the failed units by cause in the step
-# summary. The rucc and target inputs apply as for the kernel, and g_run and atf do not apply.
+# summary. Then scripts/netbsd/stand.sh builds the boot code of sys/arch/i386/stand again with
+# rucc and gives the size of each file of /usr/mdec beside the size from the control. The rucc and
+# target inputs apply as for the kernel, and g_run and atf do not apply.
 
 name: netbsd-r
 
@@ -346,6 +348,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: build.sh distribution with ref, the control
+        id: ref
         run: |
           scripts/netbsd/overlay.sh ref
           NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh distribution-ref -u distribution
@@ -369,6 +372,10 @@ jobs:
             cut -f5 "$NB_ROOT/logs/replay-failed.tsv" | tar -T - -cf - 2>/dev/null \
               | xz -T0 > "$NB_ROOT/logs/replay-errors.tar.xz" || true
           fi
+      - name: the boot code with rucc
+        if: always() && steps.ref.outcome == 'success'
+        continue-on-error: true
+        run: NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/stand.sh >> "$GITHUB_STEP_SUMMARY"
       - name: compress the logs
         if: always()
         run: |

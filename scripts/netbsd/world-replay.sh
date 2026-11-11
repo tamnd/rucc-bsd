@@ -16,7 +16,8 @@
 # Every unit thus gets a rucc result, also the units that a failed unit before it would hide in a
 # rucc build. The tree, the object directory and DESTDIR are those of the control, so each unit
 # finds the generated files and the installed headers it found there. A unit stops after 300 s and
-# its source goes to $NB_LOGS/replay-timeouts.txt. replay-report.py reads the results.
+# its source goes to $NB_LOGS/replay-timeouts.txt. replay-report.py reads the results. The nbmake
+# wrapper of the control build is kept as $NB_ROOT/nbmake-r for stand.sh.
 
 . "$(dirname "$0")/common.sh"
 
@@ -26,6 +27,8 @@ gnu=${gnu:-x86_64--netbsd}
 out=$NB_ROOT/replay
 
 cp "$NB_LOGS/shim.tsv" "$NB_LOGS/shim-ref.tsv"
+# overlay.sh removes the nbmake wrapper of the control build, and stand.sh needs it.
+cp "${NB_TOOLDIR_R:-$NB_ROOT/tools-r}/bin/nbmake-$NB_MACHINE" "$NB_ROOT/nbmake-r"
 python3 -I "$NB_HERE/shim-records.py" "$NB_LOGS/shim-ref.tsv" G "$NB_OBJ" "$NB_OBJ" \
 	> "$NB_LOGS/compile-ref.jsonl"
 "$NB_HERE/overlay.sh" "$rucc"
