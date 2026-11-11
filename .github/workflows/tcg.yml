@@ -31,6 +31,11 @@
 # scripts/freebsd/r-image.sh installs the kernel into the root file system, and
 # scripts/netbsd/r-image.sh puts it into the EFI system partition.
 #
+# Each R row also has a world job, beside its kernel job: the world of the row built with the
+# reference, the control, then every unit of that build compiled again with rucc. netbsd-r-world
+# does what the world job of netbsd-r.yml does, and freebsd-r-world what the world run of
+# freebsd-r.yml does. The step summary gives the failed units by cause.
+#
 # A manual run takes the cadence, the rows and the rucc ref. The r cadence builds R only.
 
 name: tcg
@@ -673,4 +678,273 @@ jobs:
         with:
           name: tcg-${{ matrix.name }}-r-boot
           path: ${{ runner.temp }}/out
+          retention-days: 14
+
+  # The R world of each NetBSD row, as the world job of netbsd-r.yml does it for amd64: "build.sh
+  # distribution" through the control TOOLDIR, then every unit of that build compiled again with
+  # rucc (scripts/netbsd/world-replay.sh). The control of an earlier run of the same row, pin and
+  # scripts is restored from its artifact in place of the build (scripts/netbsd/control.sh).
+  netbsd-r-world:
+    name: ${{ matrix.name }} R world
+    needs: rb
+    if: needs.rb.outputs.any_r == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.rb.outputs.r) }}
+    env:
+      NB_ROOT: /mnt/nb
+      NB_PIN_FILE: 11.1.pin
+      NB_MACHINE: ${{ matrix.machine }}
+      NB_MACHINE_ARCH: ${{ matrix.arch }}
+      NB_VARS: ${{ matrix.vars }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache@v6.1.0
+        id: tools
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-${{ matrix.machine }}-${{ matrix.arch }}-${{ hashFiles('conf/netbsd/11.1.pin', 'scripts/netbsd/common.sh') }}
+      - name: host packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy --no-install-recommends zlib1g-dev
+      - name: fetch the source sets
+        run: scripts/netbsd/fetch.sh
+      - name: build.sh tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: scripts/netbsd/phase.sh tools tools
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rucc-linux-x86_64
+          path: ${{ runner.temp }}/rucc
+      - name: rucc on PATH
+        run: |
+          chmod +x "$RUNNER_TEMP/rucc/rucc"
+          echo "$RUNNER_TEMP/rucc" >> "$GITHUB_PATH"
+      # The control depends only on the tools, the pinned tree and the scripts that build and keep
+      # it. A run that built it keeps it as an artifact named by the hash of those scripts
+      # (scripts/netbsd/control.sh), and a later run restores it in place of the build.
+      - name: the control of an earlier run
+        id: control
+        run: |
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=10" \
+            -q '[.artifacts[] | select(.expired | not)][0].workflow_run.id // empty')
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [ -n "$run" ]; then
+            echo "The control build is that of run $run, from the artifact $NAME." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: tcg-netbsd-r-control-${{ matrix.machine }}-${{ matrix.arch }}-${{ hashFiles('conf/netbsd/11.1.pin', 'conf/netbsd/toolchain/shim-ref.sh', 'scripts/netbsd/common.sh', 'scripts/netbsd/fetch.sh', 'scripts/netbsd/overlay.sh', 'scripts/netbsd/control.sh', 'scripts/netbsd/stand.sh') }}
+      - uses: actions/download-artifact@v8.0.1
+        if: steps.control.outputs.run != ''
+        with:
+          name: ${{ steps.control.outputs.name }}
+          path: /mnt/nb/control
+          run-id: ${{ steps.control.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: restore the control
+        if: steps.control.outputs.run != ''
+        run: |
+          scripts/netbsd/control.sh restore "$NB_ROOT/control/control.tar.zst"
+          rm -rf "$NB_ROOT/control"
+      - name: build.sh distribution with ref, the control
+        id: ref
+        if: steps.control.outputs.run == ''
+        run: |
+          scripts/netbsd/overlay.sh ref
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh distribution-ref -u distribution
+          scripts/netbsd/control.sh save "$NB_ROOT/control/control.tar.zst"
+      - uses: actions/upload-artifact@v7.0.1
+        if: steps.ref.outcome == 'success'
+        with:
+          name: ${{ steps.control.outputs.name }}
+          path: /mnt/nb/control/control.tar.zst
+          compression-level: 0
+          retention-days: 30
+      - name: remove the kept control
+        if: steps.ref.outcome == 'success'
+        run: rm -rf "$NB_ROOT/control"
+      - name: compile every unit of the ref build with rucc
+        # A unit stops after 300 s. The step stops after its limit, and the steps after it still run.
+        timeout-minutes: 200
+        continue-on-error: true
+        run: NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh replay -- scripts/netbsd/world-replay.sh rucc
+      - name: the result of the replay
+        if: always()
+        run: |
+          units=$(awk 'NR == 1 { print $1 }' "$NB_ROOT/logs/replay.txt" 2>/dev/null || true)
+          {
+            echo "### $NAME R world with rucc"
+            echo
+            if [ -f "$NB_ROOT/logs/phases.tsv" ]; then scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"; fi
+            echo
+            python3 -I scripts/netbsd/replay-report.py "${units:-0}" "$NB_ROOT/logs/shim.tsv" \
+              "$NB_ROOT/logs/replay-timeouts.txt" "$NB_ROOT/logs/replay-failed.tsv"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # The standard error of each failed unit, for the causes the summary leaves out.
+          if [ -s "$NB_ROOT/logs/replay-failed.tsv" ]; then
+            cut -f5 "$NB_ROOT/logs/replay-failed.tsv" | tar -T - -cf - 2>/dev/null \
+              | xz -T0 > "$NB_ROOT/logs/replay-errors.tar.xz" || true
+          fi
+        env:
+          NAME: ${{ matrix.name }}
+      - name: compress the logs
+        if: always()
+        run: |
+          rm -f "$NB_ROOT"/logs/compile-ref.jsonl
+          xz -T0 "$NB_ROOT"/logs/*.log "$NB_ROOT"/logs/*.tsv "$NB_ROOT"/logs/*.jsonl 2>/dev/null || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: tcg-${{ matrix.name }}-r-world
+          path: /mnt/nb/logs
+          retention-days: 14
+
+  # The R world of each FreeBSD row, as the world run of freebsd-r.yml does it for amd64, in the
+  # builder VM: make buildworld with the reference, the control, then every unit of that build
+  # compiled again with rucc (scripts/freebsd/replay.py).
+  freebsd-r-world:
+    name: ${{ matrix.name }} R world
+    needs: rb
+    if: needs.rb.outputs.any_fr == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.rb.outputs.fr) }}
+    env:
+      NAME: ${{ matrix.name }}
+      TRIPLE: ${{ matrix.triple }}
+      RUCC_COMMIT: ${{ needs.rb.outputs.rucc_commit }}
+      RB_PIN: 15.1-release
+      RB_CACHE: /mnt/rb-cache
+      RB_VM_DIR: /mnt/rb-builder
+      VM_ENV: >-
+        RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
+        RB_SRCCONF=/root/harness/conf/freebsd/graded.conf RB_HARNESS=/root/harness
+        RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=freebsd-15.1
+        RB_COMPILE_JSONL=/build/out/compile.jsonl RB_ROW=${{ matrix.row }}
+        RB_TARGET=${{ matrix.target }} RB_TARGET_ARCH=${{ matrix.target_arch }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p "$RB_CACHE" "$RB_VM_DIR"
+          sudo chown "$USER" "$RB_CACHE" "$RB_VM_DIR"
+          df -h / /mnt
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils sshpass zstd
+      - name: cache the builder image
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/FreeBSD-*.raw.xz
+          key: freebsd-builder-${{ hashFiles('conf/freebsd/builder.conf') }}
+      - name: cache the source
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/freebsd-src-*
+          key: freebsd-src-${{ env.RB_PIN }}-${{ hashFiles('conf/freebsd/pins.conf') }}
+      - name: boot the builder VM
+        run: |
+          echo "rucc built in the VM from tamnd/rucc commit $RUCC_COMMIT. The run is ungraded." >> "$GITHUB_STEP_SUMMARY"
+          scripts/freebsd/builder.sh up
+          tar --exclude=./.git --exclude=./target -cf - . \
+            | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
+      - name: provision
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/provision.sh /root/out"
+      - name: fetch the source of ${{ env.RB_PIN }}
+        run: |
+          mkdir -p record
+          read -r archive strip < <(RB_OUT=record scripts/freebsd/fetch.sh "$RB_PIN")
+          scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
+          scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
+      - name: rb, rb-cc, rucc and the shims
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
+      - name: make buildworld with ref, the control
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk \
+            RB_PHASE=world-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh world"
+      - name: compile every unit of the ref build with rucc
+        # A unit stops after 300 s. The step stops after its limit, and the steps after it still run.
+        timeout-minutes: 200
+        continue-on-error: true
+        run: |
+          mkdir -p compile replay
+          scripts/freebsd/builder.sh get /build/out/compile-ref.jsonl compile/compile-ref.jsonl
+          python3 -I scripts/freebsd/replay.py compile/compile-ref.jsonl --out replay --objects /build/replay \
+            --shim "/build/toolchain/bin/$TRIPLE-rb-cc-rucc" \
+            --timeouts /root/out/replay-timeouts.txt | tee record/replay.txt
+          tar -cf - replay | scripts/freebsd/builder.sh ssh 'tar -xf - -C /root'
+          start=$(date +%s)
+          # shellcheck disable=SC2016
+          scripts/freebsd/builder.sh ssh 'export RB_COMPILE_LOG=/build/out/compile-replay.jsonl;
+            for f in /root/replay/replay-*.sh; do sh "$f" & done; wait'
+          echo "replay: $(($(date +%s) - start))s" | tee -a record/replay.txt
+      - name: copy the record out
+        if: always()
+        run: |
+          mkdir -p record compile
+          scripts/freebsd/builder.sh ssh 'xz -T0 -f /build/out/*.jsonl; tar -cf - -C /root/out .' | tar -xf - -C record || true
+          scripts/freebsd/builder.sh ssh 'tar -cf - -C /build/out .' | tar -xf - -C compile || true
+          rm -f compile/compile-ref.jsonl
+          scripts/freebsd/builder.sh down || true
+          xz -T0 record/*.log 2>/dev/null || true
+          ls -l record compile
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### $NAME R world with rucc"
+            echo
+            if [ -f record/phases.tsv ]; then
+              echo '```'
+              echo "phase status seconds obj_kb disk_used_kb"
+              cat record/phases.tsv
+              echo '```'
+              echo
+            fi
+            echo '```'
+            sed -n '/^# rucc/,/^$/p' record/rb-tools.txt 2>/dev/null || true
+            cat record/replay.txt 2>/dev/null || true
+            if [ -f record/replay-timeouts.txt ]; then
+              echo "units stopped by the timeout: $(wc -l < record/replay-timeouts.txt)"
+              head -40 record/replay-timeouts.txt
+            fi
+            echo '```'
+            if [ -f compile/compile-replay.jsonl.xz ]; then
+              echo
+              echo "#### The failed units of the replay"
+              echo
+              python3 -I scripts/freebsd/r-report.py compile/compile-replay.jsonl.xz --tsv record/failed-units-replay.tsv
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: tcg-${{ matrix.name }}-r-world
+          path: |
+            record
+            compile
           retention-days: 14
