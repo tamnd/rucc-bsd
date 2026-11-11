@@ -5,6 +5,10 @@
 //! reference's. Warnings are compared by option name (`[-Wfoo]`) and by line. A warning only the
 //! reference gives is listed but not counted: rucc may be quieter, not noisier.
 //!
+//! rucc puts its own code in the brackets, as in `[E0770]`, where GCC puts the option name, and
+//! its words are not always GCC's. So a diagnostic with a code of rucc is the same as a diagnostic
+//! of the reference on the same line of the same file.
+//!
 //! The diagnostics come from the standard error the shim kept on each record. The shim keeps the
 //! first KiB of it, so a unit with more is compared on that part, and the report says how many
 //! units that was.
@@ -25,6 +29,9 @@ pub struct Diagnostic {
     pub line: u32,
     /// The option, as in `-Wformat`, with `-Werror=` read as `-W`. Empty when none is named.
     pub option: String,
+    /// rucc's code, as in `E0770`, which rucc prints where GCC prints the option. Empty when
+    /// there is none.
+    pub code: String,
     /// `warning` or `error`.
     pub severity: String,
     /// The message, without the option.
@@ -44,6 +51,19 @@ impl Diagnostic {
         (self.file.clone(), self.line, what)
     }
 
+    /// Whether this is the same diagnostic as one of `other`: the same key, or, when either one
+    /// has a code of rucc, the same file and line.
+    #[must_use]
+    pub fn in_(&self, other: &[Diagnostic]) -> bool {
+        let key = self.key();
+        other.iter().any(|o| {
+            o.key() == key
+                || ((!self.code.is_empty() || !o.code.is_empty())
+                    && o.file == self.file
+                    && o.line == self.line)
+        })
+    }
+
     /// The diagnostic as one line of a report.
     #[must_use]
     pub fn line(&self) -> String {
@@ -52,15 +72,26 @@ impl Diagnostic {
         } else {
             format!("{}:{}", self.file, self.line)
         };
-        if self.option.is_empty() {
+        let bracket = if self.option.is_empty() {
+            &self.code
+        } else {
+            &self.option
+        };
+        if bracket.is_empty() {
             format!("{place}: {}: {}", self.severity, self.message)
         } else {
-            format!(
-                "{place}: {}: {} [{}]",
-                self.severity, self.message, self.option
-            )
+            format!("{place}: {}: {} [{bracket}]", self.severity, self.message)
         }
     }
+}
+
+/// The message without the code of rucc at its end, and the code: `E0770` in
+/// `'f' is deprecated [E0770]`. A code is `E` or `W` and four digits.
+fn rucc_code(message: &str) -> Option<(&str, &str)> {
+    let (head, code) = message.strip_suffix(']')?.rsplit_once(" [")?;
+    let digits = code.strip_prefix('E').or_else(|| code.strip_prefix('W'))?;
+    (digits.len() == 4 && digits.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| (head.trim_end(), code))
 }
 
 /// Read the warnings and errors of a compiler's standard error. Notes and the `In file included
@@ -89,6 +120,10 @@ pub fn parse(stderr: &str) -> Vec<Diagnostic> {
             ),
             _ => (rest.trim(), String::new()),
         };
+        let (message, code) = match rucc_code(message) {
+            Some((message, code)) => (message, code.to_string()),
+            None => (message, String::new()),
+        };
         let mut parts = place.split(':');
         let file = parts.next().unwrap_or_default();
         let line_no = parts.next().and_then(|n| n.trim().parse().ok());
@@ -102,6 +137,7 @@ pub fn parse(stderr: &str) -> Vec<Diagnostic> {
             file,
             line: line_no.unwrap_or(0),
             option,
+            code,
             severity: if severity == "fatal error" {
                 "error".to_string()
             } else {
@@ -165,17 +201,15 @@ pub struct Warnings {
 /// Compare one unit's diagnostics: `r` must be a subset of `g`.
 #[must_use]
 pub fn compare_unit(g: &[Diagnostic], r: &[Diagnostic]) -> UnitDiff {
-    let g_keys: BTreeSet<_> = g.iter().map(Diagnostic::key).collect();
-    let r_keys: BTreeSet<_> = r.iter().map(Diagnostic::key).collect();
     let mut seen = BTreeSet::new();
     let only_r = r
         .iter()
-        .filter(|d| !g_keys.contains(&d.key()) && seen.insert(d.key()))
+        .filter(|d| !d.in_(g) && seen.insert(d.key()))
         .cloned()
         .collect();
     let only_g = g
         .iter()
-        .filter(|d| !r_keys.contains(&d.key()) && seen.insert(d.key()))
+        .filter(|d| !d.in_(r) && seen.insert(d.key()))
         .cloned()
         .collect();
     UnitDiff { only_r, only_g }
@@ -338,6 +372,33 @@ a.c:7: error: expected ';'
         assert_eq!(d.only_r.len(), 1);
         assert_eq!(d.only_r[0].option, "-Wz");
         assert_eq!(d.only_g[0].option, "-Wmaybe-uninitialized");
+    }
+
+    #[test]
+    fn a_code_of_rucc_is_the_same_as_the_reference_on_the_same_line() {
+        let g = parse(
+            "/src/a.c:123:9: warning: 'ntohll' is deprecated [-Wdeprecated-declarations]\n\
+             /src/a.c:83:9: warning: 'f' redefined\n\
+             /src/a.c:9:1: warning: passing argument 1 of 'g' discards 'const' qualifier [-Wdiscarded-qualifiers]\n",
+        );
+        let r = parse(
+            "a.c:123: warning: 'ntohll' is deprecated [E0770]\n\
+             a.c:83: warning: `f` redefined [W0301]\n\
+             a.c:9: warning: passing argument 1 discards 'const' qualifier [E0514]\n\
+             a.c:40: warning: cast to pointer from integer of different size [E0568]\n",
+        );
+        assert_eq!(r[0].code, "E0770");
+        assert_eq!(r[0].message, "'ntohll' is deprecated");
+        assert_eq!(
+            r[0].line(),
+            "a.c:123: warning: 'ntohll' is deprecated [E0770]"
+        );
+        let d = compare_unit(&g, &r);
+        assert_eq!(d.only_r.len(), 1, "{:?}", d.only_r);
+        assert_eq!(d.only_r[0].line, 40);
+        assert!(d.only_g.is_empty(), "{:?}", d.only_g);
+        // A word in brackets that is not a code stays in the message.
+        assert_eq!(parse("a.c:1: warning: w [x]\n")[0].message, "w [x]");
     }
 
     #[test]
