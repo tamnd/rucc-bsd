@@ -1,0 +1,20 @@
+# The NetBSD 11.1 release pin of pins.toml (netbsd-11.1). The scripts under scripts/netbsd read this
+# file with the shell when NB_PIN_FILE=11.1.pin.
+#
+# The release has no tag in the NetBSD/src mirror, so scripts/netbsd/fetch.sh unpacks the source
+# sets of the release instead of a commit. NB_PIN_SETS names each set with its SHA512 from
+# pins.toml. src, syssrc and gnusrc are what build.sh needs for the tools and a kernel, and
+# sharesrc is what the world needs besides. xsrc is not fetched, because no row builds X.
+NB_PIN_NAME=netbsd-11.1
+NB_PIN_SHORT=11.1
+NB_PIN_COMMIT=netbsd-11.1
+NB_PIN_DATE=2026-11-02
+NB_PIN_SETS_URL=https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/source/sets
+NB_PIN_SETS="
+src.tgz=229d7e090d02c23793d3936fdeb825f5f7b955c13e0de7dd3f7b3394801ea70cce06dc8d8c6400a5a93e18d066fa10e18b3d77703e2d37dc0a4737ac61b45d47
+syssrc.tgz=11ae0c68cd662659d10abd6dd110cbc77bdc073ab03d878e931b3b7fe85ad0882bd51ec677fc0410a386cd14e45997e94b029e0ec2429d539d4707e6de332454
+gnusrc.tgz=f8849fb38c0f5612b67824717d24caf17efdea4d398dea662ff9f3384037c48381d701ce9e6dd97404e068601047028f345735a91efd7d27b5edf4d2c0c9721a
+sharesrc.tgz=fecd63f9d2368aea6e73eef083eb51608b0392221f731e00c99b01c365320b981ec33a7a6ef3d52c8c0641d0c28d29eb58a1890ce679e360711ae19f272aac64
+"
+# The GCC of the netbsd-11 branch, which build.sh tools builds, and so the persona rucc claims (04.3).
+NB_PIN_GCC=12.5.0
