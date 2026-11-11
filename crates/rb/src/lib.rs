@@ -17,6 +17,7 @@ pub mod ctfdiff;
 pub mod demands;
 pub mod divergences;
 pub mod fetch;
+pub mod frames;
 pub mod flagsdiff;
 pub mod image;
 pub mod mkdiff;

@@ -223,8 +223,9 @@ jobs:
             echo
             scripts/netbsd/r-report.sh "$NB_ROOT/logs/kernel-$CC_NAME.log" "$NB_ROOT/logs/kernel-$CC_NAME-k.log"
           } >> "$GITHUB_STEP_SUMMARY"
-      # Each leg keeps its objects and a compile.jsonl made from the shim log, with /mnt/nb/obj
-      # moved to /mnt/cmp/LEG/obj, so that the compare job can unpack both legs side by side.
+      # Each leg keeps its objects, the .su files of -fstack-usage and a compile.jsonl made from the
+      # shim log, with /mnt/nb/obj moved to /mnt/cmp/LEG/obj, so that the compare job can unpack
+      # both legs side by side.
       - name: the objects and the compile log for rb
         if: always()
         run: |
@@ -234,8 +235,8 @@ jobs:
           if [ "$CC_NAME" = rucc ]; then side=R; fi
           python3 scripts/netbsd/shim-records.py "$NB_ROOT/logs/shim.tsv" "$side" \
             "$NB_ROOT/obj" "/mnt/cmp/$CC_NAME/obj" > "$out/compile.jsonl"
-          (cd "$NB_ROOT" && find obj/sys/arch/amd64/compile/GENERIC -name '*.o' -print0 \
-            | tar --null -T - -cf - | xz -T0 > "$out/objects.tar.xz")
+          (cd "$NB_ROOT" && find obj/sys/arch/amd64/compile/GENERIC \( -name '*.o' -o -name '*.su' \) \
+            -print0 | tar --null -T - -cf - | xz -T0 > "$out/objects.tar.xz")
           ls -l "$out"
       # rb mk-diff needs both TOOLDIRs and the kernel's build directory, so it runs in the rucc
       # leg. RB_SHIM_LOG is empty so that its probes stay out of shim.tsv. rb syntax runs in the
@@ -436,8 +437,8 @@ jobs:
           path: target/release/rb
           retention-days: 7
 
-  # rb flags-diff, sections-diff, symbols-diff and vec-audit of the rucc leg against the ref leg,
-  # which is G's compiler through the same shims. The objects of the ref leg are under
+  # rb flags-diff, sections-diff, symbols-diff, vec-audit and frames of the rucc leg against the
+  # ref leg, which is G's compiler through the same shims. The objects of the ref leg are under
   # /mnt/cmp/ref and those of the rucc leg under /mnt/cmp/rucc. None of them fails the run.
   compare:
     name: rb compares the rucc kernel with the ref kernel
@@ -463,7 +464,7 @@ jobs:
         with:
           name: netbsd-r-objects-rucc
           path: /mnt/cmp/rucc
-      - name: rb flags-diff, sections-diff, symbols-diff and vec-audit
+      - name: rb flags-diff, sections-diff, symbols-diff, vec-audit and frames
         run: |
           rb="$RUNNER_TEMP/rb/rb"
           chmod +x "$rb"
@@ -480,11 +481,12 @@ jobs:
             "$rb" "$tool" "${g[@]}" "${r[@]}" --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
           done
           run vec-audit "${g[@]}" "${r[@]}" --limit 100000
+          run frames "${g[@]}" "${r[@]}" --limit 100000 --top 100
           {
             echo "### rb compares the rucc kernel with the ref kernel"
             echo
             echo '```'
-            for f in mk-diff flags-diff sections-diff symbols-diff vec-audit; do
+            for f in mk-diff flags-diff sections-diff symbols-diff vec-audit frames; do
               if [ -f "$out/$f.txt" ]; then echo "rb $f:"; head -4 "$out/$f.txt"; echo; fi
             done
             echo '```'

@@ -268,6 +268,11 @@ fn graded_commands(command: &str) -> Option<Accepts> {
             values: &["g", "r", "g-log", "r-log", "out", "limit"],
             switches: &[],
         },
+        "frames" => Accepts {
+            positional: false,
+            values: &["g", "r", "g-root", "r-root", "limit", "top"],
+            switches: &[],
+        },
         "test" => Accepts {
             positional: false,
             values: &[
@@ -401,6 +406,15 @@ usage:
       commit deep with git, and HEAD must be the pinned commit. A release with --tarball, or a pin
       with no commit, is downloaded and checked against the digest the project publishes. The
       tree's newvers.sh or param.h must give the pin's version. Prints where the tree is.
+  rb frames --g LOG --r LOG [--g-root DIR --r-root DIR] [--limit N] [--top N]
+      Compare the stack frame of each function in R and G, from the .su files that -fstack-usage
+      writes beside each object, X.su for X.o. LOG is the compile.jsonl of each build, objects are
+      paired as for rb sections-diff, and functions by name. A finding is a frame of R that is
+      larger than G's by more than 25% and 128 bytes, over the unit's -Wstack-usage= limit when
+      G's is not, or dynamic when G's is static, and a unit where G wrote a .su file and R did not.
+      Functions in one file only are listed and not counted. The N largest differences, 100 by
+      default, are listed for information. Each other list stops after N lines of --limit, 20 by
+      default. Exits 1 when there is a finding or no function was paired.
   rb image DIR|--build DIR --out IMG [--system freebsd|netbsd] [--suites boot,smoke,tests] [--packages DIR]
            [--size SIZE] [--tools DIR] [--work DIR] [--dry-run]
       Make a raw disk image from a build, with rb-rc and the smoke suite in it. For FreeBSD, DIR
