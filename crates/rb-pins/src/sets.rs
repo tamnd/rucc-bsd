@@ -1,6 +1,7 @@
 //! `sets.toml`: the rules that say which trees are pinned (plan 04.5).
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 /// The file name at the top of the repository.
@@ -40,6 +41,10 @@ pub struct Current {
     /// Whether the set runs every night.
     #[serde(default)]
     pub nightly: bool,
+    /// Branches with no reference, each with the reason. `rb sets` pins such a branch at its head
+    /// with `reference = "no-ref"` and the reason, and no baseline makes it good (plan 04.6).
+    #[serde(default)]
+    pub no_ref: BTreeMap<String, String>,
 }
 
 /// The releases set.
@@ -76,6 +81,13 @@ impl Sets {
             ));
         }
         for (name, system) in [("freebsd", &sets.freebsd), ("netbsd", &sets.netbsd)] {
+            for branch in system.current.no_ref.keys() {
+                if !system.current.branches.contains(branch) {
+                    return Err(format!(
+                        "{FILE_NAME}: {name}.current.no_ref names {branch}, which is not in branches"
+                    ));
+                }
+            }
             if !system.releases.supported_only {
                 return Err(format!(
                     "{FILE_NAME}: {name}.releases.supported_only must be true; no other rule is known"
@@ -136,6 +148,12 @@ head = "last-g-good"
         assert!(Sets::parse(&typo).unwrap_err().contains("nighty"));
         let policy = PLAN.replace("last-g-good", "newest");
         assert!(Sets::parse(&policy).unwrap_err().contains("pin_policy"));
+        let stray = PLAN.replacen(
+            "nightly = true",
+            "nightly = true\nno_ref = { \"stable/13\" = \"none\" }",
+            1,
+        );
+        assert!(Sets::parse(&stray).unwrap_err().contains("stable/13"));
         let all = PLAN.replacen("supported_only = true", "supported_only = false", 1);
         assert!(Sets::parse(&all).unwrap_err().contains("supported_only"));
     }

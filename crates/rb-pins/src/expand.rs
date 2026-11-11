@@ -118,13 +118,15 @@ impl Run<'_> {
     ///
     /// A commit is good when a complete baseline names it. Under last-g-good the pin is the head
     /// if G is good there; else the commit of the newest complete baseline; else the commit the
-    /// old `pins.toml` kept as good; else the head, untried.
+    /// old `pins.toml` kept as good; else the head, untried. A branch with `no_ref` is at its head
+    /// with `reference = "no-ref"` and the reason, whatever its baselines say.
     fn branch(
         &mut self,
         slug: &str,
         refs: &[Ref],
         mut pin: Pin,
         branch: &str,
+        no_ref: Option<&String>,
     ) -> Result<Pin, String> {
         if !refs
             .iter()
@@ -133,6 +135,19 @@ impl Run<'_> {
             return Err(format!("{slug} has no branch {branch}"));
         }
         let head = self.web.commit_at(slug, branch, self.until)?;
+        if let Some(reason) = no_ref {
+            self.notes
+                .push(format!("{} has no reference: {reason}", pin.name));
+            pin.commit = Some(head.sha.clone());
+            pin.date.clone_from(&head.date);
+            pin.reference = Some("no-ref".into());
+            pin.reason = Some(reason.clone());
+            pin.repo = Some(format!("https://github.com/{slug}"));
+            pin.branch = Some(branch.to_string());
+            pin.head = Some(head.sha);
+            pin.head_date = Some(head.date);
+            return Ok(pin);
+        }
         let good: Vec<&Good> = self.good.iter().filter(|g| g.pin == pin.name).collect();
         let before = self.old.and_then(|o| o.find(&pin.name));
         let kept = before
@@ -211,7 +226,8 @@ impl Run<'_> {
                     .and_then(|r| r.eol.clone()),
                 ..Pin::default()
             };
-            let mut pin = self.branch(FREEBSD_REPO, &refs, pin, branch)?;
+            let mut pin =
+                self.branch(FREEBSD_REPO, &refs, pin, branch, current.no_ref.get(branch))?;
             self.freebsd_version(&mut pin)?;
             self.pins.push(pin);
         }
@@ -235,7 +251,7 @@ impl Run<'_> {
                     ..Pin::default()
                 };
                 let mut pin =
-                    self.branch(FREEBSD_REPO, &refs, pin, &format!("releng/{version}"))?;
+                    self.branch(FREEBSD_REPO, &refs, pin, &format!("releng/{version}"), None)?;
                 self.freebsd_version(&mut pin)?;
                 let stage = pin.version.rsplit('-').next().unwrap_or_default();
                 if ["ALPHA", "BETA", "RC", "PRERELEASE"]
@@ -342,7 +358,8 @@ impl Run<'_> {
                 cadence: cadence.into(),
                 ..Pin::default()
             };
-            let mut pin = self.branch(NETBSD_REPO, &refs, pin, branch)?;
+            let mut pin =
+                self.branch(NETBSD_REPO, &refs, pin, branch, current.no_ref.get(branch))?;
             let commit = pin.commit.clone().unwrap_or_default();
             let param = self.web.file(NETBSD_REPO, &commit, "sys/sys/param.h")?;
             pin.version = publish::netbsd_param(&param)?;
@@ -797,5 +814,34 @@ mod tests {
             &[good(sha('7'))],
         );
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn a_no_ref_branch_is_at_its_head_with_the_reason() {
+        let mut sets = plan(true);
+        sets.freebsd
+            .current
+            .no_ref
+            .insert("stable/14".into(), "no G-good commit".into());
+        let good = Good {
+            pin: "freebsd-stable-14".into(),
+            commit: sha('7'),
+            made: "2026-11-08T05:00:00Z".into(),
+            place: "freebsd/amd64/stable-14/graded".into(),
+        };
+        let out = expand(&sets, &world(), "2026-11-08T06:00:00Z", None, None, &[good]).unwrap();
+        let old = out.file.find("freebsd-stable-14").unwrap();
+        assert_eq!(old.reference.as_deref(), Some("no-ref"));
+        assert_eq!(old.reason.as_deref(), Some("no G-good commit"));
+        assert_eq!(old.commit, old.head);
+        assert_eq!(old.series, "14");
+        assert!(
+            out.notes
+                .iter()
+                .any(|n| n == "freebsd-stable-14 has no reference: no G-good commit")
+        );
+        let main = out.file.find("freebsd-main").unwrap();
+        assert_eq!(main.reference.as_deref(), Some("untried"));
+        assert_eq!(main.reason, None);
     }
 }
