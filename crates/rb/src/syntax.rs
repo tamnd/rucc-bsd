@@ -12,12 +12,16 @@
 //! counted as no longer on disk and not as a failure, since there is nothing left to compile.
 //!
 //! The diagnostics of each unit are then compared with the reference's, as `rb warnings` does: a
-//! warning rucc gives that the reference did not counts, even when the unit passes (06.9).
+//! warning rucc gives that the reference did not counts, even when the unit passes (06.9). The
+//! shim keeps only the first bytes of the reference's standard error. When that part is full, a
+//! diagnostic of rucc past the last line the reference kept for the same file cannot be judged, so
+//! it is listed apart and does not count.
 
 use crate::census::absolute;
 use crate::demands;
 use crate::warnings::{self, Diagnostic};
 use harness_shim::record::CompileRecord;
+use harness_shim::run::STDERR_KEEP;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -66,6 +70,9 @@ pub struct Outcome {
     pub refused: Option<String>,
     /// Diagnostics rucc gave and the reference did not.
     pub only_r: Vec<Diagnostic>,
+    /// Diagnostics rucc gave past the part of the reference's standard error the shim kept. They
+    /// do not count, since the reference may have given them.
+    pub past_cut: Vec<Diagnostic>,
 }
 
 impl Outcome {
@@ -135,6 +142,7 @@ pub fn check(
             stderr: String::new(),
             refused: None,
             only_r: Vec::new(),
+            past_cut: Vec::new(),
         };
     }
     let ran = Command::new(rucc)
@@ -151,8 +159,7 @@ pub fn check(
         ),
         Err(e) => (None, format!("cannot run {rucc}: {e}")),
     };
-    let only_r =
-        warnings::compare_unit(&warnings::parse(&record.stderr), &warnings::parse(&stderr)).only_r;
+    let (only_r, past_cut) = judge(&record.stderr, &stderr);
     Outcome {
         unit,
         asm,
@@ -161,7 +168,29 @@ pub fn check(
         exit,
         stderr,
         only_r,
+        past_cut,
     }
+}
+
+/// The diagnostics of `r_err` that the reference's `g_err` does not have: those that count, then
+/// those past the cut. When `g_err` filled what the shim keeps, a diagnostic counts only when the
+/// reference kept a later line of the same file. The last line kept may be cut in the middle, so
+/// a diagnostic on that line does not count.
+#[must_use]
+pub fn judge(g_err: &str, r_err: &str) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
+    let g = warnings::parse(g_err);
+    let only_r = warnings::compare_unit(&g, &warnings::parse(r_err)).only_r;
+    if g_err.len() < STDERR_KEEP {
+        return (only_r, Vec::new());
+    }
+    let mut last: BTreeMap<&str, u32> = BTreeMap::new();
+    for d in &g {
+        let line = last.entry(d.file.as_str()).or_default();
+        *line = (*line).max(d.line);
+    }
+    only_r
+        .into_iter()
+        .partition(|d| last.get(d.file.as_str()).is_some_and(|&l| d.line < l))
 }
 
 /// Run every C and assembly unit of the records through rucc, `jobs` at a time.
@@ -203,6 +232,10 @@ pub fn report(title: &str, outcomes: &[Outcome], limit: usize) -> (String, bool)
         .iter()
         .filter(|o| !o.failed() && !o.only_r.is_empty())
         .collect();
+    let cut: Vec<&Outcome> = outcomes
+        .iter()
+        .filter(|o| !o.failed() && o.only_r.is_empty() && !o.past_cut.is_empty())
+        .collect();
     let _ = writeln!(
         s,
         "rb syntax {title}: {} units, {} C and {asm} assembly, {} no longer on disk. Failed: {}, of which {} refused a flag. Passed with a diagnostic the reference did not give: {}.",
@@ -213,6 +246,13 @@ pub fn report(title: &str, outcomes: &[Outcome], limit: usize) -> (String, bool)
         refused.values().sum::<usize>(),
         noisy.len()
     );
+    if !cut.is_empty() {
+        let _ = writeln!(
+            s,
+            "Passed with diagnostics past the {STDERR_KEEP} bytes of the reference's standard error the shim keeps, which do not count: {}.",
+            cut.len()
+        );
+    }
     if !refused.is_empty() {
         let _ = writeln!(s, "\nRefused flags:");
         for (flag, n) in &refused {
@@ -255,11 +295,26 @@ pub fn report(title: &str, outcomes: &[Outcome], limit: usize) -> (String, bool)
             let _ = writeln!(s, "  and {} more", noisy.len() - limit);
         }
     }
+    if !cut.is_empty() {
+        let _ = writeln!(
+            s,
+            "\nUnits that passed, with diagnostics past the part of the reference's standard error the shim kept:"
+        );
+        for o in cut.iter().take(limit) {
+            let _ = writeln!(s, "  {}", o.unit);
+            for d in &o.past_cut {
+                let _ = writeln!(s, "    {}", d.line());
+            }
+        }
+        if cut.len() > limit {
+            let _ = writeln!(s, "  and {} more", cut.len() - limit);
+        }
+    }
     (s, failed.is_empty() && noisy.is_empty())
 }
 
-/// Every unit as a line of tab-separated values: the unit, `pass`, `warn`, `fail` or `gone`, and
-/// the first error or the first diagnostic the reference did not give.
+/// Every unit as a line of tab-separated values: the unit, `pass`, `warn`, `cut`, `fail` or
+/// `gone`, and the first error or the first diagnostic the reference did not give.
 #[must_use]
 pub fn tsv(outcomes: &[Outcome]) -> String {
     let mut s = String::from("unit\tresult\tfirst\n");
@@ -270,6 +325,8 @@ pub fn tsv(outcomes: &[Outcome]) -> String {
             ("fail", o.first())
         } else if let Some(d) = o.only_r.first() {
             ("warn", d.line())
+        } else if let Some(d) = o.past_cut.first() {
+            ("cut", d.line())
         } else {
             ("pass", String::new())
         };
@@ -381,6 +438,46 @@ mod tests {
             refused("(command line): error: unknown option `-nostdinc++`\n", &a).as_deref(),
             Some("-nostdinc++")
         );
+    }
+
+    #[test]
+    fn a_diagnostic_past_the_kept_stderr_does_not_count() {
+        let w =
+            |file: &str, line: u32, opt: &str| format!("{file}:{line}:1: warning: x [-W{opt}]\n");
+        // The reference's standard error is full: a.h to line 30, then a.c to line 9, cut there.
+        let mut g = String::new();
+        while g.len() < STDERR_KEEP - 20 {
+            g += &w("a.h", 30, "a");
+        }
+        g += &w("a.c", 9, "b");
+        g.truncate(STDERR_KEEP);
+        let r = [
+            w("a.h", 30, "a"),
+            w("a.h", 12, "c"),
+            w("a.h", 31, "d"),
+            w("a.c", 9, "e"),
+            w("b.h", 2, "f"),
+        ]
+        .concat();
+        let (count, past) = judge(&g, &r);
+        let lines = |v: &[Diagnostic]| {
+            v.iter()
+                .map(|d| (d.file.clone(), d.line))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lines(&count), [("a.h".to_string(), 12)]);
+        assert_eq!(
+            lines(&past),
+            [
+                ("a.h".to_string(), 31),
+                ("a.c".to_string(), 9),
+                ("b.h".to_string(), 2)
+            ]
+        );
+        // When the reference's standard error is not full, every diagnostic counts.
+        let (count, past) = judge(&w("a.h", 30, "a"), &r);
+        assert_eq!(count.len(), 4);
+        assert!(past.is_empty());
     }
 
     #[test]
