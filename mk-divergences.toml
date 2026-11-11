@@ -21,3 +21,8 @@ reason = "rucc names itself with __rucc__ and its version macros, as GCC names i
 [[divergence]]
 macro = "__VERSION__"
 reason = "The name and version of the compiler, as a string. The preprocessor cannot test a string in #if, so a source can only copy it into a program as text, and it does not change what a build compiles."
+
+[[divergence]]
+variable = "MKUPDATE"
+system = "netbsd"
+reason = "build.sh writes MKUPDATE into the nbmake wrapper of each TOOLDIR. The G wrapper comes from build.sh tools, which runs without -u, and the R wrapper comes from build.sh -u kernel=GENERIC. MKUPDATE only tells build.sh and make not to clean the object directories first, so it does not change what a build compiles."
