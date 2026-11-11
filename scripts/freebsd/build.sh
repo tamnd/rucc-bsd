@@ -13,6 +13,7 @@
 #   RB_KERNCONF  the kernel configuration, GENERIC by default, of the tree or of conf/freebsd/kernel
 #   RB_HARNESS   this repository, copied into the VM
 #   RB_MAKEFLAGS more make flags, such as -k
+#   RB_MAKEVARS  more make variables, as NAME=value, such as NO_MODULES=yes
 #   RB_PHASE     the name of the phase in the logs, the argument by default
 #   RB_TARGET    make's TARGET, amd64 by default, or arm64 or riscv for the B7 rows (rows.toml)
 #   RB_TARGET_ARCH make's TARGET_ARCH, amd64 by default, or aarch64 or riscv64
@@ -52,14 +53,14 @@ phase=${RB_PHASE:-$phase}
 
 log="$RB_OUT/$phase.log"
 start=$(date +%s)
-echo "$phase: make -j$RB_JOBS ${RB_MAKEFLAGS:+$RB_MAKEFLAGS }$target CROSS_TOOLCHAIN=$RB_TOOLCHAIN SRCCONF=$RB_SRCCONF" \
+echo "$phase: make -j$RB_JOBS ${RB_MAKEFLAGS:+$RB_MAKEFLAGS }$target CROSS_TOOLCHAIN=$RB_TOOLCHAIN ${RB_MAKEVARS:+$RB_MAKEVARS }SRCCONF=$RB_SRCCONF" \
 	"in $RB_SRC, started $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # Only the stage banners reach the job log. The whole log is kept as an artifact.
 {
 	# shellcheck disable=SC2086
 	make -C "$RB_SRC" -j"$RB_JOBS" ${RB_MAKEFLAGS:-} "$target" \
 		TARGET="$RB_TARGET" TARGET_ARCH="$RB_TARGET_ARCH" KERNCONF="$RB_KERNCONF" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
-		CROSS_TOOLCHAIN="$RB_TOOLCHAIN" \
+		CROSS_TOOLCHAIN="$RB_TOOLCHAIN" ${RB_MAKEVARS:-} \
 		__MAKE_CONF=/dev/null SRCCONF="$RB_SRCCONF" 2>&1
 	echo $? > "$RB_OUT/$phase.status"
 } | tee "$log" | grep --line-buffered -E '^(>>>|-{10,}|make.*: stopped|ERROR)'
