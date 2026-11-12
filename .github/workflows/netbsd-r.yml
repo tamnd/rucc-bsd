@@ -532,6 +532,83 @@ jobs:
           path: /mnt/nb/logs
           retention-days: 14
 
+  # The B3 gate: rb build makes the rucc kernel by itself, with its own shim TOOLDIR and checks,
+  # and with no RB_BRINGUP. The kernel job above makes the kernel that the other jobs use.
+  rb-build:
+    name: rb build netbsd-trunk --targets kernel
+    needs: [tools]
+    if: inputs.build != 'world'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: host packages
+        run: |
+          scripts/ci/apt-install.sh zlib1g-dev
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build rb and rb-cc
+        run: cargo build --release --locked -p rb --bin rb -p rb-shim --bin rb-cc
+      - name: rucc ${{ inputs.rucc }} from source
+        if: inputs.rucc != ''
+        run: |
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$REF"
+          cargo build --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "$RUNNER_TEMP/rucc-src/target/release" >> "$GITHUB_PATH"
+        env:
+          REF: ${{ inputs.rucc }}
+      - name: rucc ${{ env.RUCC_VERSION }}
+        if: inputs.rucc == ''
+        run: |
+          name="rucc-$RUCC_VERSION-x86_64-unknown-linux-gnu"
+          gh release download "$RUCC_VERSION" -R tamnd/rucc -p "$name.tar.gz" -D "$RUNNER_TEMP"
+          echo "$RUCC_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rb build
+        run: |
+          unset RB_BRINGUP RB_BRINGUP_UNITS
+          status=0
+          target/release/rb build netbsd-trunk --row amd64 --conf graded --cc rucc \
+            --root "$NB_ROOT" --targets kernel > "$RUNNER_TEMP/rb-build.md" 2>&1 || status=$?
+          {
+            echo "### rb build netbsd-trunk --row amd64 --conf graded --cc rucc --targets kernel"
+            echo
+            echo "Exit status: $status. RB_BRINGUP is not set."
+            echo
+            echo '```'
+            tail -n 60 "$RUNNER_TEMP/rb-build.md"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-rb-build
+          path: |
+            ${{ runner.temp }}/rb-build.md
+            /mnt/nb/logs/*.log
+            /mnt/nb/logs/phases.tsv
+          if-no-files-found: ignore
+          retention-days: 7
+
   rb:
     name: cargo build rb
     runs-on: ubuntu-24.04
