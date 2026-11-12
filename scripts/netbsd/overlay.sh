@@ -37,6 +37,17 @@ if [ ! -x "$NB_TOOLS/$gnu/bin/ld" ]; then
 fi
 
 export LC_ALL=C
+# tools/Makefile.gnuhost configures a GNU tool again when the "uname -srm" in its .configure_done
+# is not that of the host. The configure then takes the TOOLDIR of the build as its prefix, and the
+# install puts the reference GCC over the shim in the R TOOLDIR. A cache of the tools from a runner
+# with another kernel did this in the middle of an R build, and the rest of that build used GCC.
+# So the tools are made current for this host in the G TOOLDIR before the copy.
+platform=$(uname -srm | tr ' ()' '-')
+stale=$(find "$NB_OBJ/tools" -name .configure_done -exec grep -LxF -- "$platform" {} + 2> /dev/null | head -1)
+if [ -n "$stale" ]; then
+	echo "overlay: $stale does not name $platform, so build.sh tools runs first in $NB_TOOLS"
+	NB_TOOLDIR='' nb_buildsh -u tools
+fi
 : > "$NB_LOGS/shim.tsv"
 : > "$NB_LOGS/shim.tsv.rusage"
 rm -rf "$NB_LOGS/shim.tsv.err"
