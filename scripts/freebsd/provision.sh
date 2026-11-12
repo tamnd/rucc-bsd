@@ -3,10 +3,10 @@
 #
 #   provision.sh OUTDIR
 #
-# It makes a UFS file system on the second disk at /build, and installs the reference toolchain
-# packages of conf/freebsd/builder.conf from the VM's default package repository. With
-# RB_TARGET_ARCH, such as aarch64, it installs the flavor of the same ports for that TARGET_ARCH,
-# aarch64-gcc15 in place of amd64-gcc15, as rb toolchain does for the row. With RB_GCC=14 it
+# It makes a UFS file system at /build on the disk RB_BUILD_DEV, /dev/vtbd1 by default, and
+# installs the reference toolchain packages of conf/freebsd/builder.conf from the VM's default
+# package repository. With RB_TARGET_ARCH, such as aarch64, it installs the flavor of the same
+# ports for that TARGET_ARCH, aarch64-gcc15 in place of amd64-gcc15, as rb toolchain does for the row. With RB_GCC=14 it
 # installs gcc14 in place of gcc15, the fallback of personas.toml. It records in
 # OUTDIR/toolchain.txt the package versions and repository, the SHA-256 of each package file, the
 # CROSS_TOOLCHAIN file the port installs, and what the compiler and linker say they are.
@@ -18,6 +18,7 @@ mkdir -p "$out"
 arch=${RB_TARGET_ARCH:-amd64}
 RB_TOOLCHAIN_PKGS=$(echo "$RB_TOOLCHAIN_PKGS" | sed "s/amd64-/$arch-/g")
 RB_CROSS_TOOLCHAIN=$(echo "$RB_CROSS_TOOLCHAIN" | sed "s/^amd64-/$arch-/")
+dev=${RB_BUILD_DEV:-/dev/vtbd1}
 gcc=${RB_GCC:-15}
 case $gcc in
 14 | 15) ;;
@@ -27,9 +28,9 @@ RB_TOOLCHAIN_PKGS=$(echo "$RB_TOOLCHAIN_PKGS" | sed "s/-gcc15/-gcc$gcc/g")
 RB_CROSS_TOOLCHAIN=$(echo "$RB_CROSS_TOOLCHAIN" | sed "s/-gcc15\$/-gcc$gcc/")
 
 if ! mount -p | awk '$2 == "/build"' | grep -q .; then
-	newfs -U -t /dev/vtbd1 > /dev/null
+	newfs -U -t "$dev" > /dev/null
 	mkdir -p /build
-	mount -o noatime /dev/vtbd1 /build
+	mount -o noatime "$dev" /build
 fi
 
 pkg -N > /dev/null 2>&1 || env ASSUME_ALWAYS_YES=yes pkg bootstrap > /dev/null
