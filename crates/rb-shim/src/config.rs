@@ -105,10 +105,45 @@ pub struct ShimConfig {
     /// Empty in every graded run.
     #[serde(default)]
     pub bringup: Vec<String>,
-    /// The C units `cxx-c` hands to the reference, each a path suffix of the source file, as in
-    /// `lib/libgcc_s/unwind-dw2.c`. Overridden by `RB_BRINGUP_UNITS`, a comma separated list.
+    /// The C units `cxx-c` hands to the reference, each a path suffix of the source file and the
+    /// issue that tracks it, as in `stand/i386/boot2/boot2.c=tamnd/rucc#4097`. Overridden by
+    /// `RB_BRINGUP_UNITS`, a comma separated list. Plan 16 asks for an issue for each delegated
+    /// unit, so a unit without one is refused.
     #[serde(default)]
     pub bringup_units: Vec<String>,
+}
+
+/// A unit of `cxx-c` split into the path suffix and the issue, from `PATH=ISSUE`.
+#[must_use]
+pub fn unit_and_issue(entry: &str) -> (&str, Option<&str>) {
+    match entry.split_once('=') {
+        Some((unit, issue)) => (unit.trim(), Some(issue.trim())),
+        None => (entry.trim(), None),
+    }
+}
+
+/// Check that each unit of `cxx-c` names its issue as `OWNER/REPO#N`.
+///
+/// # Errors
+///
+/// Names the first unit that has no issue or whose issue is not of that form.
+pub fn check_units(units: &[String]) -> Result<(), String> {
+    for entry in units {
+        let (unit, issue) = unit_and_issue(entry);
+        let issue = issue.unwrap_or_default();
+        let good = issue.split_once('#').is_some_and(|(repo, number)| {
+            repo.split('/').count() == 2
+                && repo.split('/').all(|part| !part.is_empty())
+                && !number.is_empty()
+                && number.bytes().all(|b| b.is_ascii_digit())
+        });
+        if unit.is_empty() || !good {
+            return Err(format!(
+                "bring-up unit {entry} names no issue: write it as PATH=OWNER/REPO#N, as in stand/i386/boot2/boot2.c=tamnd/rucc#4097"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The bring-up classes of 00: `as` sends assembly to the reference, and `cxx-c` sends the named C
@@ -169,6 +204,7 @@ impl ShimConfig {
             config.bringup_units = bringup::split_list(&v);
         }
         CLASSES.check(&config.bringup)?;
+        check_units(&config.bringup_units)?;
         Ok(config)
     }
 
@@ -262,6 +298,27 @@ mod tests {
         assert!(wrong.contains("m16"), "{wrong}");
         let side = ShimConfig::load(None, &env_of(&[("RB_SIDE", "X")])).unwrap_err();
         assert!(side.contains("RB_SIDE"), "{side}");
+    }
+
+    #[test]
+    fn each_bringup_unit_names_its_issue() {
+        let units = "stand/i386/boot2/boot2.c=tamnd/rucc#4097, lib/a.c = tamnd/rucc#1";
+        let config = ShimConfig::load(None, &env_of(&[("RB_BRINGUP_UNITS", units)])).unwrap();
+        assert_eq!(config.bringup_units.len(), 2);
+        assert_eq!(
+            unit_and_issue(&config.bringup_units[1]),
+            ("lib/a.c", Some("tamnd/rucc#1"))
+        );
+        for wrong in [
+            "lib/a.c",
+            "lib/a.c=",
+            "lib/a.c=#4097",
+            "lib/a.c=rucc#4097",
+            "=tamnd/rucc#1",
+        ] {
+            let said = ShimConfig::load(None, &env_of(&[("RB_BRINGUP_UNITS", wrong)])).unwrap_err();
+            assert!(said.contains("names no issue"), "{wrong}: {said}");
+        }
     }
 
     #[test]

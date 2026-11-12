@@ -15,6 +15,9 @@ the names it replaced, most frequent first, and some of its units.
 The report is Markdown on standard output. --tsv writes one line per failed unit: the group
 number, the unit and the first error line as rucc wrote it. --src is the source tree, whose
 prefix is removed from the unit names; /build/src by default.
+
+A unit that the shim delegated under bring-up (plan 00) is listed after the groups, with its
+class and its issue, and the first line says that the build is ungraded.
 """
 
 import argparse
@@ -96,6 +99,7 @@ def main():
     by_origin = collections.Counter()
     groups = collections.OrderedDict()
     failed = []
+    delegated = {}
     for rec in records(a.log):
         if rec.get("slot") not in (None, "cc"):
             continue
@@ -107,6 +111,9 @@ def main():
             continue
         units += 1
         by_origin[rec.get("origin") or "none"] += 1
+        if rec.get("delegated"):
+            cls, _, issue = rec["delegated"].partition(" ")
+            delegated[unit] = (cls, issue.strip() or "none")
         if rec.get("exit") == 0 and not rec.get("signal"):
             ok += 1
             continue
@@ -119,6 +126,8 @@ def main():
     ordered = sorted(groups.items(), key=lambda kv: -len(kv[1]["units"]))
     number = {key: n + 1 for n, (key, _) in enumerate(ordered)}
     out = sys.stdout
+    if delegated:
+        out.write(f"Ungraded. Units delegated to the reference under bring-up: {len(delegated)}.\n\n")
     out.write(f"{units} units of the C compiler slot: {ok} compiled, {units - ok} failed, in {len(groups)} groups. {probes} probes are not counted.\n\n")
     if by_origin:
         out.write("Origins: " + ", ".join(f"{k} {v}" for k, v in sorted(by_origin.items())) + ".\n\n")
@@ -132,6 +141,10 @@ def main():
         if len(ordered) > a.limit:
             rest = sum(len(g["units"]) for _, g in ordered[a.limit:])
             out.write(f"\n{len(ordered) - a.limit} more groups with {rest} units are in the TSV file.\n")
+    if delegated:
+        out.write("\n| delegated unit | class | issue |\n|---|---|---|\n")
+        for unit, (cls, issue) in sorted(delegated.items())[: a.limit]:
+            out.write(f"| `{unit}` | {cls} | {issue} |\n")
     if a.tsv:
         with open(a.tsv, "w", encoding="utf-8") as f:
             f.write("group\tunit\tfirst error\n")

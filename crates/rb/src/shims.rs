@@ -15,7 +15,7 @@ use harness_shim::bringup::split_list;
 use rb_pins::pins::Pin;
 use rb_pins::places::Row;
 use rb_pins::toolchains::{Personas, RuccPin, Toolchain, Toolchains};
-use rb_shim::config::{CLASSES, FILE_NAME, ShimConfig, Side};
+use rb_shim::config::{CLASSES, FILE_NAME, ShimConfig, Side, check_units};
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -179,8 +179,8 @@ pub struct Ask {
 ///
 /// # Errors
 ///
-/// When a class is not one of 00's two, when `cxx-c` names no unit, or when units are named
-/// without `cxx-c`.
+/// When a class is not one of 00's two, when `cxx-c` names no unit, when units are named
+/// without `cxx-c`, or when a unit names no issue as `PATH=OWNER/REPO#N`.
 pub fn bringup(
     flag: Option<&str>,
     units: Option<&str>,
@@ -204,6 +204,7 @@ pub fn bringup(
     if !cxx_c && !units.is_empty() {
         return Err("bring-up units are named, but the cxx-c class is not on".into());
     }
+    check_units(&units)?;
     Ok((classes, units))
 }
 
@@ -680,8 +681,13 @@ mod tests {
         assert_eq!(bringup(None, None, &none).unwrap(), (vec![], vec![]));
         let env = |k: &str| (k == "RB_BRINGUP").then(|| "as".to_string());
         assert_eq!(bringup(None, None, &env).unwrap().0, ["as"]);
-        let (classes, units) = bringup(Some("as,cxx-c"), Some("lib/a.c"), &env).unwrap();
-        assert_eq!((classes.len(), units), (2, vec!["lib/a.c".to_string()]));
+        let (classes, units) =
+            bringup(Some("as,cxx-c"), Some("lib/a.c=tamnd/rucc#1"), &env).unwrap();
+        assert_eq!(
+            (classes.len(), units),
+            (2, vec!["lib/a.c=tamnd/rucc#1".to_string()])
+        );
+        assert!(bringup(Some("cxx-c"), Some("lib/a.c"), &none).is_err());
         assert!(bringup(Some("m16"), None, &none).is_err());
         assert!(bringup(Some("cxx-c"), None, &none).is_err());
         assert!(bringup(Some("as"), Some("lib/a.c"), &none).is_err());

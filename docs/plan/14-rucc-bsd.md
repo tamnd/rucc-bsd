@@ -115,7 +115,7 @@ A BSD base system calls three kinds of compiler: the C compiler, the C++ compile
 
 Each call becomes a line in `compile.jsonl`: working directory, argument vector, inputs, output, exit status, user and system CPU time, peak resident memory, a hash of standard error, and whether the call was a probe or a real unit. A call whose output goes to `/dev/null` or a temporary file is a probe. FreeBSD's `bsd.compiler.mk` runs `${CC} --version` and `${CC} -E` probes on every make invocation, so the probe lines are many and are kept separately.
 
-`RB_TWICE=1` compiles every real unit twice and compares the bytes, as `RK_TWICE` does. `RB_BRINGUP=as,cxx-c` is the only door for the two bring-up delegations of 00, and it marks the run ungraded.
+`RB_TWICE=1` compiles every real unit twice and compares the bytes, as `RK_TWICE` does. `RB_BRINGUP=as,cxx-c` is the only door for the two bring-up delegations of 00, and it marks the run ungraded. `RB_BRINGUP_UNITS` names the units of `cxx-c` as `PATH=ISSUE`, such as `stand/i386/boot2/boot2.c=tamnd/rucc#4097`. A unit without an issue is refused, and the record of each delegated call says `cxx-c` and the issue.
 
 ## 14.5 The demand census (`rb demands`)
 

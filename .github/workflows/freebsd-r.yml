@@ -48,6 +48,12 @@
 # (scripts/freebsd/libs.sh) into the artifact freebsd-rr-libs, and runs rb abi-diff (plan 09.4) on
 # them. The report is abi-diff.txt in the record.
 #
+# The input bringup_units turns on the cxx-c bring-up of plan 00 for the rr builds. It is a comma
+# separated list of PATH=ISSUE, as in stand/i386/boot2/boot2.c=tamnd/rucc#4097. rb-cc sends each
+# C unit whose source ends in PATH to the reference GCC, and its record says delegated: cxx-c ISSUE.
+# Such a run is ungraded, and the summary lists the delegated units with their issues. Plan 16 B2
+# allows this only for the units of 03.14 and the boot code. Empty, the default, delegates nothing.
+#
 # scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
 # and the step summary shows the groups. rucc is built from the head of tamnd/rucc main, or from the
 # branch or commit a manual run names. It is not the pinned release, so the run is ungraded, and the
@@ -74,6 +80,10 @@ on:
         description: "The kernel to boot: auto (rucc when the replay is clean), ref or none"
         required: false
         default: auto
+      bringup_units:
+        description: "rr only: C units for the reference GCC, as PATH=ISSUE, comma separated (plan 00 cxx-c). Empty in a graded run"
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
@@ -86,6 +96,7 @@ permissions:
 env:
   RB_PIN: 15.1-release
   RB_TARGET: ${{ inputs.target || 'kernel' }}
+  RB_BRINGUP_UNITS_IN: ${{ inputs.bringup_units || '' }}
   RB_CACHE: /mnt/rb-cache
   RB_VM_DIR: /mnt/rb-builder
   VM_ENV: >-
@@ -318,15 +329,32 @@ jobs:
             head -3 "$out/ctf-diff.txt" "$out/kmod-relocs.txt"'
         env:
           KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
+      - name: the bring-up units of the RR build
+        if: env.RB_TARGET == 'rr'
+        run: |
+          # Only the characters of a path and an issue, since the list goes into a shell command in
+          # the VM. rb-cc checks the form PATH=OWNER/REPO#N of each entry itself.
+          case $RB_BRINGUP_UNITS_IN in
+          *[!A-Za-z0-9_./=#,+-]*)
+            echo "bringup_units has a character that is not in a path or an issue: $RB_BRINGUP_UNITS_IN"
+            exit 1
+            ;;
+          esac
+          bringup=
+          if [ -n "$RB_BRINGUP_UNITS_IN" ]; then
+            bringup="RB_BRINGUP=cxx-c RB_BRINGUP_UNITS='$RB_BRINGUP_UNITS_IN'"
+            echo "Ungraded: cxx-c bring-up for $RB_BRINGUP_UNITS_IN." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "RB_BRINGUP_ENV=$bringup" >> "$GITHUB_ENV"
       - name: make buildworld with rucc, for the RR image
         if: env.RB_TARGET == 'rr'
         run: |
-          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+          scripts/freebsd/builder.sh ssh "$VM_ENV $RB_BRINGUP_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=world-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh world"
       - name: make buildkernel with rucc, for the RR image
         if: env.RB_TARGET == 'rr'
         run: |
-          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+          scripts/freebsd/builder.sh ssh "$VM_ENV $RB_BRINGUP_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=kernel-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: the image of the last good freebsd-g run
         if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref' || env.RB_TARGET == 'rr'
