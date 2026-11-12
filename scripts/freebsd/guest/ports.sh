@@ -27,6 +27,12 @@ list=$2
 : "${CXX_REF:=g++15}"
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 export PATH PORTSDIR
+for tool in "$CC_REF" "$CXX_REF"; do
+	if ! command -v "$tool" > /dev/null; then
+		echo "ports.sh: $tool is not installed" >&2
+		exit 2
+	fi
+done
 mkdir -p "$out" /build/ports-wrk /build/distfiles /build/ports-pkg
 out=$(cd "$out" && pwd)
 : > "$out/ports.tsv"

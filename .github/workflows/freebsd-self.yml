@@ -367,7 +367,7 @@ jobs:
           name=$(cd pkg && ls rucc-*.pkg)
           scripts/freebsd/rr-vm.sh put "pkg/$name" "/build/$name"
           scripts/freebsd/rr-vm.sh put pkg/rb-bin.tar.xz /build/rb-bin.tar.xz
-          scripts/freebsd/rr-vm.sh ssh "env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y binutils gcc15 &&
+          scripts/freebsd/rr-vm.sh ssh "pkg info -e binutils || env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y binutils;
             pkg add /build/$name && pkg info rucc"
       - name: the source, the SRCCONF of R, and the shims
         run: |
@@ -552,7 +552,7 @@ jobs:
           name=$(cd pkg && ls rucc-*.pkg)
           scripts/freebsd/rr-vm.sh ssh 'newfs -U -t /dev/vtbd2 > /dev/null && mkdir -p /build && mount -o noatime /dev/vtbd2 /build'
           scripts/freebsd/rr-vm.sh put "pkg/$name" "/build/$name"
-          scripts/freebsd/rr-vm.sh ssh "pkg info -e binutils || env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y binutils;
+          scripts/freebsd/rr-vm.sh ssh "env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y binutils gcc15 &&
             pkg add /build/$name && pkg info rucc"
           branch=$(date -u +%YQ)$(( ($(date -u +%-m) + 2) / 3 ))
           commit=$(gh api "repos/freebsd/freebsd-ports/commits/$branch" -q .sha)
