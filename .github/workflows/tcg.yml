@@ -77,6 +77,9 @@ on:
         type: choice
         options: [rucc, ref]
         default: rucc
+      cpus:
+        description: The number of CPUs of the R image boot, or empty for the number of the row
+        default: ""
 
 # One run of each cadence at a time. A scheduled run waits for the one before it, and is not
 # cancelled, so the queue holds at most one more.
@@ -718,6 +721,9 @@ jobs:
       ROW: ${{ matrix.row }}
       KIND: ${{ matrix.kind }}
       MINUTES: 150
+      # Under KVM on the runner, the GENERIC_PAE kernel of the ref leg and of the rucc leg both
+      # reset when they start cpu1. cpus 1 boots the PAE page tables without the second CPU.
+      CPUS: ${{ inputs.cpus }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: the R image
@@ -754,7 +760,7 @@ jobs:
           truncate -s 16G "$image"
           chmod +x "$RUNNER_TEMP/rb/rb"
           "$RUNNER_TEMP/rb/rb" boot --image "$image" --out "$RUNNER_TEMP/out" --row "$ROW" \
-            --login --suite boot,smoke --timeout $(((MINUTES - 10) * 60)) \
+            --login --suite boot,smoke --timeout $(((MINUTES - 10) * 60)) ${CPUS:+--cpus "$CPUS"} \
             | tee -a "$GITHUB_STEP_SUMMARY"
           if [ "${NAME%%-*}" = netbsd ] && [ "$KIND" = release ] \
             && ! grep -aq 'rb R image: the rucc kernel' "$RUNNER_TEMP/out/console.log"; then
