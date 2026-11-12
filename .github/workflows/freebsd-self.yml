@@ -414,6 +414,25 @@ jobs:
           scripts/freebsd/rr-vm.sh ssh 'xz -T0 -f /build/out/*.jsonl /root/out/*.log; tar -cf - -C /root/out .' \
             | tar -xf - -C rr || true
           scripts/freebsd/rr-vm.sh ssh 'tar -cf - -C /build/out .' | tar -xf - -C rr || true
+          # The VM runs the image of R, so / has the files of R and /build/destdir has the files of
+          # RR. For each file of install.manifest that differs, except the big kernel debug files,
+          # differ.tar.xz keeps both copies: r.tar from / and rr.tar from /build/destdir.
+          python3 -I scripts/freebsd/repro.py r/record rr --out differ > /dev/null 2>&1 || true
+          python3 -I - differ/repro.json > rr/differ.txt <<'PY' || true
+          import json, sys
+          rec = json.load(open(sys.argv[1]))
+          m = next(m for m in rec["manifests"] if m["name"] == "install.manifest")
+          for path in m.get("content", []):
+              if not path.startswith("./usr/lib/debug/boot/"):
+                  print(path)
+          PY
+          if [ -s rr/differ.txt ]; then
+            list=$(tr '\n' ' ' < rr/differ.txt)
+            scripts/freebsd/rr-vm.sh ssh "rm -rf /build/differ && mkdir /build/differ && \
+              tar -cf /build/differ/r.tar -C / $list && tar -cf /build/differ/rr.tar -C /build/destdir $list && \
+              tar -cf - -C /build/differ r.tar rr.tar | xz -T0" > rr/differ.tar.xz || true
+          fi
+          rm -rf differ
           scripts/freebsd/rr-vm.sh down || true
           cp "$RB_VM_DIR/console.log" rr/ 2>/dev/null || true
           ls -l rr
