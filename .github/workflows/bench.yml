@@ -29,7 +29,8 @@
 # guest gets 120 seconds after RB-DONE to power off (scripts/freebsd/boot.sh). The FreeBSD loop
 # stops when the first R or G boot does not end with RB-DONE, and starts no pair of boots that
 # could pass BOOTS_BUDGET seconds. The boot step has a timeout below the job's, so rb bench still
-# runs on the boots that finished.
+# runs on the boots that finished. The NetBSD job gives rb bench --budget BOOTS_BUDGET for the
+# same rule, and its step has a timeout below the job's, so the boot logs are still kept.
 
 name: bench
 
@@ -341,6 +342,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: rb bench and rb speed
+        timeout-minutes: 280
         run: |
           . conf/netbsd/trunk.pin
           rb=$RUNNER_TEMP/rb/rb
@@ -351,7 +353,7 @@ jobs:
             "$rb" bench "netbsd-$NB_PIN_NAME" --g-image /mnt/rb/g.img --r-image /mnt/rb/r.img \
               --g-bench "$RUNNER_TEMP/rb-bench/rb-bench-g" --r-bench "$RUNNER_TEMP/rb-bench/rb-bench-r" \
               --runs "$RUNS" --bench-scale "$SCALE" "${only[@]}" --timeout "$BOOT_LIMIT" \
-              --work /mnt/rb/boots --dir out || true
+              --budget "$BOOTS_BUDGET" --work /mnt/rb/boots --dir out || true
             echo
             echo '```'
             "$rb" speed --bench "out/netbsd/amd64/$NB_PIN_NAME/bench.tsv" || true
