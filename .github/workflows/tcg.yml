@@ -406,6 +406,13 @@ jobs:
           "$NB_ROOT/tools/bin/nbmake-$NB_MACHINE" -C "$NB_ROOT/src/etc" obj
           SETS="$sets" "$RUNNER_TEMP/rb/rb" image --build "$NB_ROOT/tools" \
             --out "$NB_ROOT/netbsd.img" --work "$NB_ROOT/image-work"
+          # Makefile.bootimage makes the MBR before it extracts the sets. Thus an MBR image, as
+          # i386 has, gets no MBR boot code, because usr/mdec/mbr is not there yet, and the BIOS
+          # stops at "Booting from Hard Disk". Put in the code of the base set, as the Makefile
+          # does when the file is there.
+          tar -xzf "$binary/sets/base.tgz" -O ./usr/mdec/mbr > "$NB_ROOT/mbr"
+          "$NB_ROOT/tools/bin/nbfdisk" -f -i -c "$NB_ROOT/mbr" -F "$NB_ROOT/netbsd.img"
+          cmp -n 440 "$NB_ROOT/mbr" "$NB_ROOT/netbsd.img"
           cp "$NB_ROOT"/image-work/logs/* "$NB_ROOT/logs/" 2>/dev/null || true
           mkdir -p image
           zstd -q -T0 --rm "$NB_ROOT/netbsd.img" -o image/netbsd.img.zst
