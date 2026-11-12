@@ -3,7 +3,9 @@
 #
 # A release pin (NB_PIN_SETS) names the source sets of the release with their SHA512. Each set is
 # downloaded, checked and unpacked without its usr/src prefix. The files keep the times in the
-# sets, which are the same in every job.
+# sets, which are the same in every job. cdn.netbsd.org closes a transfer of a large set part way
+# at times (curl exit 18), so each retry goes on from the bytes already on disk. The SHA512 check
+# after it catches a set that was put together wrong.
 #
 # For a commit pin, the abbreviated pin is resolved with the GitHub API and must give the full hash in the pin file.
 # Then only that commit is fetched, with depth 1, and the checkout is checked against the hash.
@@ -20,7 +22,8 @@ if [ -n "${NB_PIN_SETS:-}" ]; then
 	mkdir -p "$NB_SRC" "$NB_ROOT/sets"
 	for set in $NB_PIN_SETS; do
 		name=${set%%=*}
-		curl -fsSL --retry 3 --retry-all-errors -o "$NB_ROOT/sets/$name" "$NB_PIN_SETS_URL/$name"
+		curl -fsSL --retry 10 --retry-all-errors --retry-delay 2 -C - -o "$NB_ROOT/sets/$name" \
+			"$NB_PIN_SETS_URL/$name"
 		echo "${set#*=}  $NB_ROOT/sets/$name" | sha512sum -c -
 		tar -xzf "$NB_ROOT/sets/$name" -C "$NB_SRC" --strip-components=2
 		rm -f "$NB_ROOT/sets/$name"
