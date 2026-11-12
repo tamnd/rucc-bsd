@@ -647,6 +647,55 @@ fn netbsd_riscv64_skips_the_module_check_with_its_reason() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// tests.sh on NetBSD riscv64 turns module autoload off before the tests and says so on the
+/// console, since a module that a test autoloads panics the kernel there.
+#[test]
+fn netbsd_riscv64_tests_run_with_autoload_off() {
+    let root = std::env::temp_dir().join(format!("rb-image-rv-autoload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("usr/tests/lib")).unwrap();
+    std::fs::write(root.join("usr/tests/Atffile"), "tp: lib\n").unwrap();
+    let log = root.join("sysctl.log");
+    for (name, body) in [
+        (
+            "uname",
+            "case $1 in -m) echo riscv ;; *) echo NetBSD ;; esac".to_string(),
+        ),
+        ("sysctl", format!("echo \"$*\" >> {}", log.display())),
+        (
+            "atf-run",
+            "printf 'tp-start: 1.0, t_a, 1\\ntc-start: 1.0, a\\ntc-end: 2.0, a, passed\\n'"
+                .to_string(),
+        ),
+    ] {
+        let path = bin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let script = root.join("tests");
+    std::fs::write(&script, guest::TESTS).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("out"))
+        .env("PATH", path)
+        .env("RB_TESTS", root.join("usr/tests"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        console.contains("RB-NOTE tests kern.module.autoload=0: NetBSD riscv64"),
+        "{console}"
+    );
+    assert!(console.contains("RB-CASE lib/t_a:a"), "{console}");
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(calls, "-w kern.module.autoload=0\n");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// rb-bench built with the host's cc, where it has one, and run at a small scale.
 fn rb_bench(root: &Path) -> Option<PathBuf> {
     let top = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
