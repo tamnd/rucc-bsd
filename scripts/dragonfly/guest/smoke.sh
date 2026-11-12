@@ -10,8 +10,8 @@
 #
 # The differences from FreeBSD: the disk check uses fdisk and disklabel as nrelease does, as
 # DragonFly has no gpart. fsck is the fsck of UFS. The module check loads ext2fs, which
-# X86_64_GENERIC does not have in the kernel. The static program comes from /rescue, which has gzip
-# and pax but no tar. DragonFly has no kyua and no /usr/tests, so there is no tests check.
+# X86_64_GENERIC does not have in the kernel. The static programs come from /rescue, which has cut,
+# gzip and pax but no tar. DragonFly has no kyua and no /usr/tests, so there is no tests check.
 out=$1
 mkdir -p "$out"
 : > "$out/results"
@@ -97,21 +97,25 @@ module()
 	umount /var/rb/null
 }
 
-# A static program and a dynamic one (plan 09.4). /rescue is one static program. Both come from one
-# source, so their output must be the same.
+# A static program and a dynamic one (plan 09.4). /rescue is one static program. DragonFly links
+# gzip, bzip2 and the programs of /bin static (NOSHARED), so the dynamic program is /usr/bin/cut,
+# which /rescue has too. Both come from one source, so their output must be the same. gzip and pax
+# of /rescue must also give the same output as the programs of /usr/bin and /bin.
 static_dynamic()
 {
 	local d=/var/rb/static-dynamic
-	file /rescue/gzip /usr/bin/gzip &&
-	ldd /usr/bin/gzip | grep -q 'libc\.so' &&
-	! ldd /rescue/gzip 2> /dev/null | grep -q 'libc\.so' &&
+	file /rescue/cut /usr/bin/cut &&
+	ldd /usr/bin/cut | grep -q 'libc\.so' &&
+	! ldd /rescue/cut 2> /dev/null | grep -q 'libc\.so' &&
 	mkdir -p ${d} &&
 	jot 50000 > ${d}/in &&
+	/rescue/cut -c 2-4 ${d}/in > ${d}/static.cut &&
+	/usr/bin/cut -c 2-4 ${d}/in > ${d}/dynamic.cut &&
+	cmp ${d}/static.cut ${d}/dynamic.cut &&
 	/rescue/gzip -c -n ${d}/in > ${d}/static.gz &&
 	/usr/bin/gzip -c -n ${d}/in > ${d}/dynamic.gz &&
 	cmp ${d}/static.gz ${d}/dynamic.gz &&
 	/rescue/gzip -d -c ${d}/dynamic.gz | cmp - ${d}/in &&
-	/usr/bin/gzip -d -c ${d}/static.gz | cmp - ${d}/in &&
 	(cd ${d} && /rescue/pax -w -f static.pax in) &&
 	(cd ${d} && mkdir out && cd out && /bin/pax -r -f ../static.pax) &&
 	cmp ${d}/out/in ${d}/in &&
