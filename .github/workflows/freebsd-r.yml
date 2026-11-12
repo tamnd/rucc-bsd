@@ -62,6 +62,11 @@
 # and the step summary shows the groups. rucc is built from the head of tamnd/rucc main, or from the
 # branch or commit a manual run names. It is not the pinned release, so the run is ungraded, and the
 # step summary names the commit.
+#
+# The job test runs rb test (plan 12.6) after the boot job. GG is the boots of the freebsd-g run
+# whose image the build took, and the claim is the boots of this run: RG for the rucc kernel, RR for
+# rr. scripts/freebsd/rb-runs.py turns both into runs of rb boot. The report is in the step summary
+# and in the artifact freebsd-r-test.
 
 name: freebsd-r
 
@@ -131,6 +136,7 @@ jobs:
     timeout-minutes: 355
     outputs:
       side: ${{ steps.boot.outputs.side || steps.rr.outputs.side }}
+      g_run: ${{ steps.gimage.outputs.run }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
@@ -381,6 +387,7 @@ jobs:
           scripts/freebsd/builder.sh ssh "$VM_ENV $RB_BRINGUP_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=kernel-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: the image of the last good freebsd-g run
+        id: gimage
         if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref' || env.RB_TARGET == 'rr'
         run: |
           # freebsd-g also runs for other pins, and a run of another pin has no image of this one.
@@ -398,6 +405,7 @@ jobs:
             echo "No good freebsd-g run on main has the artifact $name." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+          echo "run=$id" >> "$GITHUB_OUTPUT"
           if [ "$RB_TARGET" = rr ]; then
             echo "The G libraries for rb abi-diff are those of freebsd-g run $id." | tee record/g-image.txt >> "$GITHUB_STEP_SUMMARY"
           else
@@ -614,4 +622,72 @@ jobs:
             boots
             summary
             published.json
+          retention-days: 14
+
+  test:
+    name: rb test, ${{ needs.build.outputs.side == 'rr' && 'RR' || 'RG' }} against GG
+    needs: [build, boot]
+    if: always() && needs.boot.result != 'skipped' && needs.build.outputs.g_run != '' && (needs.build.outputs.side == 'rucc' || needs.build.outputs.side == 'rr')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build rb
+        run: cargo build --release --locked -p rb --bin rb
+      - name: download the boots of this run
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: freebsd-r-results${{ env.RB_ART }}
+          path: r
+      - name: download the boots of the freebsd-g run
+        uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: freebsd-results-${{ env.RB_PIN }}-graded*
+          path: g
+          run-id: ${{ needs.build.outputs.g_run }}
+          github-token: ${{ github.token }}
+      - name: rb test
+        run: |
+          # Each run is two boots, BIOS and UEFI, joined with +. The runs are separated by commas.
+          # download-artifact puts a single artifact straight into its path, and each of two or more
+          # into PATH/NAME.
+          runs() {
+            local from="" r fw run
+            for r in "$1"/freebsd-results-* "$1"; do
+              [ -d "$r/boots" ] || continue
+              run=""
+              for fw in bios uefi; do
+                [ -f "$r/boots/$fw/boot.json" ] || continue
+                python3 -I scripts/freebsd/rb-runs.py "$r/boots/$fw" "runs/$2/$(basename "$r")/$fw" >&2
+                run="$run+runs/$2/$(basename "$r")/$fw"
+              done
+              [ -z "$run" ] || from="$from,${run#+}"
+            done
+            echo "${from#,}"
+          }
+          gg=$(runs g gg)
+          claim=$(runs r claim)
+          case $SIDE in rr) cell=rr ;; *) cell=rg ;; esac
+          {
+            echo "### rb test: ${cell^^} against GG of freebsd-g run $G_RUN"
+            echo
+            if [ -z "$gg" ] || [ -z "$claim" ]; then
+              echo "There are no boots for GG ($gg) or ${cell^^} ($claim)."
+              exit 1
+            fi
+            status=0
+            target/release/rb test --gg "$gg" "--$cell" "$claim" --out out/test || status=$?
+            echo
+            echo "rb test exited with $status."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          SIDE: ${{ needs.build.outputs.side }}
+          G_RUN: ${{ needs.build.outputs.g_run }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: freebsd-r-test${{ env.RB_ART }}
+          path: out
+          if-no-files-found: ignore
           retention-days: 14
