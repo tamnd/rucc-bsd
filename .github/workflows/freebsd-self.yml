@@ -384,12 +384,16 @@ jobs:
         # c++ or cpp there. The host CC is the rucc of the package. It finds ld in /usr/local/bin
         # by -B. The image has no C++ compiler and no cpp, so the host CXX and CPP are of gcc15,
         # which provision.sh installed. dtrace -C runs cpp from PATH, so DTRACE gives it that cpp by
-        # -x cpppath. dtrace -h writes the same header with any cpp.
+        # -x cpppath. dtrace -h writes the same header with any cpp. dtrace gives cpp only the base
+        # name as argv[0], and gcc finds cc1 from the place of argv[0] in PATH, so DTRACE also puts
+        # /usr/local/bin in PATH. The step runs dtrace -h once with the PATH of the src Makefile.
         run: |
           cpp=/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15
           host="CC='/usr/local/bin/rucc -B/usr/local/bin/' CXX=/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
-          host="$host CPP=$cpp DTRACE='dtrace -x cpppath=$cpp'"
+          host="$host CPP=$cpp DTRACE='env PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin dtrace -x cpppath=$cpp'"
           scripts/freebsd/rr-vm.sh ssh "env $host sh -c '\$CC -v 2>&1 | head -1; \$CXX --version | head -1; \$CPP --version | head -1'"
+          scripts/freebsd/rr-vm.sh ssh "printf 'provider p { probe q(int); };\n' > /tmp/p.d"
+          scripts/freebsd/rr-vm.sh ssh "env PATH=/sbin:/bin:/usr/sbin:/usr/bin $host sh -c '\$DTRACE -C -x nolibs -h -s /tmp/p.d -o /tmp/p.h && grep -c P_Q /tmp/p.h'"
           echo "RB_HOST_ENV=$host" >> "$GITHUB_ENV"
       - name: make buildworld in RR
         run: |
