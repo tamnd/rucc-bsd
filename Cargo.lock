@@ -235,6 +235,7 @@ name = "rb-shim"
 version = "0.0.1"
 dependencies = [
  "harness-shim",
+ "object",
  "serde",
  "toml",
 ]
