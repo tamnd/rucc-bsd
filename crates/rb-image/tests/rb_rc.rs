@@ -425,6 +425,10 @@ fn foreign_adds_each_package_and_runs_its_check() {
     )
     .unwrap();
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // NetBSD has timeout(1), and macOS does not. The stub runs the command with no limit.
+    let timeout = bin.join("timeout");
+    std::fs::write(&timeout, "#!/bin/sh\nshift\nexec \"$@\"\n").unwrap();
+    std::fs::set_permissions(&timeout, std::fs::Permissions::from_mode(0o755)).unwrap();
     let script = root.join("foreign");
     std::fs::write(&script, guest::FOREIGN).unwrap();
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
