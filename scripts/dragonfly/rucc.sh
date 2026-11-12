@@ -41,12 +41,19 @@ else
 	# libssl.so.17 of security/openssl and the libcurl of the repository. Two packages of the
 	# repository have the name openssl (security/openssl and security/openssl30), so pkg does not
 	# upgrade openssl for the dependency of rust. openssl is installed by its origin, and curl is
-	# upgraded with its dependencies, before rust.
+	# upgraded with its dependencies, before rust. Packages of the live system that still need the
+	# libssl.so.12 of openssl 3.0, such as libssh2, are then installed again from the repository.
 	if ! command -v cargo > /dev/null 2>&1; then
 		{
 			env ASSUME_ALWAYS_YES=yes pkg install -y security/openssl &&
 			env ASSUME_ALWAYS_YES=yes pkg upgrade -y ftp/curl &&
-			env ASSUME_ALWAYS_YES=yes pkg install -y lang/rust
+			env ASSUME_ALWAYS_YES=yes pkg install -y lang/rust &&
+			old=$( (pkg shlib -qR libssl.so.12 2>/dev/null || true) | tr '\n' ' ') &&
+			echo "packages that need libssl.so.12: $old" &&
+			if [ -n "$old" ]; then
+				# shellcheck disable=SC2086
+				env ASSUME_ALWAYS_YES=yes pkg install -f -y $old
+			fi
 		} > "$out/pkg.log" 2>&1 || {
 			tail -30 "$out/pkg.log"
 			exit 1
