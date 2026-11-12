@@ -143,7 +143,7 @@ FreeBSD's armv7 and every powerpc variant are outside the claim. FreeBSD's own `
   - NetBSD's default compiler is GCC;
   - FreeBSD keeps GCC builds in CI and ships the cross GCC packages.
 - **DragonFly BSD joins at B11.** Its base compiler is GCC 12.5 on master, it has a plug-in compiler mechanism (`CCVER` and `compilers.conf`), and it has one architecture. What it lacks is a test suite, so its claim is weaker: it builds, boots, passes smoke, and builds itself.
-- **OpenBSD is not part of the claim** on any architecture that uses clang, which is all the ones in use. Its kernel and libc are built with OpenBSD-local clang options, such as `-fret-protector`, `-fret-clean` and `-ffixup-gadgets` (clang-local(1)). The GCC 4.2.1 architectures (alpha, hppa, m88k, sh) are legacy hardware. Document 04.2 and open question 3 hold the reasoning and what would change it.
+- **OpenBSD is not part of the claim** on any architecture that uses clang, which is all the ones in use. Its kernel and libc get OpenBSD-local hardening from its clang, such as retguard and the gadget fix-up pass, which are on by default, and `-fret-clean` (clang-local(1)). It has no GCC build of its base to grade against. The GCC 4.2.1 architectures (alpha, hppa, m88k, sh) are legacy hardware. B11 answered open question 3, and 04.2 holds the decision, the evidence and what would change it.
 
 ## 02.8 What does not count
 

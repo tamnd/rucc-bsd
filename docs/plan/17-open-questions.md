@@ -23,7 +23,7 @@ A question past its deadline blocks that milestone. The numbers are stable, beca
 | 11 | 9. Storage on gpc | B0 | fewer pins kept, or another disk |
 | 12 | 10. DragonFly's `CCVER` | B11 | DragonFly needs a different entry point |
 | 13 | 8. rucc on a NetBSD host | B10 | no NetBSD fixed point |
-| 14 | 3. OpenBSD | B11 | none for this plan |
+| 14 | 3. OpenBSD, answered at B11 | B11 | none for this plan |
 | 15 | 16. Reporting results and bugs upstream | B4 | none for the plan; a lot for how it is seen |
 | 16 | 11. The museum | none | none for this goal |
 
@@ -63,6 +63,8 @@ Nothing in this plan depends on the answer. It decides whether a later plan exis
 3. Read the clang-local(1) definitions of each option against what rucc would need to emit.
 
 The answer is written into 04.2.
+
+**Answer.** OpenBSD stays outside the claim, and no later plan starts now. Its base has no GCC build on any architecture in use. Retguard, the gadget fix-up pass and `-mretpoline` are defaults of OpenBSD's clang, not options on the command line, and the amd64 assembly adds retguard only when the compiler predefines `_RET_PROTECTOR`. A G build with the `lang/gcc/16` port would need a changed kernel Makefile and would grade a configuration that nobody uses, so step 2 was not run. rucc would need a clang persona, and the oracle would be OpenBSD's clang. 04.2 has the evidence, the files that pass each option, and what a builder would need.
 
 **Deadline.** B11.
 
