@@ -77,6 +77,19 @@ if [ -f $tests/Kyuafile ]; then
 elif [ -f $tests/Atffile ]; then
 	mkdir -p "$out/atf"
 	: > "$out/atf/status"
+	# NetBSD riscv64 loads a module more than 2 GiB from the kernel, out of reach of a call, and
+	# the first call of the module panics the kernel (tamnd/rucc-bsd#179). Some tests autoload a
+	# module, such as compat_13 or fss. On riscv64 the tests run with autoload off, so that these
+	# tests fail and do not panic the kernel. The console line puts this in the report.
+	case $(uname -m) in
+	riscv*)
+		if sysctl -w kern.module.autoload=0 > /dev/null 2>&1; then
+			echo "RB-NOTE tests kern.module.autoload=0: NetBSD riscv64 loads modules out of reach of a call (tamnd/rucc-bsd#179)"
+		else
+			echo "RB-NOTE tests kern.module.autoload stays on: sysctl -w failed"
+		fi
+		;;
+	esac
 	for d in ${dirs:-$(top)}; do
 		start=$(date +%s)
 		f=$d
