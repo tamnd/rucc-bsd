@@ -16,6 +16,20 @@
 //! `-u` is a root that keeps each set section and all the code it points to, while the weak
 //! references of a Clang object keep nothing, so the link would pull in commands whose callees
 //! are not linked (`gptzfsboot` and `command_errmsg`).
+//!
+//! For a final link of an arm64 kernel or module, which is the emulation `aarch64elf` and no
+//! `-r`, the slot also adds `-z force-bti`. `kern.mk` builds the kernel with
+//! `-mbranch-protection=standard`, which defines `__ARM_FEATURE_BTI_DEFAULT`, and `pmap.c` then maps
+//! the kernel text guarded. A call through a register into a PLT or IPLT stub must land on a
+//! `bti c` there. ld.bfd writes that landing pad only when every input object has the BTI bit in
+//! its `.note.gnu.property`, or when it is told `-z force-bti`. Clang writes the note and lld then
+//! writes the pads, which is how the stock kernel boots. GCC writes no note on FreeBSD, and rucc
+//! writes none to match it, so without the option the IPLT stub of an ifunc such as
+//! `sched_idletd` has no pad and the kernel takes a BTI fault when the APs start their idle
+//! threads. G and R both link through this slot, so both get the option. ld.bfd then warns once
+//! for each input without the note, and the kernel link has no `--fatal-warnings`, so the warnings
+//! stay warnings. `kern.mk` asks for `-zbti-report=error` only when the linker is lld.
+//!
 //! It changes no argument the build wrote, records nothing and prints nothing.
 
 use std::collections::BTreeSet;
@@ -54,13 +68,33 @@ pub fn gc_sections(rest: &[String]) -> bool {
         .unwrap_or(false)
 }
 
-/// The arguments for the real linker: `-u` for both bounds of every set in the input objects of
-/// a final link that does not collect sections, then the build's own arguments. `sections` reads the section names of an
-/// operand, and gives none for a file that is not a relocatable ELF object.
+/// Whether the command line is a final link for arm64, the emulation of FreeBSD's kernel and
+/// module links there (`LD_EMULATION_aarch64` in `sys/conf/kern.mk`).
+#[must_use]
+pub fn arm64_final(rest: &[String]) -> bool {
+    let arm64 = rest.iter().enumerate().any(|(i, a)| {
+        a == "-maarch64elf" || (a == "-m" && rest.get(i + 1).is_some_and(|e| e == "aarch64elf"))
+    });
+    arm64 && !relocatable(rest)
+}
+
+/// The arguments for the real linker: `-z force-bti` for a final link for arm64, `-u` for both
+/// bounds of every set in the input objects of a final link that does not collect sections, then
+/// the build's own arguments. `sections` reads the section names of an operand, and gives none for
+/// a file that is not a relocatable ELF object.
 #[must_use]
 pub fn args(rest: &[String], cwd: &Path, sections: &dyn Fn(&Path) -> Vec<String>) -> Vec<String> {
+    let bti: &[&str] = if arm64_final(rest) {
+        &["-z", "force-bti"]
+    } else {
+        &[]
+    };
     if relocatable(rest) || gc_sections(rest) {
-        return rest.to_vec();
+        return bti
+            .iter()
+            .map(|a| (*a).to_string())
+            .chain(rest.iter().cloned())
+            .collect();
     }
     let sets: BTreeSet<String> = rest
         .iter()
@@ -68,7 +102,8 @@ pub fn args(rest: &[String], cwd: &Path, sections: &dyn Fn(&Path) -> Vec<String>
         .flat_map(|a| sections(&cwd.join(a)))
         .filter(|n| is_set(n))
         .collect();
-    let mut out = Vec::with_capacity(rest.len() + 4 * sets.len());
+    let mut out = Vec::with_capacity(bti.len() + rest.len() + 4 * sets.len());
+    out.extend(bti.iter().map(|a| (*a).to_string()));
     for set in &sets {
         for bound in ["__start_", "__stop_"] {
             out.push("-u".to_string());
@@ -401,9 +436,41 @@ mod tests {
         assert_eq!(
             args(&words(line), Path::new("/obj"), &sections),
             words(&format!(
-                "-u __start_set_modmetadata_set -u __stop_set_modmetadata_set {line}"
+                "-z force-bti -u __start_set_modmetadata_set -u __stop_set_modmetadata_set {line}"
             ))
         );
+    }
+
+    /// The freebsd-aarch64 R image: the IPLT stub of `sched_idletd` had no `bti c`, and the kernel
+    /// took a BTI fault when the APs started their idle threads. A final arm64 link is told to
+    /// write the landing pads, and nothing else is.
+    #[test]
+    fn a_final_arm64_link_writes_bti_landing_pads() {
+        let none = |_: &Path| Vec::new();
+        let kernel = "-m aarch64elf -Bdynamic -L /src/sys/conf -T ldscript.arm64 --no-relax \
+                      --export-dynamic --dynamic-linker /red/herring -X -o kernel.full locore.o vers.o";
+        assert_eq!(
+            args(&words(kernel), Path::new("/obj"), &none),
+            words(&format!("-z force-bti {kernel}"))
+        );
+        let glued = "-maarch64elf --gc-sections -o a.out a.o";
+        assert_eq!(
+            args(&words(glued), Path::new("/"), &none),
+            words(&format!("-z force-bti {glued}"))
+        );
+        for line in [
+            "-m aarch64elf -d -warn-common --no-relax -r -o sdt.kld sdt.o",
+            "-m elf64lriscv -Bshareable -o sdt.ko sdt.kld",
+            "-m elf_x86_64_fbsd -Bdynamic -T ldscript.amd64 -o kernel.full vers.o",
+            "-m aarch64 -o a.out a.o",
+            "--version",
+        ] {
+            assert_eq!(
+                args(&words(line), Path::new("/"), &none),
+                words(line),
+                "{line}"
+            );
+        }
     }
 
     #[test]
