@@ -585,19 +585,29 @@ jobs:
       - name: rb build
         run: |
           unset RB_BRINGUP RB_BRINGUP_UNITS
+          # A rucc built from source is not the pinned release of toolchains.toml, and rb build
+          # refuses it in a graded build. Such a run passes --ungraded and says so.
+          ungraded=()
+          note="The rucc is the pinned release $RUCC_VERSION."
+          if [ -n "$REF" ]; then
+            ungraded=(--ungraded)
+            note="The rucc is $REF from source, not the pinned release, so the build is ungraded."
+          fi
           status=0
-          target/release/rb build netbsd-trunk --row amd64 --conf graded --cc rucc \
+          target/release/rb build netbsd-trunk --row amd64 --conf graded --cc rucc "${ungraded[@]}" \
             --root "$NB_ROOT" --targets kernel > "$RUNNER_TEMP/rb-build.md" 2>&1 || status=$?
           {
-            echo "### rb build netbsd-trunk --row amd64 --conf graded --cc rucc --targets kernel"
+            echo "### rb build netbsd-trunk --row amd64 --conf graded --cc rucc ${ungraded[*]} --targets kernel"
             echo
-            echo "Exit status: $status. RB_BRINGUP is not set."
+            echo "Exit status: $status. RB_BRINGUP is not set. $note"
             echo
             echo '```'
             tail -n 60 "$RUNNER_TEMP/rb-build.md"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$status"
+        env:
+          REF: ${{ inputs.rucc }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
