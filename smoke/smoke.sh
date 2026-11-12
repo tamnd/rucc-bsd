@@ -8,7 +8,9 @@
 #   shells          sh and csh run a command
 #   network         the virtio interface (vtnet0 or vioif0) has an address from QEMU's DHCP
 #                   server, and lo0 answers ping
-#   spare           fsck, mount and umount of the partition next to the root
+#   spare           fsck, mount and umount of the partition next to the root, or on NetBSD a
+#                   listing of it where the system has mounted it already, as riscv mounts its
+#                   EFI system partition on /boot
 #   package         install and delete one package from the local repository in the image
 #   module          load and unload one kernel module
 #   tests-present   /usr/tests has its Kyuafile or Atffile, and kyua or atf-run is there
@@ -105,6 +107,15 @@ spare()
 	NetBSD)
 		w=${rb_smoke_spare:-$(netbsd_spare)}
 		test -n "$w" || return 2
+		# The riscv image mounts its EFI system partition on /boot, and a second mount of it
+		# fails. The check then reads the mount that is there, with no fsck and no mount.
+		at=$(mount | sed -n "s|^/dev/$w on \([^ ]*\) .*|\1|p" | head -n 1)
+		if [ -n "$at" ]; then
+			echo "/dev/$w is mounted on $at"
+			ls -l "$at" || return 1
+			test "$(ls "$at" | wc -l)" -gt 0
+			return
+		fi
 		fsck_msdos -n "/dev/r$w" || return 1
 		mount_msdos -o ro "/dev/$w" $mnt || return 1
 		;;

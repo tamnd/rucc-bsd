@@ -8,7 +8,8 @@
 //!    - `IMGDIR_EXTRA` copies rb's overlay tree into the image's root;
 //!    - `SPEC_EXTRA` is the emulator image's own spec file and rb's, so `makefs` takes the new
 //!      files with root as their owner;
-//!    - `RC_CONF_EXTRA` is the emulator image's own `rc.conf` lines and `rb_enable=YES`;
+//!    - `RC_CONF_EXTRA` is the emulator image's own `rc.conf` lines, `rb_enable=YES` and
+//!      `securelevel=-1`, which keeps the level at 0 for the module checks;
 //!    - `INSTALLBOOTOPTIONS` puts the BIOS boot blocks on the serial console;
 //!    - `LIVEIMG_RELEASEDIR` puts the image in rb's work directory, so the release is not
 //!      changed.
@@ -34,6 +35,14 @@ pub const NEEDED: &[&str] = &[
     "RELEASEDIR",
     "MACHINE",
 ];
+
+/// rb's own lines in the NetBSD image's `rc.conf`, after `rb_enable`.
+///
+/// `/etc/rc.d/securelevel` raises `kern.securelevel` from 0 to 1 before `DAEMON` when rc.conf does
+/// not set it, and rb-rc runs after `LOGIN`, so `modload` in the smoke and modules suites failed
+/// with `EPERM`. With `securelevel=-1` that script says it cannot lower the level and leaves it
+/// at 0. init raises it to 1 only when `/etc/rc` is done, which is after rb-rc has run.
+pub const RC_CONF: &str = "securelevel=-1\n";
 
 /// The `boot.cfg` when `DESTDIR` has none.
 pub const BOOT_CFG: &str = "\
@@ -270,7 +279,7 @@ pub fn make(req: &Request, dry_run: bool) -> Result<Made, String> {
         .map_err(|e| format!("rb.spec: {e}"))?;
     std::fs::write(
         work.join("rb.rc.conf"),
-        format!("\n# rb-rc (plan 12.4)\n{}", guest::RC_CONF),
+        format!("\n# rb-rc (plan 12.4)\n{}{RC_CONF}", guest::RC_CONF),
     )
     .map_err(|e| format!("rb.rc.conf: {e}"))?;
     added.push("boot.cfg".into());
