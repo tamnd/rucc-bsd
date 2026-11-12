@@ -30,7 +30,22 @@
 //! for each input without the note, and the kernel link has no `--fatal-warnings`, so the warnings
 //! stay warnings. `kern.mk` asks for `-zbti-report=error` only when the linker is lld.
 //!
-//! It changes no argument the build wrote, records nothing and prints nothing.
+//! For the final link of a riscv64 kernel, which is the emulation `elf64lriscv` with the dynamic
+//! linker `/red/herring` of `SYSTEM_LD_BASECMD` (`sys/conf/kern.pre.mk`), the slot adds
+//! `--no-dynamic-linker` after the build's arguments, where the last of the two wins. ld.bfd makes
+//! a `PT_PHDR` for the `.interp` section and puts the ELF headers into the first `PT_LOAD`. Since
+//! `ldscript.riscv` starts `.text` at `kernbase`, that segment begins one page lower, at
+//! `kernbase - 0x1000`. The EFI loader copies the first `PT_LOAD` to the start of its 2 MB aligned
+//! staging area (`efi_copyin` in `stand/efi/loader/copy.c`), so `kernbase` lands 4 KB past that
+//! boundary. locore maps the kernel with 2 MB pages from the physical address of `kernbase`, so
+//! the map is one page off, and the kernel takes an illegal instruction trap at `va` when it turns
+//! the MMU on, before it prints a thing. Without `.interp`, ld.bfd writes neither `PT_INTERP` nor
+//! `PT_PHDR`, and the first `PT_LOAD` begins at `kernbase`, as in the stock kernel that lld links.
+//! The kernel keeps its `PT_DYNAMIC`, and nothing reads the name `/red/herring`. G and R both link
+//! through this slot, so both get the option. An image that the firmware boots without the loader
+//! starts at `kernel_lma` and does not show the problem.
+//!
+//! It changes no other argument the build wrote, records nothing and prints nothing.
 
 use std::collections::BTreeSet;
 use std::fs::File;
@@ -78,12 +93,44 @@ pub fn arm64_final(rest: &[String]) -> bool {
     arm64 && !relocatable(rest)
 }
 
+/// The dynamic linker that `SYSTEM_LD_BASECMD` names for every FreeBSD kernel. Nothing loads it.
+const KERNEL_INTERP: &str = "/red/herring";
+
+/// Whether the command line is the final link of a riscv64 kernel: the emulation `elf64lriscv`, no
+/// `-r`, and the dynamic linker `/red/herring`, given as `--dynamic-linker` or `-dynamic-linker`,
+/// with its value as the next word or after `=`.
+#[must_use]
+pub fn riscv_kernel(rest: &[String]) -> bool {
+    let riscv = rest.iter().enumerate().any(|(i, a)| {
+        a == "-melf64lriscv" || (a == "-m" && rest.get(i + 1).is_some_and(|e| e == "elf64lriscv"))
+    });
+    let interp = rest.iter().enumerate().any(|(i, a)| {
+        let a = a.strip_prefix("--").or_else(|| a.strip_prefix('-'));
+        match a {
+            Some("dynamic-linker") => rest.get(i + 1).is_some_and(|v| v == KERNEL_INTERP),
+            Some(a) => a.strip_prefix("dynamic-linker=") == Some(KERNEL_INTERP),
+            None => false,
+        }
+    });
+    riscv && interp && !relocatable(rest)
+}
+
 /// The arguments for the real linker: `-z force-bti` for a final link for arm64, `-u` for both
 /// bounds of every set in the input objects of a final link that does not collect sections, then
-/// the build's own arguments. `sections` reads the section names of an operand, and gives none for
-/// a file that is not a relocatable ELF object.
+/// the build's own arguments, and last `--no-dynamic-linker` for the final link of a riscv64
+/// kernel. `sections` reads the section names of an operand, and gives none for a file that is not
+/// a relocatable ELF object.
 #[must_use]
 pub fn args(rest: &[String], cwd: &Path, sections: &dyn Fn(&Path) -> Vec<String>) -> Vec<String> {
+    let mut out = head(rest, cwd, sections);
+    if riscv_kernel(rest) {
+        out.push("--no-dynamic-linker".to_string());
+    }
+    out
+}
+
+/// The arguments of [`args`] up to and with the build's own.
+fn head(rest: &[String], cwd: &Path, sections: &dyn Fn(&Path) -> Vec<String>) -> Vec<String> {
     let bti: &[&str] = if arm64_final(rest) {
         &["-z", "force-bti"]
     } else {
@@ -469,6 +516,43 @@ mod tests {
                 args(&words(line), Path::new("/"), &none),
                 words(line),
                 "{line}"
+            );
+        }
+    }
+
+    /// The freebsd-riscv64 R image: ld.bfd put the ELF headers into the first `PT_LOAD`, one page
+    /// below `kernbase`, the EFI loader put `kernbase` 4 KB past a 2 MB boundary, and the kernel
+    /// trapped when it turned the MMU on. The final link of a riscv64 kernel ends with
+    /// `--no-dynamic-linker`, and no other link changes.
+    #[test]
+    fn a_final_riscv64_kernel_link_has_no_interpreter() {
+        let none = |_: &Path| Vec::new();
+        for kernel in [
+            "-m elf64lriscv -Bdynamic -L /src/sys/conf -T ldscript.riscv \
+             --defsym=kernel_lma=0x80200000 --export-dynamic --dynamic-linker /red/herring -X \
+             -o kernel.full locore.o vers.o",
+            "-melf64lriscv -dynamic-linker=/red/herring -o kernel.full locore.o",
+            "-m elf64lriscv --dynamic-linker=/red/herring -o kernel.full locore.o",
+        ] {
+            assert_eq!(
+                args(&words(kernel), Path::new("/obj"), &none),
+                words(&format!("{kernel} --no-dynamic-linker")),
+                "{kernel}"
+            );
+        }
+        for line in [
+            "-m elf64lriscv -d -warn-common -r -o sdt.kld sdt.o",
+            "-m elf64lriscv -Bshareable -znotext -o sdt.ko sdt.kld",
+            "-m elf64lriscv --dynamic-linker /libexec/ld-elf.so.1 -o a.out a.o",
+            "-m elf64lriscv --dynamic-linker /red/herring -r -o kernel.o a.o",
+            "-m aarch64elf -Bdynamic -T ldscript.arm64 --dynamic-linker /red/herring -o k a.o",
+            "-m elf_x86_64_fbsd -Bdynamic -T ldscript.amd64 --dynamic-linker /red/herring -o k a.o",
+            "--version",
+        ] {
+            let got = args(&words(line), Path::new("/"), &none);
+            assert!(
+                !got.contains(&"--no-dynamic-linker".to_string()),
+                "{line}: {got:?}"
             );
         }
     }
