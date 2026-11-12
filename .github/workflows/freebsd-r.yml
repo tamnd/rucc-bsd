@@ -98,6 +98,10 @@ on:
         description: "rr only: C units for the reference GCC, as PATH=ISSUE, comma separated (plan 00 cxx-c). Empty in a graded run"
         required: false
         default: ""
+      stand:
+        description: "For rr, the boot code: r (rucc), or g (WITHOUT_BOOT, and the boot code and loader of the freebsd-g image)"
+        required: false
+        default: r
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
@@ -373,8 +377,12 @@ jobs:
       - name: make buildworld with rucc, for the RR image
         if: env.RB_TARGET == 'rr'
         run: |
-          scripts/freebsd/builder.sh ssh "$VM_ENV $RB_BRINGUP_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+          vars=
+          if [ "$STAND" = g ]; then vars=RB_MAKEVARS=WITHOUT_BOOT=yes; fi
+          scripts/freebsd/builder.sh ssh "$VM_ENV $RB_BRINGUP_ENV $vars RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=world-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh world"
+        env:
+          STAND: ${{ inputs.stand || 'r' }}
       - name: make buildkernel with rucc, for the RR image
         if: env.RB_TARGET == 'rr'
         run: |
@@ -429,7 +437,9 @@ jobs:
         id: rr
         if: env.RB_TARGET == 'rr'
         run: |
-          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_DESTDIR=/build/destdir \
+          vars=
+          if [ "$STAND" = g ]; then vars="RB_MAKEVARS=WITHOUT_BOOT=yes RB_BOOT_FROM=/build/image/g.img.zst"; fi
+          scripts/freebsd/builder.sh ssh "$VM_ENV $vars RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_DESTDIR=/build/destdir \
             RB_IMAGE=/build/image/freebsd.img sh /root/harness/scripts/freebsd/image.sh"
           mkdir -p image record
           scripts/freebsd/builder.sh get /build/image/freebsd.img.zst image/freebsd.img.zst
@@ -440,10 +450,11 @@ jobs:
           if [ "$MODE" = none ]; then side=none; fi
           echo "side=$side" >> "$GITHUB_OUTPUT"
           echo "RB_SIDE=$side" >> "$GITHUB_ENV"
-          echo "The image has the world and the kernel of rucc. boot: $MODE." >> "$GITHUB_STEP_SUMMARY"
+          echo "The image has the world and the kernel of rucc. boot: $MODE. stand: $STAND." >> "$GITHUB_STEP_SUMMARY"
         env:
           KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
           MODE: ${{ inputs.boot || 'auto' }}
+          STAND: ${{ inputs.stand || 'r' }}
       - name: the shared libraries of R and G
         if: env.RB_TARGET == 'rr'
         continue-on-error: true

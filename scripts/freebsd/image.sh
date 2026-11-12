@@ -7,6 +7,11 @@
 #   RB_HARNESS   this repository, copied into the VM
 #   RB_DESTDIR   the staging tree
 #   RB_IMAGE     the raw image to write
+#   RB_MAKEVARS  more make variables for step 1, as for build.sh, such as WITHOUT_BOOT=yes
+#   RB_BOOT_FROM a GPT image, such as freebsd.img.zst of a freebsd-g run. Step 1 then copies each
+#                file of its /boot that the staging tree does not have, but not the kernel, the
+#                modules, loader.conf and entropy. A world built WITHOUT_BOOT=yes gets the boot code
+#                and the loader of that image this way.
 #
 # The steps:
 # 1. installworld, installkernel and distribution into RB_DESTDIR, from the objects of build.sh.
@@ -57,12 +62,33 @@ phase_done() {
 start=$(now)
 rm -rf "$d"
 mkdir -p "$d"
+# shellcheck disable=SC2086
 if ! make -C "$RB_SRC" -j"$RB_JOBS" installworld installkernel distribution DESTDIR="$d" \
 	TARGET=amd64 TARGET_ARCH=amd64 KERNCONF="${RB_KERNCONF:-GENERIC}" ${kernconfdir:+KERNCONFDIR="$kernconfdir"} \
-	CROSS_TOOLCHAIN="$RB_TOOLCHAIN" __MAKE_CONF=/dev/null SRCCONF="$RB_SRCCONF" \
+	CROSS_TOOLCHAIN="$RB_TOOLCHAIN" ${RB_MAKEVARS:-} __MAKE_CONF=/dev/null SRCCONF="$RB_SRCCONF" \
 	> "$RB_OUT/install.log" 2>&1; then
 	tail -60 "$RB_OUT/install.log"
 	exit 1
+fi
+if [ -n "${RB_BOOT_FROM:-}" ]; then
+	raw="$work/boot-from.raw"
+	mnt="$work/boot-from"
+	mkdir -p "$mnt"
+	zstd -d -q -f --sparse "$RB_BOOT_FROM" -o "$raw"
+	md=$(mdconfig -a -t vnode -o readonly -f "$raw")
+	part=$(gpart show -p "$md" | awk '$4 == "freebsd-ufs" { print $3; exit }')
+	mount -o ro "/dev/$part" "$mnt"
+	mkdir -p "$d/boot"
+	(cd "$mnt/boot" && find . \( -path ./kernel -o -path ./kernel.old -o -path ./modules \) -prune -o \
+		\( -type f -o -type l \) -print) |
+		while read -r f; do
+			[ -e "$d/boot/$f" ] || [ -L "$d/boot/$f" ] || echo "$f"
+		done | grep -v -x -e ./loader.conf -e ./entropy > "$work/boot-from.list" || true
+	tar -cf - -C "$mnt/boot" -T "$work/boot-from.list" | tar -xf - -C "$d/boot"
+	umount "$mnt"
+	mdconfig -d -u "$md"
+	rm -f "$raw"
+	echo "$(wc -l < "$work/boot-from.list") files of /boot from $RB_BOOT_FROM"
 fi
 manifest "$d" "$RB_OUT/install.manifest"
 phase_done install "$start" "$d"
