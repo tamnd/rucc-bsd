@@ -11,14 +11,15 @@
 #
 # On NetBSD a directory can be under the top, such as net/carp. Its output is then
 # OUT/atf/net/carp.tps. A directory that is named again runs again, and its output of run N is
-# OUT/atf/DIR@N.tps, so rb_tests_only="net/carp net/carp" runs net/carp twice.
+# OUT/atf/DIR@N.tps, so rb_tests_only="net/carp net/carp" runs net/carp twice. A test program,
+# such as lib/libc/sys/t_aio_lio, can be named in place of a directory, and only it runs.
 #
 # The console gets one "RB-CASE <dir>/<program>:<case>" line before each test case on NetBSD,
 # and the lines of kyua test on FreeBSD. After a panic, the last of them names the test that was
 # running.
 #
 # OUT/counts gets one line "passed/total". These settings come from rb.conf:
-#   rb_tests_only        run only these directories, separated by spaces
+#   rb_tests_only        run only these directories or test programs, separated by spaces
 #   rb_tests_except      run every top-level directory but these
 #   rb_kyua_parallelism  kyua's parallelism, default 2 (plan 12.2)
 # The host tests set RB_TESTS to use another directory than /usr/tests.
@@ -85,9 +86,17 @@ elif [ -f $tests/Atffile ]; then
 			f=$d@$n
 		done
 		mkdir -p "$(dirname "$out/atf/$f")"
-		(cd "$tests/$d" && atf-run 2> "$out/atf/$f.err") |
+		# A test program, such as lib/libc/sys/t_aio_lio, runs alone from its directory.
+		dir=$d
+		prog=
+		if [ ! -d "$tests/$d" ]; then
+			dir=$(dirname "$d")
+			prog=$(basename "$d")
+		fi
+		# shellcheck disable=SC2086
+		(cd "$tests/$dir" && atf-run $prog 2> "$out/atf/$f.err") |
 			tee "$out/atf/$f.tps" |
-			awk -F', ' -v d="$d" '
+			awk -F', ' -v d="$dir" '
 				/^tp-start: / { p = $2 }
 				/^tc-start: / { print "RB-CASE " d "/" p ":" $2; fflush() }'
 		atf-report -o "xml:$out/atf/$f.xml" < "$out/atf/$f.tps" > /dev/null 2>&1
