@@ -1818,15 +1818,28 @@ jobs:
             --set vm=2-vcpu-8g --set "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --set "date=$(date -u +%Y-%m-%d)" --set "dirs=$dirs" "${tps[@]}"
           awk -F '\t' '$3 == "failed" { print $1 "\t" $2 }' "out/$name.cases.tsv" > "out/$name.failed"
-          bases=("results/netbsd/$NB_PIN_NAME-$NB_PIN_SHORT/amd64/"g-*.counts)
-          base=${bases[-1]:-}
+          # With nullglob, a pin with no G counts gives an empty array, and bash refuses
+          # an index into an empty array. So the length is tested first.
+          results="results/netbsd/$NB_PIN_NAME-$NB_PIN_SHORT/amd64"
+          bases=("$results/"g-*.counts)
+          base=
+          if [ ${#bases[@]} -gt 0 ]; then
+            base=${bases[${#bases[@]}-1]}
+          fi
           {
             echo "### ATF: R (the rucc kernel on G's world) against G"
             echo
             echo "Directories run: $dirs"
             echo
             if [ -z "$base" ]; then
-              echo "There are no G counts for this pin in results/netbsd."
+              echo "There are no G counts for $RB_PIN in \`$results\`, so this step compares the R counts with nothing."
+              echo "The rb test steps below compare the ATF shards of this run with the GG shards of g_run."
+              echo
+              echo "R counts:"
+              echo
+              echo '```'
+              cat "out/$name.counts"
+              echo '```'
               exit 0
             fi
             echo "G: \`$base\`"
