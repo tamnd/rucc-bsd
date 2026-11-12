@@ -6,10 +6,10 @@
 #
 # With RB_RUCC_BIN set, rucc.sh installs that rucc and does not build one.
 # The source of rucc is in /build/rucc-src, copied in by the host. cargo fetches the crates of
-# Cargo.lock from crates.io through the network of the VM, and then builds offline. Rust is the rust package of the DragonFly package
-# repository, as rustup has no host toolchain for DragonFly. /usr/local of the live system is on
-# its root disk, which has little free space, so the packages go to /build/local, which is mounted
-# on /usr/local with mount_null.
+# Cargo.lock from crates.io through the network of the VM, and then builds offline. Rust is the
+# rust package of the DragonFly package repository, as rustup has no host toolchain for
+# DragonFly. /usr/local of the live system is on its root disk, which has little free space, so
+# the packages go to /build/local, which is mounted on /usr/local with mount_null.
 #
 # compilers.conf gets CCVER_CC, CCVER_GCC and CCVER_CPP for rucc. In the world stage of buildworld,
 # the cc script of /usr/libexec/custom sets INCPREFIX to the world tree. rucc gets STD_INCOPT of
@@ -18,11 +18,12 @@
 # cross-tools does. These options are in CCVER_CFLAGS and CCVER_CPPFLAGS, because the cc script
 # also gives CCVER_INCOPT to C++. C++ stays with the reference, as in the R builds of FreeBSD and
 # NetBSD: the c++ of gcc80 in the cross-tools of the build, with no options, which is what the G
-# build runs. Outside a build it is the c++ of the base system. OUTDIR/rucc.txt records the
-# versions and the entry.
+# build runs. The GCC is that of RB_CCVER_REF, gcc80 by default. Outside a build it is the c++ of
+# the base system. OUTDIR/rucc.txt records the versions and the entry.
 set -eu
 out=$1
 ccver=$2
+ref=${RB_CCVER_REF:-gcc80}
 : "${RB_JOBS:=$(sysctl -n hw.ncpu)}"
 bin=/build/rb/bin
 mkdir -p "$out" "$bin"
@@ -149,9 +150,9 @@ chmod 755 "$bin/rucc-cpp"
 touch /etc/compilers.conf
 sed -i '' -e "/^${ccver}_/d" /etc/compilers.conf
 cat >> /etc/compilers.conf <<EOF
-${ccver}_GCCDIR=/usr/libexec/gcc80
-if [ -x "\${INCPREFIX}/../ctools_x86_64_x86_64/usr/libexec/gcc80/c++" ]; then
-	${ccver}_GCCDIR="\${INCPREFIX}/../ctools_x86_64_x86_64/usr/libexec/gcc80"
+${ccver}_GCCDIR=/usr/libexec/$ref
+if [ -x "\${INCPREFIX}/../ctools_x86_64_x86_64/usr/libexec/$ref/c++" ]; then
+	${ccver}_GCCDIR="\${INCPREFIX}/../ctools_x86_64_x86_64/usr/libexec/$ref"
 fi
 ${ccver}_CC=$bin/rucc
 ${ccver}_GCC=$bin/rucc

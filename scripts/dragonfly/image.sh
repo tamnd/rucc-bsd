@@ -3,7 +3,7 @@
 #
 #   image.sh
 #
-# Environment: RB_SRC, RB_OBJ, RB_OUT, RB_KERNCONF and RB_CCVER as for build.sh, and
+# Environment: RB_SRC, RB_OBJ, RB_OUT, RB_KERNCONF, RB_CCVER and RB_CCVER_REF as for build.sh, and
 #   RB_HARNESS   this repository, copied into the VM
 #   RB_DESTDIR   the staging tree
 #   RB_IMAGE     the raw image to write
@@ -22,6 +22,9 @@ set -eu
 : "${RB_KERNCONF:=X86_64_GENERIC}"
 : "${RB_CCVER:=}"
 : "${RB_IMAGE_SIZE:=8G}"
+# shellcheck source=scripts/dragonfly/ccver.sh
+. "$RB_HARNESS/scripts/dragonfly/ccver.sh"
+ccver_make=$(rb_ccver_make)
 export MAKEOBJDIRPREFIX="$RB_OBJ"
 guest="$RB_HARNESS/scripts/dragonfly/guest"
 d="$RB_DESTDIR"
@@ -44,7 +47,7 @@ mkdir -p "$d"
 for target in installworld installkernel; do
 	# shellcheck disable=SC2086
 	if ! env ${RB_CCVER:+WORLD_CCVER=$RB_CCVER} make -C "$RB_SRC" "$target" DESTDIR="$d" \
-		KERNCONF="$RB_KERNCONF" __MAKE_CONF=/dev/null >> "$RB_OUT/install.log" 2>&1; then
+		KERNCONF="$RB_KERNCONF" __MAKE_CONF=/dev/null $ccver_make >> "$RB_OUT/install.log" 2>&1; then
 		tail -60 "$RB_OUT/install.log"
 		exit 1
 	fi

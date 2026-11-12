@@ -4,10 +4,13 @@
 # builds rucc in the VM from a commit of tamnd/rucc, and adds rucc to /etc/compilers.conf as the
 # CCVER of the ccver input. The job then builds the pinned, unmodified tree with
 #
-#   env WORLD_CCVER=<ccver> make -j4 buildworld
-#   env WORLD_CCVER=<ccver> make -j4 buildkernel KERNCONF=X86_64_GENERIC
+#   env WORLD_CCVER=<ccver> make -j4 buildworld <variables>
+#   env WORLD_CCVER=<ccver> make -j4 buildkernel KERNCONF=X86_64_GENERIC <variables>
 #
-# which is how compilers.conf(5) builds the system with a compiler that is not in base. rucc
+# which is how compilers.conf(5) builds the system with a compiler that is not in base. The CCVER
+# starts with the name of the reference CCVER (ref), and the variables of scripts/dragonfly/ccver.sh
+# give it the rest of the configuration of the reference (open question 10). The make variables
+# step stops the job if the configuration is not that of the reference. rucc
 # compiles the C. C++ stays with the reference g++ of the release. scripts/dragonfly/image.sh then
 # makes a test image of the build, and scripts/dragonfly/boot.sh boots it and runs the smoke suite.
 # The build record is the artifact, with rucc.txt for the versions and the compilers.conf entry, and
@@ -37,9 +40,13 @@ on:
         required: false
         default: main
       ccver:
-        description: The CCVER of rucc in compilers.conf
+        description: The CCVER of rucc in compilers.conf. It starts with the name of the reference CCVER.
         required: false
-        default: rucc80
+        default: gcc80rucc
+      ref:
+        description: The reference CCVER of the pin, gcc80 for 6.4 and gcc120 for master
+        required: false
+        default: gcc80
       stop:
         description: Stop after provision, after rucc is installed, or after the R build and its boot, or run all stages with the self-build
         type: choice
@@ -56,14 +63,15 @@ permissions:
 env:
   RB_PIN: ${{ inputs.pin || '6.4.2' }}
   RB_STOP: ${{ inputs.stop || 'all' }}
-  RB_CCVER: ${{ inputs.ccver || 'rucc80' }}
+  RB_CCVER: ${{ inputs.ccver || 'gcc80rucc' }}
+  RB_CCVER_REF: ${{ inputs.ref || 'gcc80' }}
   RB_CACHE: /mnt/rb-cache
   RB_VM_DIR: /mnt/rb-builder
   # The command environment of the scripts in the builder VM. The shell of root there is csh, so
   # the commands start with env.
   VM_ENV: >-
     RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
-    RB_CCVER=${{ inputs.ccver || 'rucc80' }}
+    RB_CCVER=${{ inputs.ccver || 'gcc80rucc' }} RB_CCVER_REF=${{ inputs.ref || 'gcc80' }}
 
 jobs:
   build:
@@ -127,9 +135,9 @@ jobs:
           scripts/dragonfly/builder.sh ssh 'mkdir -p /build/src && tar -xf - -C /build/src' < "$archive"
           scripts/dragonfly/builder.sh put record/source.txt /root/out/source.txt
           scripts/dragonfly/builder.sh ssh 'du -sh /build/src; df -h /build'
-      - name: the make variables of gcc80 and ${{ env.RB_CCVER }}
+      - name: the make variables of ${{ env.RB_CCVER_REF }} and ${{ env.RB_CCVER }}
         if: env.RB_STOP == 'all' || env.RB_STOP == 'build'
-        run: scripts/dragonfly/builder.sh ssh "env $VM_ENV sh /root/harness/scripts/dragonfly/mkdiff.sh /root/out gcc80 $RB_CCVER"
+        run: scripts/dragonfly/builder.sh ssh "env $VM_ENV sh /root/harness/scripts/dragonfly/mkdiff.sh /root/out $RB_CCVER_REF $RB_CCVER"
       - name: buildworld
         if: env.RB_STOP == 'all' || env.RB_STOP == 'build'
         run: scripts/dragonfly/builder.sh ssh "env $VM_ENV sh /root/harness/scripts/dragonfly/build.sh world"
@@ -167,7 +175,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "### DragonFly $RB_PIN, R with CCVER=$RB_CCVER"
+            echo "### DragonFly $RB_PIN, R with CCVER=$RB_CCVER as $RB_CCVER_REF"
             echo
             if [ -f record/source.txt ]; then
               echo "Source: \`$(cut -f3,4 record/source.txt | tr '\t' ' ')\`"
@@ -195,7 +203,7 @@ jobs:
             fi
             if [ -f record/mk-diff.txt ]; then
               echo '```'
-              cat record/mk-diff.txt
+              cat record/mk-diff-name.txt record/mk-diff.txt
               echo '```'
             fi
             if [ -f record/rucc.txt ]; then
