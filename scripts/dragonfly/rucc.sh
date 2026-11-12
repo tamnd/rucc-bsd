@@ -48,7 +48,7 @@ else
 			env ASSUME_ALWAYS_YES=yes pkg install -y security/openssl &&
 			env ASSUME_ALWAYS_YES=yes pkg upgrade -y ftp/curl &&
 			env ASSUME_ALWAYS_YES=yes pkg install -y lang/rust &&
-			old=$( (pkg shlib -qR libssl.so.12 2>/dev/null || true) | tr '\n' ' ') &&
+			old=$( (pkg shlib -qR libssl.so.12 2>/dev/null || true) | sed 's/-[^-]*$//' | tr '\n' ' ') &&
 			echo "packages that need libssl.so.12: $old" &&
 			if [ -n "$old" ]; then
 				# shellcheck disable=SC2086
