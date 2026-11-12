@@ -11,12 +11,15 @@
 # its root disk, which has little free space, so the packages go to /build/local, which is mounted
 # on /usr/local with mount_null.
 #
-# compilers.conf gets CCVER_CC, CCVER_GCC and CCVER_CPP for rucc. C++ stays with the reference
-# g++ of the release, as in the R builds of FreeBSD and NetBSD. The include options are those of
-# the base compilers: STD_INCOPT of /etc/defaults/compilers.conf. In the world stage of buildworld,
-# the cc script of /usr/libexec/custom sets INCPREFIX to the world tree, so --sysroot of the same
-# value makes rucc link with the crt files and libraries of the world tree, as the gcc80 of the
-# cross-tools does. OUTDIR/rucc.txt records the versions and the entry.
+# compilers.conf gets CCVER_CC, CCVER_GCC and CCVER_CPP for rucc. In the world stage of buildworld,
+# the cc script of /usr/libexec/custom sets INCPREFIX to the world tree. rucc gets STD_INCOPT of
+# /etc/defaults/compilers.conf, the include options of the base compilers, and --sysroot of the
+# world tree, so it links with the crt files and libraries of the world tree, as the gcc80 of the
+# cross-tools does. These options are in CCVER_CFLAGS and CCVER_CPPFLAGS, because the cc script
+# also gives CCVER_INCOPT to C++. C++ stays with the reference, as in the R builds of FreeBSD and
+# NetBSD: the c++ of gcc80 in the cross-tools of the build, with no options, which is what the G
+# build runs. Outside a build it is the c++ of the base system. OUTDIR/rucc.txt records the
+# versions and the entry.
 set -eu
 out=$1
 ccver=$2
@@ -52,14 +55,19 @@ chmod 755 "$bin/rucc-cpp"
 touch /etc/compilers.conf
 sed -i '' -e "/^${ccver}_/d" /etc/compilers.conf
 cat >> /etc/compilers.conf <<EOF
+${ccver}_GCCDIR=/usr/libexec/gcc80
+if [ -x "\${INCPREFIX}/../ctools_x86_64_x86_64/usr/libexec/gcc80/c++" ]; then
+	${ccver}_GCCDIR="\${INCPREFIX}/../ctools_x86_64_x86_64/usr/libexec/gcc80"
+fi
 ${ccver}_CC=$bin/rucc
 ${ccver}_GCC=$bin/rucc
 ${ccver}_CPP=$bin/rucc-cpp
-${ccver}_CXX=/usr/libexec/gcc80/c++
-${ccver}_GXX=/usr/libexec/gcc80/g++
-${ccver}_INCOPT="\${STD_INCOPT}"
-${ccver}_CFLAGS="--sysroot=\${INCPREFIX}"
-${ccver}_INCOPTCXX="-isystem /usr/include/c++/8.0"
+${ccver}_CXX=\${${ccver}_GCCDIR}/c++
+${ccver}_GXX=\${${ccver}_GCCDIR}/g++
+${ccver}_INCOPT=
+${ccver}_INCOPTCXX=
+${ccver}_CFLAGS="--sysroot=\${INCPREFIX} \${STD_INCOPT}"
+${ccver}_CPPFLAGS="--sysroot=\${INCPREFIX} \${STD_INCOPT}"
 EOF
 
 {
