@@ -296,10 +296,16 @@ fn freebsd(
         })
         .ok_or("the reference toolchain and what it needs have no cross_prefix")?;
     config.ref_as = PathBuf::from(format!("{prefix}as"));
-    Ok(["rb-cc-rucc", "rb-cc-ref", "rb-c++", "rb-cpp", "rb-as"]
+    // XLD. The name is plain `ld` beside XCC, so that bsd.sys.mk and kern.mk do not try to give
+    // GCC a -fuse-ld= (see rb_shim::link for what the slot does).
+    config.ref_ld = PathBuf::from(format!("{prefix}ld"));
+    config.names.insert("ld".to_string(), "ld".to_string());
+    let mut names: Vec<String> = ["rb-cc-rucc", "rb-cc-ref", "rb-c++", "rb-cpp", "rb-as"]
         .iter()
         .map(|n| format!("{target}-{n}"))
-        .collect())
+        .collect();
+    names.push("ld".to_string());
+    Ok(names)
 }
 
 /// NetBSD: the compilers of the `TOOLDIR` that `build.sh tools` made, under the names `TOOLDIR`
@@ -557,6 +563,13 @@ mod tests {
         assert_eq!(
             shims.config.ref_as,
             Path::new("/usr/local/x86_64-unknown-freebsd15.1/bin/as")
+        );
+        // rucc-bsd#37: XLD is the ld slot, which runs the reference linker.
+        assert_eq!(shims.names.last().map(String::as_str), Some("ld"));
+        assert_eq!(shims.config.names.get("ld").map(String::as_str), Some("ld"));
+        assert_eq!(
+            shims.config.ref_ld,
+            Path::new("/usr/local/x86_64-unknown-freebsd15.1/bin/ld")
         );
         assert_eq!(shims.config.side, None);
         assert!(!shims.config.rucc_cpp);

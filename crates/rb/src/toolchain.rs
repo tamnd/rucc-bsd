@@ -42,6 +42,7 @@ pub fn freebsd_mk(bin: &str, target: &str, cross_prefix: &str, side: Side) -> St
         "XCC={bin}/{target}-{cc}\n\
          XCXX={bin}/{target}-rb-c++\n\
          XCPP={bin}/{target}-rb-cpp\n\
+         XLD={bin}/ld\n\
          CROSS_BINUTILS_PREFIX={cross_prefix}\n\
          X_COMPILER_TYPE=gcc\n"
     );
@@ -378,6 +379,20 @@ pub fn diff_freebsd(
                 expected.target
             ));
         }
+    }
+    // XLD is the ld slot of the shim, named ld beside XCC (rucc-bsd#37).
+    let path = |key: &str| {
+        g_map
+            .get(key)
+            .map(|v| PathBuf::from(expand(&g_text, v)))
+            .unwrap_or_default()
+    };
+    let (xld, xcc) = (path("XLD"), path("XCC"));
+    if xld.file_name().is_none_or(|n| n != "ld") || xld.parent() != xcc.parent() {
+        wrong.push(format!(
+            "XLD is {}, not the shim named ld beside XCC",
+            xld.display()
+        ));
     }
     checks.push(Check::new(
         "the compiler type, the binutils and the shim names are those of toolchains.toml",
@@ -821,6 +836,8 @@ mod tests {
         assert_eq!(changed.len(), 1);
         assert!(changed[0].0.starts_with("XCC="));
         assert!(r.contains("XCC=/rb/bin/x86_64-unknown-freebsd15.1-rb-cc-rucc\n"));
+        // rucc-bsd#37: the kernel links through the ld slot of the shim on both sides.
+        assert!(g.contains("XLD=/rb/bin/ld\n") && r.contains("XLD=/rb/bin/ld\n"));
     }
 
     #[test]

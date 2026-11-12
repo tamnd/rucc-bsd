@@ -6,5 +6,6 @@ RB_SHIMS?=/usr/local/rb/bin
 XCC=${RB_SHIMS}/x86_64-unknown-freebsd15.1-rb-cc-rucc
 XCXX=${RB_SHIMS}/x86_64-unknown-freebsd15.1-rb-c++
 XCPP=${RB_SHIMS}/x86_64-unknown-freebsd15.1-rb-cpp
+XLD=${RB_SHIMS}/ld
 CROSS_BINUTILS_PREFIX=/usr/local/x86_64-unknown-freebsd15.1/bin/
 X_COMPILER_TYPE=gcc
