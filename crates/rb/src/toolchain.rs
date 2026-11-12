@@ -248,9 +248,13 @@ fn bringup_check(label: &str, config: &ShimConfig, ungraded: bool) -> Check {
     )
 }
 
-/// Whether the shims' rucc is the pinned release, or `--ungraded` allows another.
+/// Whether the shims' rucc is the pinned release or a build of the pinned commit, or
+/// `--ungraded` allows another.
 fn rucc_check(label: &str, rucc: &Path, pin: Option<&RuccPin>, ungraded: bool) -> Check {
-    let what = format!("{label}: rucc is the pinned release");
+    let what = format!(
+        "{label}: rucc is the pinned {}",
+        pin.map_or_else(|| "release".to_string(), RuccPin::name)
+    );
     if rucc.as_os_str().is_empty() {
         return Check::new(what, vec!["rb-shim.toml names no rucc".into()]);
     }
@@ -258,23 +262,26 @@ fn rucc_check(label: &str, rucc: &Path, pin: Option<&RuccPin>, ungraded: bool) -
         Ok(d) => d,
         Err(e) => return Check::new(what, vec![e]),
     };
-    match pin.and_then(|p| p.host_of(&digest)) {
-        Some(_) => Check::new(what, Vec::new()),
-        None if ungraded => Check::new(
+    let why = match pin {
+        Some(p) => match shims::pinned_as(rucc, &digest, p) {
+            Ok(_) => return Check::new(what, Vec::new()),
+            Err(e) => e,
+        },
+        None => "toolchains.toml has no [rucc] pin".to_string(),
+    };
+    if ungraded {
+        return Check::new(
             format!(
-                "{label}: rucc {} (sha256 {digest}) is not the pinned release; --ungraded allows it",
+                "{label}: rucc {} (sha256 {digest}) is not the pinned rucc; --ungraded allows it",
                 rucc.display()
             ),
             Vec::new(),
-        ),
-        None => Check::new(
-            what,
-            vec![format!(
-                "{} has sha256 {digest}, which is not in [rucc.binary_sha256]; pass --ungraded to build with it anyway",
-                rucc.display()
-            )],
-        ),
+        );
     }
+    Check::new(
+        what,
+        vec![format!("{why}; pass --ungraded to build with it anyway")],
+    )
 }
 
 /// Read the lines of a make file as `NAME=value` pairs, in order. Comments and blank lines and

@@ -117,7 +117,7 @@ fn freebsd_shims_run_rucc_with_the_persona_and_record_its_objects() {
         text.contains("--target=x86_64-unknown-freebsd15.1 -fgnuc-version=15.2.0"),
         "{text}"
     );
-    assert!(text.contains("not the pinned v0.30.15"), "{text}");
+    assert!(text.contains(", not the pinned "), "{text}");
     let config = std::fs::read_to_string(dir.join("rb-shim.toml")).unwrap();
     assert!(
         config.contains("x86_64-unknown-freebsd15.1-gcc15"),
@@ -215,6 +215,61 @@ fn netbsd_shims_need_the_tools_and_a_side() {
         ],
     );
     assert!(!ok && text.contains("/no/such/rucc"), "{text}");
+    std::fs::remove_dir_all(&top).ok();
+}
+
+#[test]
+fn a_build_of_the_pinned_commit_is_graded() {
+    let top = rig("fbsd-commit");
+    let (binary, _) = shim(&top);
+    let commit = "c98a18353e13e72e7579282ff66dfdeeb3f15bed";
+    let file = top.join("repo/toolchains.toml");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let (head, _) = text.split_once("\n[rucc]").unwrap();
+    std::fs::write(
+        &file,
+        format!(
+            "{head}\n[rucc]\nrepo = \"tamnd/rucc\"\ncommit = \"{commit}\"\ncommand = \"rucc\"\n"
+        ),
+    )
+    .unwrap();
+    let dir = top.join("tc");
+    let make = [
+        "toolchain",
+        "freebsd-15.1",
+        "--dir",
+        dir.to_str().unwrap(),
+        "--shim",
+        binary.to_str().unwrap(),
+    ];
+    let (ok, text) = rb(&top, &make);
+    assert!(
+        !ok && text.contains("has no") && text.contains("pass --ungraded"),
+        "{text}"
+    );
+    let rucc = top.join("repo/bin/rucc");
+    let digest = rb_pins::fetch::sha256(&rucc).unwrap();
+    let source = top.join("repo/bin/rucc.source");
+    let write = |commit: &str, sha256: &str| {
+        let text = format!("repo = \"tamnd/rucc\"\ncommit = \"{commit}\"\nsha256 = \"{sha256}\"\n");
+        std::fs::write(&source, text).unwrap();
+    };
+    write(commit, &digest);
+    let (ok, text) = rb(&top, &make);
+    assert!(ok, "{text}");
+    assert!(
+        text.contains(&format!("built from the pinned tamnd/rucc {commit}")),
+        "{text}"
+    );
+    write(commit, "00");
+    let (ok, text) = rb(&top, &make);
+    assert!(!ok && text.contains("sha256 00, the binary has"), "{text}");
+    write(&"0".repeat(40), &digest);
+    let (ok, text) = rb(&top, &make);
+    assert!(
+        !ok && text.contains(&format!("the pin is {commit}")),
+        "{text}"
+    );
     std::fs::remove_dir_all(&top).ok();
 }
 

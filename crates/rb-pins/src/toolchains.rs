@@ -18,18 +18,22 @@ pub const PERSONAS: &str = "personas.toml";
 pub struct Toolchains {
     /// The toolchains by name.
     pub toolchain: BTreeMap<String, Toolchain>,
-    /// The rucc release that R builds with when no other rucc is named.
+    /// The rucc that R builds with when no other rucc is named.
     pub rucc: Option<RuccPin>,
 }
 
-/// The pinned rucc release: where it comes from, and the digests of its tarballs and binaries.
+/// The pinned rucc: a release, with the digests of its tarballs and binaries, or a commit that is
+/// built from source.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuccPin {
-    /// The GitHub repository of the release.
+    /// The GitHub repository of the release or the commit.
     pub repo: String,
-    /// The release tag, such as `v0.30.15`.
+    /// The release tag, such as `v0.30.15`. Empty when `commit` pins rucc.
+    #[serde(default)]
     pub version: String,
+    /// The full commit of `repo` that is built from source, in place of a release.
+    pub commit: Option<String>,
     /// The command `rb` runs when neither `--rucc` nor `RB_RUCC` names one, looked up on `PATH`
     /// when it has no slash.
     pub command: String,
@@ -42,6 +46,35 @@ pub struct RuccPin {
 }
 
 impl RuccPin {
+    /// The name of the pin in a report: `commit` and the hash, or the release tag.
+    #[must_use]
+    pub fn name(&self) -> String {
+        match &self.commit {
+            Some(c) => format!("commit {c}"),
+            None => self.version.clone(),
+        }
+    }
+
+    /// Check that the pin names a release or a full commit, and not both.
+    ///
+    /// # Errors
+    ///
+    /// When both or neither are given, or when the commit is not 40 lowercase hex digits.
+    pub fn check(&self) -> Result<(), String> {
+        match (&self.commit, self.version.is_empty()) {
+            (Some(_), false) => Err("[rucc] gives both version and commit; give one".into()),
+            (None, true) => Err("[rucc] gives no version and no commit".into()),
+            (Some(c), true)
+                if c.len() != 40 || !c.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
+            {
+                Err(format!(
+                    "[rucc] commit {c} is not a full commit of 40 lowercase hex digits"
+                ))
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// The release asset for a host triple.
     #[must_use]
     pub fn asset(&self, host: &str) -> String {
@@ -139,6 +172,9 @@ impl Toolchains {
     /// Parse the text of `toolchains.toml` and check that every `needs` names a toolchain.
     pub fn parse(text: &str) -> Result<Self, String> {
         let file: Self = toml::from_str(text).map_err(|e| format!("{TOOLCHAINS}: {e}"))?;
+        if let Some(rucc) = &file.rucc {
+            rucc.check().map_err(|e| format!("{TOOLCHAINS}: {e}"))?;
+        }
         for (name, t) in &file.toolchain {
             for need in &t.needs {
                 if !file.toolchain.contains_key(need) {
@@ -550,6 +586,26 @@ binutils = "2.46"
         );
         assert_eq!(rucc.host_of("ab"), Some("x86_64-unknown-linux-gnu"));
         assert_eq!(rucc.host_of("cd"), None);
+        assert_eq!(rucc.name(), "v0.30.15");
+    }
+
+    #[test]
+    fn a_rucc_pin_is_a_release_or_a_full_commit() {
+        let head = "[toolchain]\n\n[rucc]\nrepo = \"tamnd/rucc\"\ncommand = \"rucc\"\n";
+        let commit = "c98a18353e13e72e7579282ff66dfdeeb3f15bed";
+        let file = Toolchains::parse(&format!("{head}commit = \"{commit}\"\n")).unwrap();
+        let rucc = file.rucc.unwrap();
+        assert_eq!(rucc.commit.as_deref(), Some(commit));
+        assert_eq!(rucc.name(), format!("commit {commit}"));
+        let both = format!("{head}version = \"v0.30.15\"\ncommit = \"{commit}\"\n");
+        assert!(Toolchains::parse(&both).unwrap_err().contains("both"));
+        assert!(Toolchains::parse(head).unwrap_err().contains("no version"));
+        let short = format!("{head}commit = \"c98a1835\"\n");
+        assert!(
+            Toolchains::parse(&short)
+                .unwrap_err()
+                .contains("40 lowercase")
+        );
     }
 
     #[test]
