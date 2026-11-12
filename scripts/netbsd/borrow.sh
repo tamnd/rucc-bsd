@@ -10,8 +10,10 @@
 #   borrowed  each path of the base set of RSETS that the base set of CSETS does not have. These
 #             are ATF, kyua, lutok and the C++ libraries that they need.
 # The borrowed set also has etc/mtree/set.borrowed. It has a line for each borrowed path that no
-# mtree file of the etc set of CSETS has, from the mtree files of the etc set of RSETS. The
-# directories are in NetBSD.dist and the files in set.base and set.tests. The keywords of /set
+# mtree file of the sets of CSETS has, from the mtree files of the sets of RSETS. The directories
+# are in NetBSD.dist and the files in set.base and set.tests. Each set has its own
+# etc/mtree/set.NAME (distrib/sets/lists/base/mi has ./etc/mtree/set.base), and the etc set has
+# NetBSD.dist, so the script takes etc/mtree/* from each set. The keywords of /set
 # are written out in each line, so the line means what it meant in its own file. The live image
 # makes the makefs spec from etc/mtree/*, and makefs leaves out each path that the spec does not
 # name, so the borrowed paths need these lines.
@@ -36,6 +38,18 @@ set_file() {
 	done
 	echo "borrow.sh: $1 has no $2 set" >&2
 	return 1
+}
+
+# Extract the etc/mtree files of each set of directory $1 into directory $2.
+mtree_files() {
+	local f
+	for f in "$1"/*.tgz "$1"/*.tar.xz; do
+		if [ ! -f "$f" ]; then
+			continue
+		fi
+		tar -tf "$f" | grep -E '^(\./)?etc/mtree/[^/]+$' > "$tmp/members" || continue
+		tar -xf "$f" -C "$2" -T "$tmp/members"
+	done
 }
 
 # The paths of a set, each as ./PATH with no / at the end.
@@ -69,11 +83,11 @@ LC_ALL=C comm -23 "$tmp/r-base" "$tmp/c-base" > "$tmp/base"
 paths "$rtests" > "$tmp/tests"
 
 mkdir "$tmp/r-etc" "$tmp/c-etc" "$tmp/root"
-tar -xf "$(set_file "$r" etc)" -C "$tmp/r-etc"
-tar -xf "$(set_file "$c" etc)" -C "$tmp/c-etc"
+mtree_files "$r" "$tmp/r-etc"
+mtree_files "$c" "$tmp/c-etc"
 for f in NetBSD.dist set.base set.tests; do
 	if [ ! -f "$tmp/r-etc/etc/mtree/$f" ]; then
-		echo "borrow.sh: the etc set of $r has no etc/mtree/$f" >&2
+		echo "borrow.sh: no set of $r has etc/mtree/$f" >&2
 		exit 1
 	fi
 done

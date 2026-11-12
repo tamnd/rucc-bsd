@@ -79,7 +79,8 @@ const C_DIST: &str = "\
 ";
 
 /// The sets of the graded R build and of the c-only build. The R base set has ATF, its hooks
-/// and libstdc++, which the c-only base set does not have.
+/// and libstdc++, which the c-only base set does not have. As in NetBSD, each set has its own
+/// etc/mtree/set.NAME, and the etc set has `NetBSD.dist`.
 fn fake_sets(rsets: &Path, csets: &Path) {
     std::fs::create_dir_all(rsets).unwrap();
     std::fs::create_dir_all(csets).unwrap();
@@ -100,46 +101,33 @@ fn fake_sets(rsets: &Path, csets: &Path) {
             ("usr/share/misc/x", "x"),
             ("usr/lib/libstdc++.so.9", "libstdc++"),
             ("usr/share/atf/atf-run.hooks", "hooks"),
+            ("etc/mtree/set.base", &r_base_spec),
         ],
     );
     set(
         rsets,
         "tests",
-        &[(
-            "usr/tests/Atffile",
-            "Content-Type: application/X-atf-atffile",
-        )],
-    );
-    set(
-        rsets,
-        "etc",
         &[
-            ("etc/mtree/NetBSD.dist", R_DIST),
-            ("etc/mtree/set.base", &r_base_spec),
+            (
+                "usr/tests/Atffile",
+                "Content-Type: application/X-atf-atffile",
+            ),
             ("etc/mtree/set.tests", r_tests_spec),
         ],
     );
+    set(rsets, "etc", &[("etc/mtree/NetBSD.dist", R_DIST)]);
+    let c_base_spec =
+        format!("./usr/bin/ls {file}\n./usr/lib/libc.so.12 {file}\n./usr/share/misc/x {file}\n");
     let c_base = [
         ("usr/bin/ls", "ls"),
         ("usr/lib/libc.so.12", "libc"),
         ("usr/share/misc/x", "x"),
+        ("etc/mtree/set.base", &c_base_spec),
     ];
     set(csets, "base", &c_base);
     set(csets, "comp", &[("usr/lib/libc.a", "libc")]);
     set(csets, "kern-GENERIC", &[("netbsd", "kernel")]);
-    set(
-        csets,
-        "etc",
-        &[
-            ("etc/mtree/NetBSD.dist", C_DIST),
-            (
-                "etc/mtree/set.base",
-                &format!(
-                    "./usr/bin/ls {file}\n./usr/lib/libc.so.12 {file}\n./usr/share/misc/x {file}\n"
-                ),
-            ),
-        ],
-    );
+    set(csets, "etc", &[("etc/mtree/NetBSD.dist", C_DIST)]);
 }
 
 fn borrow(rsets: &Path, csets: &Path, list: &Path) -> std::process::Output {
@@ -209,7 +197,7 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
         "base etc comp tests borrowed\n"
     );
     assert!(
-        stderr.contains("3 paths of the tests set and 4 of the base set"),
+        stderr.contains("6 paths of the tests set and 4 of the base set"),
         "{stderr}"
     );
 
@@ -222,7 +210,8 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
     let list = std::fs::read_to_string(&list).unwrap();
     assert_eq!(
         list,
-        "tests\t./usr\ntests\t./usr/tests\ntests\t./usr/tests/Atffile\nbase\t./usr/bin/atf-run\n\
+        "tests\t./etc\ntests\t./etc/mtree\ntests\t./etc/mtree/set.tests\ntests\t./usr\n\
+         tests\t./usr/tests\ntests\t./usr/tests/Atffile\nbase\t./usr/bin/atf-run\n\
          base\t./usr/lib/libstdc++.so.9\nbase\t./usr/share/atf\nbase\t./usr/share/atf/atf-run.hooks\n"
     );
 
