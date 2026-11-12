@@ -300,6 +300,65 @@ exit 0
     rig2.done();
 }
 
+/// A NetBSD release image: the shell after the login is at securelevel 1. rb-rc's `login` script
+/// installs rb-rc, prints `RB-LOGIN-REBOOT` and reboots. rb starts QEMU again, which is not one of
+/// `--reboots`, and rb-rc runs from /etc/rc at the next boot.
+#[test]
+fn a_login_that_installs_rb_rc_and_reboots() {
+    let body = r#"
+cr=$(printf '\r')
+line() {
+	s=
+	while c=$(dd bs=1 count=1 2> /dev/null) && [ -n "$c" ] && [ "$c" != "$cr" ]; do
+		s="$s$c"
+	done
+	echo "$s"
+}
+if [ ! -f "$here/installed" ]; then
+	printf '\nNetBSD/riscv (netbsd) (constty)\n\nlogin: '
+	user=$(line)
+	echo "$user"
+	printf 'NetBSD 11.1\n\nnetbsd# '
+	cmd=$(line)
+	echo "$cmd"
+	test -x "$here/in/rb/login" && test -x "$here/in/rb/rc" || exit 1
+	echo "RB-LOGIN-REBOOT 1"
+	touch "$here/installed"
+	exit 0
+fi
+echo "RB-READY NetBSD rb 11.1 riscv"
+echo "RB-CONF /dev/rld5c"
+mkdir -p "$here/out"
+for s in $rb_suites; do
+	echo "RB-SUITE $s"
+	echo "$s pass" >> "$here/out/suites"
+	echo "RB-SUITE-END $s pass"
+done
+tar -cf "$disk" -C "$here/out" .
+echo "RB-DONE boot=pass smoke=pass archive=disk"
+exit 0
+"#;
+    let mut rig = Rig::new("login-reboot", body);
+    rig.req.login = true;
+    rig.req.reboots = 0;
+    let o = boot::run(&rig.req).unwrap();
+    assert_eq!(o.result, "pass", "{o:?}");
+    assert!(o.seen.login_reboot && o.seen.ready.is_some(), "{o:?}");
+    assert_eq!(o.restarts, 1, "{o:?}");
+    assert_eq!(rig.file("run/results/suites"), "boot pass\nsmoke pass\n");
+
+    // A second RB-LOGIN-REBOOT does not start QEMU again.
+    let body = "echo RB-LOGIN-REBOOT 1\nexit 0\n";
+    let mut rig2 = Rig::new("login-reboot-twice", body);
+    rig2.req.login = true;
+    rig2.req.reboots = 0;
+    let o = boot::run(&rig2.req).unwrap();
+    assert_eq!(o.restarts, 1, "{o:?}");
+    assert_ne!(o.result, "pass", "{o:?}");
+    rig.done();
+    rig2.done();
+}
+
 #[test]
 fn results_on_the_console() {
     let body = r#"

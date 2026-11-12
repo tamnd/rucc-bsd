@@ -218,6 +218,7 @@ fn scripts_parse() {
         ("bench", guest::BENCH),
         ("foreign", guest::FOREIGN),
         ("smoke", guest::SMOKE),
+        ("login", guest::LOGIN),
     ] {
         let out = Command::new("sh")
             .args(["-n", "-c", text])
@@ -231,6 +232,71 @@ fn scripts_parse() {
     }
 }
 
+/// rb-rc's `login` script of `rb boot --login`, with stubs of uname, sysctl, sync and reboot. On
+/// NetBSD at securelevel 1 it installs rb-rc under `RB_LOGIN_ROOT` and reboots. On FreeBSD, and on
+/// NetBSD at level 0, it runs rb-rc from beside itself at once.
+#[test]
+fn login_installs_rb_rc_on_netbsd_at_securelevel_1() {
+    let top = std::env::temp_dir().join(format!("rb-image-login-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&top);
+    let tmp = top.join("tmp/rb");
+    let bin = top.join("bin");
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let exe = |path: &Path, text: &str| {
+        std::fs::write(path, text).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    exe(&tmp.join("login"), guest::LOGIN);
+    exe(&tmp.join("rc"), guest::RC_SCRIPT);
+    for name in ["modules", "bench", "foreign", "smoke", "tests"] {
+        exe(&tmp.join(name), "#!/bin/sh\n");
+    }
+    exe(
+        &tmp.join("run"),
+        "#!/bin/sh\necho \"RUN RB_LIBEXEC=$RB_LIBEXEC\"\n",
+    );
+    exe(&bin.join("sync"), "#!/bin/sh\n");
+    exe(&bin.join("reboot"), "#!/bin/sh\necho REBOOT\n");
+    let run = |system: &str, level: &str, root: &Path| {
+        exe(&bin.join("uname"), &format!("#!/bin/sh\necho {system}\n"));
+        exe(&bin.join("sysctl"), &format!("#!/bin/sh\necho {level}\n"));
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let out = Command::new("sh")
+            .arg(tmp.join("login"))
+            .env("PATH", path)
+            .env("RB_LOGIN_ROOT", root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+
+    let root = top.join("root");
+    std::fs::create_dir_all(root.join("etc")).unwrap();
+    std::fs::write(root.join("etc/rc.conf"), "rc_configured=YES\n").unwrap();
+    assert_eq!(run("NetBSD", "1", &root), "RB-LOGIN-REBOOT 1\nREBOOT\n");
+    assert_eq!(
+        std::fs::read_to_string(root.join("etc/rc.conf")).unwrap(),
+        "rc_configured=YES\nrb_enable=\"YES\"\nsecurelevel=-1\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("etc/rc.d/rb")).unwrap(),
+        guest::RC_SCRIPT
+    );
+    for name in ["run", "modules", "bench", "foreign", "smoke", "tests"] {
+        let meta = std::fs::metadata(root.join("usr/libexec/rb").join(name)).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o555, "{name}");
+    }
+
+    let none = top.join("none");
+    let want = format!("RUN RB_LIBEXEC={}\n", tmp.display());
+    assert_eq!(run("NetBSD", "0", &none), want);
+    assert_eq!(run("FreeBSD", "-1", &none), want);
+    assert!(!none.exists());
+    std::fs::remove_dir_all(&top).unwrap();
+}
+
 /// shellcheck, where the host has it. The GitHub runners for Linux do.
 #[test]
 fn shellcheck() {
@@ -241,6 +307,7 @@ fn shellcheck() {
         "guest/rb-rc/tests.sh",
         "guest/rb-rc/bench.sh",
         "guest/rb-rc/foreign.sh",
+        "guest/rb-rc/login.sh",
         "smoke/smoke.sh",
     ];
     let Ok(out) = Command::new("shellcheck")
