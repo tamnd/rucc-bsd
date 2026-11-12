@@ -14,7 +14,9 @@
 #   FreeBSD  in the builder VM, with the rb-cc-ref and rb-cc-rucc shims of rb toolchain. rucc is
 #            built from the head of tamnd/rucc main, as in freebsd-r.
 #   NetBSD   on the runner, with the cross GCC of build.sh tools from the cache of netbsd-g, and
-#            the rucc release of netbsd-r, over a sysroot of the base and comp sets.
+#            rucc built from the head of tamnd/rucc main, as netbsd-r runs with rucc=main, over a
+#            sysroot of the base and comp sets. The rucc release v0.30.15 does not know the
+#            target x86_64--netbsd.
 #
 # The boot jobs boot R, then G, RUNS times each (10 by default) on one runner: FreeBSD with
 # scripts/freebsd/boot.sh and the bench suite, NetBSD with rb bench. rb bench writes bench.tsv and
@@ -60,8 +62,6 @@ env:
   SCALE: ${{ inputs.scale || '1' }}
   ONLY: ${{ inputs.only || '' }}
   SYSTEMS: ${{ inputs.systems || 'both' }}
-  RUCC_VERSION: v0.30.15
-  RUCC_SHA256: 32e1cab992940f0563cb9e49bfc3c3ed23192e519ee277fdcf9edfefb8503ddb
   RB_VM_DIR: /mnt/rb-builder
   RB_CACHE: /mnt/rb-cache
   VM_ENV: >-
@@ -141,6 +141,7 @@ jobs:
           name: bench-freebsd-rb-bench
           path: rb-bench
           retention-days: 7
+          if-no-files-found: error
 
   freebsd:
     name: rb bench freebsd-15.1
@@ -224,7 +225,7 @@ jobs:
     name: rb-bench for NetBSD
     if: inputs.systems != 'freebsd'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7.0.1
       - name: work directory on /mnt
@@ -238,16 +239,12 @@ jobs:
             /mnt/nb/obj/tools
           key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
-      - name: rucc ${{ env.RUCC_VERSION }}
+      - name: rucc from tamnd/rucc main
         run: |
-          name="rucc-$RUCC_VERSION-x86_64-unknown-linux-gnu"
-          gh release download "$RUCC_VERSION" -R tamnd/rucc -p "$name.tar.gz" -D "$RUNNER_TEMP"
-          echo "$RUCC_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
-          echo "RUCC=$RUNNER_TEMP/$name/rucc" >> "$GITHUB_ENV"
-          echo "NetBSD: rucc $RUCC_VERSION, the release tarball." >> "$GITHUB_STEP_SUMMARY"
-        env:
-          GH_TOKEN: ${{ github.token }}
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          cargo build --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "RUCC=$RUNNER_TEMP/rucc-src/target/release/rucc" >> "$GITHUB_ENV"
+          echo "NetBSD: rucc built from tamnd/rucc main, commit $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD)." >> "$GITHUB_STEP_SUMMARY"
       - name: the sysroot, from the base and comp sets
         run: |
           set -o pipefail
@@ -261,6 +258,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - name: build rb-bench with each side's compiler
         run: |
+          set -o pipefail
           . conf/netbsd/trunk.pin
           gcc=$(find "$NB_ROOT/tools/bin" -maxdepth 1 -name '*--netbsd*-gcc' | head -1)
           gnu=$(basename "$gcc" -gcc)
@@ -271,6 +269,7 @@ jobs:
           name: bench-netbsd-rb-bench
           path: rb-bench
           retention-days: 7
+          if-no-files-found: error
 
   netbsd:
     name: rb bench netbsd
