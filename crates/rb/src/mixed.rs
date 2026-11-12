@@ -147,8 +147,10 @@ impl Verdict {
 pub enum Found {
     /// Unit k, from 1, is the object.
     Object(usize),
-    /// All of G's objects are not good, or all of R's not bad, so there is nothing to search.
+    /// All of G's objects are not good, so the link or the test is wrong.
     Ends(String),
+    /// All of R's objects are not bad, so there is nothing to find.
+    Nothing(String),
     /// The test could not tell at any step between `lo` R objects, good, and `hi`, bad.
     Untestable(usize, usize),
 }
@@ -179,7 +181,7 @@ pub fn bisect(
             "with all of R's objects the test says {}, so there is nothing to find",
             all_r.word()
         );
-        return Ok((steps, Found::Ends(why)));
+        return Ok((steps, Found::Nothing(why)));
     }
     let (mut lo, mut hi) = (0, n);
     let mut skipped = BTreeSet::new();
@@ -311,7 +313,7 @@ pub fn report(pairing: &Pairing, steps: &[(usize, Verdict, f64)], found: &Found)
                 o.argv.join(" ")
             );
         }
-        Found::Ends(why) => {
+        Found::Ends(why) | Found::Nothing(why) => {
             let _ = writeln!(s, "No search: {why}.\n");
         }
         Found::Untestable(lo, hi) => {
@@ -338,7 +340,8 @@ pub mod cli {
     use std::path::Path;
     use std::time::Instant;
 
-    /// Run `rb mixed`, and return the report and whether it found the object.
+    /// Run `rb mixed`, and return the report and whether the run is good: a dry run, or nothing to
+    /// find.
     pub fn run(args: &Args) -> Result<(String, bool), String> {
         let need = |key: &str| {
             args.get(key)
@@ -417,7 +420,9 @@ pub mod cli {
             .zip(timed)
             .map(|((k, v), t)| (*k, *v, t))
             .collect();
-        let ok = matches!(found, super::Found::Object(_));
+        // Nothing to find is a result. A found object, a wrong link or test, and a search that
+        // could not tell all exit 1.
+        let ok = matches!(found, super::Found::Nothing(_));
         Ok((report(&pairing, &steps, &found), ok))
     }
 }
@@ -459,7 +464,7 @@ mod tests {
         assert!(matches!(found, Found::Ends(w) if w.contains("link or the test is wrong")));
         let (steps, found) = search(10, 11);
         assert_eq!(steps, [0, 10]);
-        assert!(matches!(found, Found::Ends(w) if w.contains("nothing to find")));
+        assert!(matches!(found, Found::Nothing(w) if w.contains("nothing to find")));
     }
 
     #[test]

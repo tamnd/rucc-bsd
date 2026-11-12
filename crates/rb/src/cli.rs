@@ -570,8 +570,9 @@ usage:
       does. A mix that does not link counts as 125. RB_MIXED_R and RB_MIXED_UNITS give k and the
       count. All of G's objects must be good and all of R's bad. rb mixed does not run when the CTF
       of the two kernels K, read as rb ctf-diff reads them, has a named type that differs and that
-      --allow-types does not name. --dry-run pairs the objects and checks the CTF only. Exits 1 when
-      no object was found.
+      --allow-types does not name. --dry-run pairs the objects and checks the CTF only. Exits 0 when
+      there is nothing to find, because all of R's objects are good. Exits 1 when an object is
+      found, when all of G's objects are not good, or when the test cannot tell.
   rb mk-diff PIN [--row ROW] (--dir DIR | --g G [--r R]) [--src DIR] [--conf CONF]
           [--kernel DIR|G,R] [--work DIR] [--divergences FILE]
       Read the make variables that depend on the compiler, in G's and R's configuration, and
