@@ -37,12 +37,15 @@ else
 		cpdup -i0 -q /usr/local /build/local
 		mount_null /build/local /usr/local
 	fi
-	# Two packages of the repository have the name openssl: security/openssl (libssl.so.17) and
-	# security/openssl30 (libssl.so.12). rust and curl need the first, but the dependency of rust
-	# by name can install the second. So security/openssl is installed by its origin first.
+	# The live system has openssl 3.0 and curl in /usr/local. The rust package needs the
+	# libssl.so.17 of security/openssl and the libcurl of the repository. Two packages of the
+	# repository have the name openssl (security/openssl and security/openssl30), so pkg does not
+	# upgrade openssl for the dependency of rust. openssl is installed by its origin, and curl is
+	# upgraded with its dependencies, before rust.
 	if ! command -v cargo > /dev/null 2>&1; then
 		{
 			env ASSUME_ALWAYS_YES=yes pkg install -y security/openssl &&
+			env ASSUME_ALWAYS_YES=yes pkg upgrade -y ftp/curl &&
 			env ASSUME_ALWAYS_YES=yes pkg install -y lang/rust
 		} > "$out/pkg.log" 2>&1 || {
 			tail -30 "$out/pkg.log"
@@ -50,7 +53,8 @@ else
 		}
 	fi
 	pkg query '%n %v %o' openssl curl rust >> "$out/pkg.log" 2>&1 || true
-	if ldd "$(command -v cargo)" | grep 'not found'; then
+	if ldd "$(command -v cargo)" "$(command -v rustc)" | grep 'not found'; then
+		ldd "$(command -v cargo)"
 		cat "$out/pkg.log"
 		exit 1
 	fi
