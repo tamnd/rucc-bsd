@@ -55,7 +55,10 @@
 # The input bringup_units turns on the cxx-c bring-up of plan 00 for the rr builds. It is a comma
 # separated list of PATH=ISSUE, as in stand/i386/boot2/boot2.c=tamnd/rucc#4097. rb-cc sends each
 # C unit whose source ends in PATH to the reference GCC, and its record says delegated: cxx-c ISSUE.
-# Such a run is ungraded, and the summary lists the delegated units with their issues. Plan 16 B2
+# A PATH that ends in / names a directory, as in stand/=tamnd/rucc#4097. Then each C unit whose
+# source is under it, or that make compiles in a directory under it, goes, and its record says
+# delegated: cxx-c ISSUE PATH. Such a run is ungraded, and the summary
+# lists the delegated units with their issues and each directory with its count of units. Plan 16 B2
 # allows this only for the units of 03.14 and the boot code. Empty, the default, delegates nothing.
 #
 # scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
@@ -100,7 +103,7 @@ on:
         required: false
         default: auto
       bringup_units:
-        description: "rr only: C units for the reference GCC, as PATH=ISSUE, comma separated (plan 00 cxx-c). Empty in a graded run"
+        description: "rr only: C units for the reference GCC, as PATH=ISSUE, comma separated; a PATH that ends in / names a directory (plan 00 cxx-c). Empty in a graded run"
         required: false
         default: ""
       stand:

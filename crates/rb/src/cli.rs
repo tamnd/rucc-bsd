@@ -509,7 +509,8 @@ usage:
       --bringup, else RB_BRINGUP, turns on the bring-up classes of R: as hands .S files, and C
       units rucc compiles but cannot assemble, to the reference; cxx-c hands the units of
       --bringup-units or RB_BRINGUP_UNITS, each a path suffix and its issue such as
-      lib/libc/gen/x.c=tamnd/rucc#1, to the reference GCC. The record of the call names both. Either needs --ungraded, and the report says the run is ungraded in its
+      lib/libc/gen/x.c=tamnd/rucc#1, to the reference GCC. A path that ends in / names each
+      unit under that directory, such as stand/=tamnd/rucc#4097. The record of the call names both. Either needs --ungraded, and the report says the run is ungraded in its
       first line. --no-shim builds G with the reference alone, as the B0 workflows do. Each target's output
       goes to DIR/logs/<target>.log and a line to DIR/logs/phases.tsv. --dry-run prints the
       commands. Exits 1 when a check or a target fails.
