@@ -53,7 +53,12 @@ def side(dirs):
         for path in sorted(atf.rglob("*.tps")):
             top = directory(atf, path)
             for case, result, seconds in cases(path):
-                out.setdefault(f"{top}/{case}", []).append((result, seconds))
+                # The .tps of one test program, such as lib/libc/sys/t_aio_lio, already ends
+                # with the program's name.
+                name = f"{top}/{case}"
+                if case.split(":")[0] == top.rpartition("/")[2]:
+                    name = f"{top}:{case.partition(':')[2]}"
+                out.setdefault(name, []).append((result, seconds))
     return out
 
 
