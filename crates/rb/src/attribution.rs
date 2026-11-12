@@ -83,6 +83,31 @@ impl Reference {
         Ok(r)
     }
 
+    /// Without the cases of an ungraded list: a case GG passes is not graded when the list has
+    /// it, and the report gives `ungraded` and the reason after GG's results.
+    ///
+    /// The list is for a case whose result does not say whether the compiler is right, such as a
+    /// test that reads a variable before it writes it. A line is the suite, a tab, the case, a tab
+    /// and the reason. A `#` starts a comment line.
+    pub fn without(mut self, list: &str) -> Result<Self, String> {
+        for line in list
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        {
+            let fields: Vec<&str> = line.split('\t').collect();
+            let [suite, name, reason] = fields[..] else {
+                return Err(format!("a line that is not suite, case and reason: {line}"));
+            };
+            let key = (suite.to_string(), name.to_string());
+            self.pass.remove(&key);
+            let text = self.text.entry(key).or_default();
+            *text = format!("{text} ungraded: {reason}")
+                .trim_start()
+                .to_string();
+        }
+        Ok(self)
+    }
+
     /// Only the cases both grade.
     #[must_use]
     pub fn and(mut self, other: &Self) -> Self {
@@ -434,9 +459,9 @@ pub mod cli {
     pub const SUITES: &str = "boot,smoke,tests";
 
     /// The options of `rb test` that are not `rb boot`'s.
-    const OWN: [&str; 12] = [
+    const OWN: [&str; 13] = [
         "gg", "rg", "gr", "rr", "gg-image", "rg-image", "gr-image", "rr-image", "baseline", "out",
-        "work", "limit",
+        "work", "limit", "ungraded",
     ];
 
     /// The `rb boot` arguments of one boot of `image` into `out`. With `narrowed`, only those
@@ -582,6 +607,12 @@ pub mod cli {
                 return Err("give GG: --gg RUNS, --gg-image IMG or --baseline DIR".into());
             }
         };
+        if let Some(f) = args.get("ungraded") {
+            let list = std::fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?;
+            t.reference = std::mem::take(&mut t.reference)
+                .without(&list)
+                .map_err(|e| format!("{f}: {e}"))?;
+        }
         let sources = [
             source(args, "RG")?,
             source(args, "GR")?,
@@ -791,6 +822,19 @@ mod tests {
         let both = r.and(&b);
         assert_eq!(both.pass, BTreeSet::from([key("lib/a:x")]));
         assert_eq!(both.text[&key("lib/a:y")], "passed g-unstable");
+    }
+
+    #[test]
+    fn a_case_of_the_ungraded_list_is_not_graded() {
+        let r = Reference::from_runs(&[run(&[("lib/a:x", "passed"), ("lib/a:y", "passed")])]);
+        let list = "# suite\tcase\treason\ntests\tlib/a:y\treads x before it writes it\n";
+        let r = r.without(list).unwrap();
+        assert_eq!(r.pass, BTreeSet::from([key("lib/a:x")]));
+        assert_eq!(
+            r.text[&key("lib/a:y")],
+            "passed ungraded: reads x before it writes it"
+        );
+        assert!(Reference::default().without("tests\tlib/a:y\n").is_err());
     }
 
     #[test]
