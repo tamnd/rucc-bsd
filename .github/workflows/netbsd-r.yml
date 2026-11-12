@@ -51,6 +51,15 @@
 # that builds it keeps it as an artifact (scripts/netbsd/control.sh), and a later run with the
 # same pin and scripts restores that artifact and goes straight to the replay.
 #
+# A manual run with build=rr builds the RR world: "build.sh distribution", the GENERIC kernel and
+# the sets, all through the rucc TOOLDIR of overlay.sh. The shims hand the directories of
+# RB_SHIM_REF to the reference, each for an open rucc issue named in the rr job. The rr job then
+# makes the RR image from these sets with rb image, and the rr-boot job boots it with SeaBIOS and
+# with OVMF, with the smoke suite. With g_run, rb abi-diff compares the libraries of the R sets
+# with those of the G sets of that run (scripts/netbsd/libs.sh), the compat -m32 libraries of
+# usr/lib/i386 among them. The rucc and target inputs apply as for the kernel, and atf, modules
+# and mixed do not apply.
+#
 # The ref leg of the kernel and the ref build of the world also run rb syntax: every C unit of
 # that build, which is G, through the front end of rucc (scripts/netbsd/syntax.sh). shim-ref.sh
 # keeps the standard error of G, so the report counts only the diagnostics G did not give.
@@ -62,9 +71,9 @@ on:
   workflow_dispatch:
     inputs:
       build:
-        description: What to build, the GENERIC kernel or the world
+        description: What to build, the GENERIC kernel, the world replay, or the RR world, kernel and image
         type: choice
-        options: [kernel, world]
+        options: [kernel, world, rr]
         default: kernel
       rucc:
         description: A branch or commit of tamnd/rucc to build instead of the pinned release
@@ -141,7 +150,7 @@ jobs:
   kernel:
     name: GENERIC kernel with ${{ matrix.cc }}
     needs: [tools, rb]
-    if: inputs.build != 'world'
+    if: inputs.build == 'kernel'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     continue-on-error: ${{ matrix.cc == 'rucc' }}
@@ -532,12 +541,241 @@ jobs:
           path: /mnt/nb/logs
           retention-days: 14
 
+  # build=rr: the RR world, see the top of the file. RB_SHIM_REF names the directories whose calls
+  # still go to the reference, each for an open rucc issue:
+  #   tests/lib/libc/misc          t_ubsan.c asks for -fsanitize=undefined (tamnd/rucc#4391);
+  #   sys/arch/i386/stand/bootxx   each bootxx program is over its size limit (tamnd/rucc#4097);
+  #   sys/arch/i386/stand/dosboot  the link of dosboot.com fails with R_386_16 (tamnd/rucc#4498).
+  rr:
+    name: distribution, kernel and sets with rucc
+    needs: [tools, rb]
+    if: inputs.build == 'rr'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    outputs:
+      image: ${{ steps.image.outcome }}
+    env:
+      RB_RUCC_TARGET: ${{ inputs.target }}
+      RB_SHIM_REF: tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: host packages
+        run: |
+          scripts/ci/apt-install.sh zlib1g-dev
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rucc ${{ inputs.rucc }} from source
+        if: inputs.rucc != ''
+        run: |
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$REF"
+          cargo build --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "$RUNNER_TEMP/rucc-src/target/release" >> "$GITHUB_PATH"
+          echo "rucc built from $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.rucc }}
+      - name: rucc ${{ env.RUCC_VERSION }}
+        if: inputs.rucc == ''
+        run: |
+          name="rucc-$RUCC_VERSION-x86_64-unknown-linux-gnu"
+          gh release download "$RUCC_VERSION" -R tamnd/rucc -p "$name.tar.gz" -D "$RUNNER_TEMP"
+          echo "$RUCC_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+          echo "rucc $RUCC_VERSION, the release tarball" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: the R TOOLDIR
+        run: |
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          scripts/netbsd/overlay.sh rucc
+      - name: build.sh distribution with rucc
+        id: distribution
+        run: NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh distribution-rucc -u distribution
+      - name: build.sh kernel=GENERIC with rucc
+        id: kernel
+        run: |
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh kernel-rucc -u kernel=GENERIC
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh releasekernel-rucc -u releasekernel=GENERIC
+      - name: build.sh sets
+        id: sets
+        run: |
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh sets-rucc -u sets
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh kernset -- scripts/netbsd/kernset.sh GENERIC
+          tar -C "$NB_ROOT/destdir" -cf "$NB_ROOT/release/destdir-meta.tar" METALOG etc/mtree
+      - uses: actions/upload-artifact@v7.0.1
+        if: steps.sets.outcome == 'success'
+        with:
+          name: netbsd-r-amd64-sets-rr
+          path: |
+            /mnt/nb/release/amd64/binary
+            /mnt/nb/release/destdir-meta.tar
+          compression-level: 0
+          retention-days: 7
+      - name: the result of the build
+        if: always()
+        run: |
+          shim="$NB_ROOT/logs/shim.tsv"
+          touch "$shim"
+          {
+            echo "### distribution, kernel and sets with rucc"
+            echo
+            if [ -f "$NB_ROOT/logs/phases.tsv" ]; then scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"; fi
+            echo
+            echo "rucc ran $(awk -F '\t' '$3 == "cc"' "$shim" | wc -l) calls of the C compiler slot." \
+              "The reference ran $(awk -F '\t' '$3 == "cc-ref"' "$shim" | wc -l) calls in the directories of RB_SHIM_REF, \`$RB_SHIM_REF\`."
+            if [ "$DISTRIBUTION" = failure ]; then
+              echo
+              scripts/netbsd/r-report.sh "$NB_ROOT/logs/distribution-rucc.log"
+            elif [ "$KERNEL" = failure ]; then
+              echo
+              scripts/netbsd/r-report.sh "$NB_ROOT/logs/kernel-rucc.log"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DISTRIBUTION: ${{ steps.distribution.outcome }}
+          KERNEL: ${{ steps.kernel.outcome }}
+      - name: rb image
+        id: image
+        if: steps.sets.outcome == 'success'
+        run: |
+          scripts/netbsd/phase.sh image -- "$RUNNER_TEMP/rb/rb" image --build "$NB_ROOT/tools" \
+            --out "$NB_ROOT/netbsd-amd64-serial.img" --work "$NB_ROOT/image-work"
+          cp "$NB_ROOT"/image-work/logs/* "$NB_ROOT/logs/" 2>/dev/null || true
+          rm -rf "$NB_ROOT/image-work"
+          gzip -1 "$NB_ROOT/netbsd-amd64-serial.img"
+          sha256sum "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
+      - uses: actions/upload-artifact@v7.0.1
+        if: steps.image.outcome == 'success'
+        with:
+          name: netbsd-r-amd64-serial-image-rr
+          path: /mnt/nb/netbsd-amd64-serial.img.gz
+          compression-level: 0
+          retention-days: 7
+      # The libraries of the R sets against those of the G sets of g_run (scripts/netbsd/libs.sh),
+      # the compat -m32 libraries of usr/lib/i386 among them.
+      - uses: actions/download-artifact@v8.0.1
+        if: steps.sets.outcome == 'success' && inputs.g_run != ''
+        with:
+          name: netbsd-amd64-sets
+          path: /mnt/nb/g-sets
+          run-id: ${{ inputs.g_run }}
+          github-token: ${{ github.token }}
+      - name: rb abi-diff of the libraries of G and R
+        if: steps.sets.outcome == 'success' && inputs.g_run != ''
+        continue-on-error: true
+        run: |
+          logs="$NB_ROOT/logs"
+          g=$(find "$NB_ROOT/g-sets" -type d -name sets | head -1)
+          scripts/netbsd/libs.sh "$g" "$NB_ROOT/abi/g" > "$logs/libs-g.txt"
+          scripts/netbsd/libs.sh "$NB_ROOT/release/amd64/binary/sets" "$NB_ROOT/abi/r" > "$logs/libs-r.txt"
+          status=0
+          "$RUNNER_TEMP/rb/rb" abi-diff --g "$NB_ROOT/abi/g" --r "$NB_ROOT/abi/r" --limit 40 \
+            > "$logs/abi-diff.txt" 2>&1 || status=$?
+          echo "rb abi-diff exited $status" >> "$logs/abi-diff.txt"
+          "$RUNNER_TEMP/rb/rb" abi-diff --g "$NB_ROOT/abi/g" --r "$NB_ROOT/abi/r" --limit 100000 \
+            > "$logs/abi-diff-all.txt" 2>&1 || true
+          {
+            echo "### rb abi-diff of the libraries of the G sets of run $G_RUN and of the R sets"
+            echo
+            echo '```'
+            cat "$logs/libs-g.txt" "$logs/libs-r.txt"
+            echo
+            head -60 "$logs/abi-diff.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+        env:
+          G_RUN: ${{ inputs.g_run }}
+      - name: compress the logs
+        if: always()
+        run: xz -T0 "$NB_ROOT"/logs/*.log "$NB_ROOT"/logs/*.tsv 2>/dev/null || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-logs-rr
+          path: /mnt/nb/logs
+          retention-days: 14
+
+  rr-boot:
+    name: boot and smoke of the RR image
+    needs: [rb, rr]
+    if: ${{ !cancelled() && inputs.build == 'rr' && needs.rr.outputs.image == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: |
+          scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-amd64-serial-image-rr
+          path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: rb boot
+        run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
+          truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
+          status=0
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/boot/seabios" --firmware seabios --suite boot \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+            --out "$RUNNER_TEMP/boot/ovmf" --suite boot,smoke \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          exit "$status"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### boot and smoke of the RR image: the console's RB- lines"
+            echo
+            echo '```'
+            grep -a '^RB-' "$RUNNER_TEMP"/boot/*/console.log 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-boot-smoke-rr
+          path: ${{ runner.temp }}/boot
+          retention-days: 14
+
   # The B3 gate: rb build makes the rucc kernel by itself, with its own shim TOOLDIR and checks,
   # and with no RB_BRINGUP. The kernel job above makes the kernel that the other jobs use.
   rb-build:
     name: rb build netbsd-trunk --targets kernel
     needs: [tools]
-    if: inputs.build != 'world'
+    if: inputs.build == 'kernel'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -640,7 +878,7 @@ jobs:
   compare:
     name: rb compares the rucc kernel with the ref kernel
     needs: [kernel, rb]
-    if: always() && inputs.build != 'world' && needs.rb.result == 'success'
+    if: always() && inputs.build == 'kernel' && needs.rb.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -702,7 +940,7 @@ jobs:
     needs: [rb, kernel]
     # The kernel job fails when any step of build.sh fails, also after the link. The kernel
     # artifact is there when a kernel linked, and the download below fails when it is not.
-    if: always() && inputs.build != 'world' && inputs.g_run != ''
+    if: always() && inputs.build == 'kernel' && inputs.g_run != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     strategy:
@@ -822,7 +1060,7 @@ jobs:
     name: boot and smoke with the rucc ${{ matrix.kernel }} kernel
     needs: [rb, image]
     # Each leg needs only its own image, so a failed image of the other kernel does not skip it.
-    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && needs.rb.result == 'success' }}
+    if: ${{ !cancelled() && inputs.build == 'kernel' && inputs.g_run != '' && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -906,7 +1144,7 @@ jobs:
     name: ATF ${{ matrix.shard }} with the rucc kernel
     needs: [rb, image]
     # The shards boot the GENERIC image only, so a failed RB-TEST image does not skip them.
-    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && inputs.atf && needs.rb.result == 'success' }}
+    if: ${{ !cancelled() && inputs.build == 'kernel' && inputs.g_run != '' && inputs.atf && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     strategy:
@@ -1003,7 +1241,7 @@ jobs:
     name: rb cross-modules ${{ matrix.cell }}
     needs: [rb, kernel, image]
     # GG needs only the G image, so it runs also when the rucc kernel or modules are missing.
-    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && inputs.modules && needs.rb.result == 'success' }}
+    if: ${{ !cancelled() && inputs.build == 'kernel' && inputs.g_run != '' && inputs.modules && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     strategy:
@@ -1081,7 +1319,7 @@ jobs:
   cross-modules-report:
     name: rb cross-modules, the four cells
     needs: [rb, cross-modules]
-    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && inputs.modules && needs.rb.result == 'success' }}
+    if: ${{ !cancelled() && inputs.build == 'kernel' && inputs.g_run != '' && inputs.modules && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8.0.1
@@ -1125,7 +1363,7 @@ jobs:
   mixed:
     name: rb mixed ${{ inputs.mixed }}
     needs: [rb, kernel]
-    if: ${{ !cancelled() && inputs.build != 'world' && inputs.g_run != '' && inputs.mixed != '' && needs.rb.result == 'success' }}
+    if: ${{ !cancelled() && inputs.build == 'kernel' && inputs.g_run != '' && inputs.mixed != '' && needs.rb.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     env:
@@ -1221,7 +1459,7 @@ jobs:
   report:
     name: report
     needs: [kernel, image, boot, atf]
-    if: always() && inputs.build != 'world' && inputs.g_run != ''
+    if: always() && inputs.build == 'kernel' && inputs.g_run != ''
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1

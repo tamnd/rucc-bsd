@@ -146,3 +146,69 @@ fn the_records_carry_the_rusage_to_rb_speed() {
     assert_eq!(c.max_rss.as_ref().map(|m| m.0), Some(40960));
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A reference program that writes the object named by -o with another text than `FAKE_RUCC`.
+const FAKE_REF: &str = r#"#!/bin/sh
+out=
+while [ $# -gt 0 ]; do
+	if [ "$1" = -o ]; then out=$2; shift; fi
+	shift
+done
+if [ -n "$out" ]; then echo reference > "$out"; fi
+exit 0
+"#;
+
+#[test]
+fn the_cc_shim_hands_the_directories_of_rb_shim_ref_to_the_reference() {
+    let d = dir("ref");
+    let rucc = d.join("rucc");
+    executable(&rucc, FAKE_RUCC);
+    let log = d.join("shim.tsv");
+    let text = std::fs::read_to_string(repo().join("conf/netbsd/toolchain/shim-cc.sh"))
+        .unwrap()
+        .replace("@RUCC@", rucc.to_str().unwrap())
+        .replace("@LOG@", log.to_str().unwrap())
+        .replace("@TARGET@", "x86_64--netbsd")
+        .replace("@GNUC@", "14.4.0")
+        .replace("@SYSROOT@", "/dest")
+        .replace("@TIME@", "")
+        .replace("@LD_DIR@", "/tools/x86_64--netbsd/bin");
+    let shim = d.join("x86_64--netbsd-gcc");
+    executable(&shim, &text);
+    executable(&d.join("x86_64--netbsd-gcc.ref"), FAKE_REF);
+    let refs = "sys/arch/i386/stand/bootxx,tests/lib/libc/misc";
+    let cases = [
+        ("obj/tests/lib/libc/misc", Some(refs), "reference", "cc-ref"),
+        (
+            "obj/sys/arch/i386/stand/bootxx/bootxx_ffsv1/lib/sa",
+            Some(refs),
+            "reference",
+            "cc-ref",
+        ),
+        ("obj/tests/lib/libc/miscx", Some(refs), "object", "cc"),
+        ("obj/tests/lib/libc/misc", Some(""), "object", "cc"),
+        ("obj/tests/lib/libc/misc", None, "object", "cc"),
+    ];
+    for (i, (sub, env, made, slot)) in cases.into_iter().enumerate() {
+        let cwd = d.join(sub);
+        std::fs::create_dir_all(&cwd).unwrap();
+        let out = format!("{i}.o");
+        let mut cmd = Command::new(&shim);
+        cmd.current_dir(&cwd).args(["-c", "a.c", "-o", &out]);
+        match env {
+            Some(v) => cmd.env("RB_SHIM_REF", v),
+            None => cmd.env_remove("RB_SHIM_REF"),
+        };
+        assert!(cmd.status().unwrap().success());
+        let text = std::fs::read_to_string(cwd.join(&out)).unwrap();
+        assert_eq!(text.trim(), made, "{sub} with RB_SHIM_REF={env:?}");
+        let line = std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .nth(i)
+            .unwrap()
+            .to_string();
+        assert_eq!(line.split('\t').nth(2), Some(slot), "{line}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}

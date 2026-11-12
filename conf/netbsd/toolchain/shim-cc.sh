@@ -16,6 +16,10 @@
 # With a log, and GNU time on the host (overlay.sh puts its path in timer), each call also appends
 # "WALL USER SYSTEM MAXRSS<TAB>LOG LINE" to LOG.rusage: the seconds and the peak RSS in KiB that
 # GNU time gives. shim-records.py puts them in the records, for rb speed.
+# RB_SHIM_REF is a comma separated list of directories of the tree, such as tests/lib/libc/misc.
+# A call whose working directory is in one of them, the source or the object directory, runs the
+# reference program that overlay.sh renamed to NAME.ref with the arguments unchanged, and its log
+# line has cc-ref in the third field. A build that sets it is not an R build of those directories.
 # The rb-cc shim of docs/plan 05 replaces this file when it exists.
 
 rucc=@RUCC@
@@ -31,10 +35,19 @@ sysroot=--sysroot=@SYSROOT@
 for a in "$@"; do
 	case $a in --sysroot | --sysroot=*) sysroot= ;; esac
 done
-run "$rucc" "${args[@]}" ${sysroot:+"$sysroot"} "$@"
+slot=cc
+IFS=, read -ra ref_dirs <<< "${RB_SHIM_REF-}"
+for d in "${ref_dirs[@]}"; do
+	case $PWD/ in *"/${d%/}/"*) slot=cc-ref ;; esac
+done
+if [ "$slot" = cc-ref ]; then
+	run "$0.ref" "$@"
+else
+	run "$rucc" "${args[@]}" ${sysroot:+"$sysroot"} "$@"
+fi
 status=$?
 if [ -n "$log" ]; then
-	line="$status	$PWD	cc"
+	line="$status	$PWD	$slot"
 	for a in "$@"; do line+="	$a"; done
 	printf '%s\n' "$line" >> "$log"
 fi

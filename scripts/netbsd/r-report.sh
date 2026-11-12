@@ -41,7 +41,7 @@ if [ -n "$first" ]; then
 	echo
 	echo '```'
 	tooldir=${NB_TOOLDIR:-$NB_ROOT/tools-r}
-	(cd "$dir" && RB_SHIM_LOG="" "$tooldir/bin/$(nb_gnu "$tooldir")-$([ "$slot" = cc ] && echo gcc || echo cpp)" \
+	(cd "$dir" && RB_SHIM_LOG="" "$tooldir/bin/$(nb_gnu "$tooldir")-$([ "${slot%-ref}" = cc ] && echo gcc || echo cpp)" \
 		"${args[@]}" 2>&1 >/dev/null | head -40)
 	echo '```'
 	echo
