@@ -78,12 +78,11 @@ const C_DIST: &str = "\
 ./usr/share/misc
 ";
 
-#[test]
-fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
-    let d = dir("sets");
-    let (r, c) = (d.join("r"), d.join("c"));
-    std::fs::create_dir_all(&r).unwrap();
-    std::fs::create_dir_all(&c).unwrap();
+/// The sets of the graded R build and of the c-only build. The R base set has ATF, its hooks
+/// and libstdc++, which the c-only base set does not have.
+fn fake_sets(rsets: &Path, csets: &Path) {
+    std::fs::create_dir_all(rsets).unwrap();
+    std::fs::create_dir_all(csets).unwrap();
     let file = "type=file uname=root gname=wheel mode=0555";
     let r_base_spec = format!(
         "./usr/bin/ls {file}\n./usr/bin/atf-run {file}\n./usr/lib/libc.so.12 {file}\n\
@@ -92,7 +91,7 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
     );
     let r_tests_spec = "./usr/tests/Atffile type=file uname=root gname=wheel mode=0444\n";
     set(
-        &r,
+        rsets,
         "base",
         &[
             ("usr/bin/ls", "ls"),
@@ -104,7 +103,7 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
         ],
     );
     set(
-        &r,
+        rsets,
         "tests",
         &[(
             "usr/tests/Atffile",
@@ -112,7 +111,7 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
         )],
     );
     set(
-        &r,
+        rsets,
         "etc",
         &[
             ("etc/mtree/NetBSD.dist", R_DIST),
@@ -125,11 +124,11 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
         ("usr/lib/libc.so.12", "libc"),
         ("usr/share/misc/x", "x"),
     ];
-    set(&c, "base", &c_base);
-    set(&c, "comp", &[("usr/lib/libc.a", "libc")]);
-    set(&c, "kern-GENERIC", &[("netbsd", "kernel")]);
+    set(csets, "base", &c_base);
+    set(csets, "comp", &[("usr/lib/libc.a", "libc")]);
+    set(csets, "kern-GENERIC", &[("netbsd", "kernel")]);
     set(
-        &c,
+        csets,
         "etc",
         &[
             ("etc/mtree/NetBSD.dist", C_DIST),
@@ -141,31 +140,19 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
             ),
         ],
     );
+}
 
-    let list = d.join("borrowed.txt");
-    let o = Command::new("bash")
+fn borrow(rsets: &Path, csets: &Path, list: &Path) -> std::process::Output {
+    Command::new("bash")
         .arg(repo().join("scripts/netbsd/borrow.sh"))
-        .args([&r, &c, &list])
+        .args([rsets, csets, list])
         .output()
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&o.stderr);
-    assert!(o.status.success(), "{stderr}");
-    assert_eq!(
-        String::from_utf8_lossy(&o.stdout),
-        "base etc comp tests borrowed\n"
-    );
-    assert!(
-        stderr.contains("3 paths of the tests set and 4 of the base set"),
-        "{stderr}"
-    );
+        .unwrap()
+}
 
-    // The tests set is R's, as it is.
-    assert_eq!(
-        std::fs::read(c.join("tests.tgz")).unwrap(),
-        std::fs::read(r.join("tests.tgz")).unwrap()
-    );
-    // The borrowed set has what the c-only base set does not have, and the spec lines for it.
-    let borrowed = names(&c.join("borrowed.tgz"));
+/// The borrowed set has what the c-only base set does not have, and the spec lines for it.
+fn check_borrowed(csets: &Path, work: &Path) {
+    let borrowed = names(&csets.join("borrowed.tgz"));
     for want in [
         "./usr/bin/atf-run",
         "./usr/lib/libstdc++.so.9",
@@ -181,17 +168,17 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
         !borrowed.iter().any(|n| n == "./usr/bin/ls"),
         "{borrowed:?}"
     );
-    let x = d.join("x");
-    std::fs::create_dir_all(&x).unwrap();
+    let root = work.join("x");
+    std::fs::create_dir_all(&root).unwrap();
     let ok = Command::new("tar")
         .arg("-xzf")
-        .arg(c.join("borrowed.tgz"))
+        .arg(csets.join("borrowed.tgz"))
         .arg("-C")
-        .arg(&x)
+        .arg(&root)
         .status()
         .unwrap();
     assert!(ok.success());
-    let spec = std::fs::read_to_string(x.join("etc/mtree/set.borrowed")).unwrap();
+    let spec = std::fs::read_to_string(root.join("etc/mtree/set.borrowed")).unwrap();
     let lines: Vec<&str> = spec.lines().skip(1).collect();
     assert_eq!(
         lines,
@@ -205,6 +192,33 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
             "./etc/mtree/set.borrowed type=file uname=root gname=wheel mode=0444",
         ]
     );
+}
+
+#[test]
+fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
+    let work = dir("sets");
+    let (rsets, csets) = (work.join("r"), work.join("c"));
+    fake_sets(&rsets, &csets);
+
+    let list = work.join("borrowed.txt");
+    let out = borrow(&rsets, &csets, &list);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "base etc comp tests borrowed\n"
+    );
+    assert!(
+        stderr.contains("3 paths of the tests set and 4 of the base set"),
+        "{stderr}"
+    );
+
+    // The tests set is R's, as it is.
+    assert_eq!(
+        std::fs::read(csets.join("tests.tgz")).unwrap(),
+        std::fs::read(rsets.join("tests.tgz")).unwrap()
+    );
+    check_borrowed(&csets, &work);
     let list = std::fs::read_to_string(&list).unwrap();
     assert_eq!(
         list,
@@ -213,12 +227,8 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
     );
 
     // A second run refuses, so the sets are not borrowed twice.
-    let again = Command::new("bash")
-        .arg(repo().join("scripts/netbsd/borrow.sh"))
-        .args([&r, &c, &d.join("again.txt")])
-        .output()
-        .unwrap();
+    let again = borrow(&rsets, &csets, &work.join("again.txt"));
     assert!(!again.status.success());
     assert!(String::from_utf8_lossy(&again.stderr).contains("already has tests.tgz"));
-    std::fs::remove_dir_all(&d).unwrap();
+    std::fs::remove_dir_all(&work).unwrap();
 }
