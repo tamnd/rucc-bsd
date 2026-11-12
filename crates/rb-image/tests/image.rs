@@ -303,6 +303,25 @@ fn netbsd_live_image() {
     std::fs::remove_dir_all(&rig.top).unwrap();
 }
 
+/// The i386 emulator image has no `rc.conf.emuimage`, so rb's lines turn on `dhcpcd`, which the
+/// amd64 file turns on, for the network check of the smoke suite.
+#[test]
+fn netbsd_live_image_without_the_rc_conf_of_the_emulator_image() {
+    let rig = NetBsd::new("nb-norc");
+    std::fs::remove_file(
+        rig.top
+            .join("src/distrib/amd64/liveimage/emuimage/rc.conf.emuimage"),
+    )
+    .unwrap();
+    image::make(&rig.req, false).unwrap();
+    let rc = read(&rig.top.join("tools/rc.conf"));
+    assert!(
+        rc.ends_with("rb_enable=\"YES\"\nsecurelevel=-1\ndhcpcd=YES\n"),
+        "{rc}"
+    );
+    std::fs::remove_dir_all(&rig.top).unwrap();
+}
+
 #[test]
 fn netbsd_wrapper_must_be_one() {
     let rig = NetBsd::new("nb-two");

@@ -9,7 +9,8 @@
 //!    - `SPEC_EXTRA` is the emulator image's own spec file and rb's, so `makefs` takes the new
 //!      files with root as their owner;
 //!    - `RC_CONF_EXTRA` is the emulator image's own `rc.conf` lines, `rb_enable=YES` and
-//!      `securelevel=-1`, which keeps the level at 0 for the module checks;
+//!      `securelevel=-1`, which keeps the level at 0 for the module checks, and `dhcpcd=YES`
+//!      when the emulator image has no `rc.conf` of its own, as on i386;
 //!    - `INSTALLBOOTOPTIONS` puts the BIOS boot blocks on the serial console;
 //!    - `LIVEIMG_RELEASEDIR` puts the image in rb's work directory, so the release is not
 //!      changed.
@@ -43,6 +44,11 @@ pub const NEEDED: &[&str] = &[
 /// with `EPERM`. With `securelevel=-1` that script says it cannot lower the level and leaves it
 /// at 0. init raises it to 1 only when `/etc/rc` is done, which is after rb-rc has run.
 pub const RC_CONF: &str = "securelevel=-1\n";
+
+/// The line of the amd64 emulator image's `rc.conf` that rb's checks need, for a tree whose
+/// emulator image has no `rc.conf.emuimage`, as i386 has none. The network check of the smoke
+/// suite waits for the address that `dhcpcd` gets from QEMU's DHCP server.
+pub const RC_CONF_NO_EMU: &str = "dhcpcd=YES\n";
 
 /// The `boot.cfg` when `DESTDIR` has none.
 pub const BOOT_CFG: &str = "\
@@ -279,7 +285,15 @@ pub fn make(req: &Request, dry_run: bool) -> Result<Made, String> {
         .map_err(|e| format!("rb.spec: {e}"))?;
     std::fs::write(
         work.join("rb.rc.conf"),
-        format!("\n# rb-rc (plan 12.4)\n{}{RC_CONF}", guest::RC_CONF),
+        format!(
+            "\n# rb-rc (plan 12.4)\n{}{RC_CONF}{}",
+            guest::RC_CONF,
+            if w.emuimage().join("rc.conf.emuimage").is_file() {
+                ""
+            } else {
+                RC_CONF_NO_EMU
+            }
+        ),
     )
     .map_err(|e| format!("rb.rc.conf: {e}"))?;
     added.push("boot.cfg".into());
