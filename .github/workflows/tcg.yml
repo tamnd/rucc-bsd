@@ -4,8 +4,9 @@
 #   nightly  the boot and smoke suites on each of the four rows, Monday to Saturday. One boot job
 #            per row, so the night costs the rb job and four boot jobs.
 #   weekly   on Sunday, the full suite of each row, sharded by top-level test directory as in
-#            netbsd-baseline.yml. Each shard is one boot with the boot, smoke and tests suites, so
-#            Sunday has its boot and smoke too. At most six shards run at a time, so that the
+#            netbsd-baseline.yml, and net/ipsec in a shard of its own on netbsd-riscv64. Each shard
+#            is one boot with the boot, smoke and tests suites, so Sunday has its boot and smoke
+#            too. At most six shards run at a time, so that the
 #            weekly run does not take every runner.
 #
 # The images are the release images of conf/tcg/images.conf, checked by their published digests.
@@ -120,11 +121,21 @@ jobs:
           cadence = os.environ["CADENCE"]
           with open("rows.toml", "rb") as f:
               rows = tomllib.load(f)["row"]
-          # The shards of the full suite. Each system's two largest top-level directories are a
-          # shard of their own, and the rest is the third.
+          # The shards of the full suite, each a name and the tests flags of rb boot. Each
+          # system's two largest top-level directories are a shard of their own, and the rest is
+          # the third. NetBSD riscv64 runs net in about 6.5 h under TCG, more than the 6 h of a
+          # job, so there net/ipsec, about half of net, is a fourth shard.
+          def shard(how, dirs):
+              return [f"{how}-{dirs.replace(',', '-')}", f"--tests-{how} {dirs}"]
           shards = {
-              "freebsd": [["only", "sys"], ["only", "lib"], ["except", "sys,lib"]],
-              "netbsd": [["only", "net"], ["only", "lib"], ["except", "net,lib"]],
+              "freebsd": [shard("only", "sys"), shard("only", "lib"), shard("except", "sys,lib")],
+              "netbsd": [shard("only", "net"), shard("only", "lib"), shard("except", "net,lib")],
+              "netbsd-riscv64": [
+                  ["only-net-ipsec", "--tests-only net/ipsec"],
+                  ["only-net-but-ipsec", "--tests-only net --tests-except net/ipsec"],
+                  shard("only", "lib"),
+                  shard("except", "net,lib"),
+              ],
           }
           # The GENERIC kernel of each NetBSD machine, and the FreeBSD pin of each series: the pin
           # of conf/freebsd/pins.conf and its name in pins.toml. The i386 row is of stable/14.
@@ -173,11 +184,10 @@ jobs:
                                   "shard": "smoke", "suite": "boot,smoke", "tests": "",
                                   "minutes": 150 if row == "riscv64" else 60})
                   continue
-              for how, dirs in shards[system]:
+              for shard_name, tests in shards.get(name, shards[system]):
                   include.append({"name": name, "system": system, "row": row,
-                                  "shard": f"{how}-{dirs.replace(',', '-')}",
-                                  "suite": "boot,smoke,tests",
-                                  "tests": f"--tests-{how} {dirs}", "minutes": 355})
+                                  "shard": shard_name, "suite": "boot,smoke,tests",
+                                  "tests": tests, "minutes": 355})
           matrix = {"include": include}
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"matrix={json.dumps(matrix)}\n")

@@ -20,7 +20,10 @@
 #
 # OUT/counts gets one line "passed/total". These settings come from rb.conf:
 #   rb_tests_only        run only these directories or test programs, separated by spaces
-#   rb_tests_except      run every top-level directory but these
+#   rb_tests_except      run every top-level directory but these, or with rb_tests_only, every
+#                        directory of rb_tests_only but these. On NetBSD an entry can be under
+#                        a directory that runs, such as net/ipsec. That directory then runs as
+#                        the entries of its Atffile, without net/ipsec.
 #   rb_kyua_parallelism  kyua's parallelism, default 2 (plan 12.2)
 # The host tests set RB_TESTS to use another directory than /usr/tests.
 
@@ -38,26 +41,46 @@ top()
 	fi
 }
 
+# Print $1, a directory or a test program, or nothing when rb_tests_except has it. When an entry
+# of rb_tests_except is under $1 and $1 has an Atffile, print each entry of the Atffile in place of
+# $1, with the same rule. The body is a subshell, so each call has its own variables, and exit
+# ends only that call.
+entries()
+(
+	for x in $rb_tests_except; do
+		if [ "$x" = "$1" ]; then
+			exit 0
+		fi
+	done
+	if [ -f "$tests/$1/Atffile" ]; then
+		for x in $rb_tests_except; do
+			case $x in
+			"$1"/*)
+				for c in $(sed -n 's/^tp:[[:space:]]*//p' "$tests/$1/Atffile"); do
+					entries "$1/$c"
+				done
+				exit 0
+				;;
+			esac
+		done
+	fi
+	echo "$1"
+)
+
 # The directories to run. Empty means all, in one run.
 pick()
 {
 	if [ -n "$rb_tests_only" ]; then
-		echo "$rb_tests_only"
+		for d in $rb_tests_only; do
+			entries "$d"
+		done
 		return
 	fi
 	if [ -z "$rb_tests_except" ]; then
 		return
 	fi
 	for d in $(top); do
-		keep=yes
-		for x in $rb_tests_except; do
-			if [ "$x" = "$d" ]; then
-				keep=no
-			fi
-		done
-		if [ $keep = yes ]; then
-			echo "$d"
-		fi
+		entries "$d"
 	done
 }
 
