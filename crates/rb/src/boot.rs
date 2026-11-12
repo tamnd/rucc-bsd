@@ -1471,6 +1471,9 @@ pub mod cli {
                 "--tests-repeat",
                 "2",
                 "--scripts",
+                // The row's own firmware is OVMF, which the host may not have.
+                "--firmware",
+                "seabios",
             ];
             let req = request(&args(&words), &rows(), |_| true).unwrap();
             assert_eq!(

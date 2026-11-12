@@ -291,7 +291,7 @@ fn netbsd_live_image() {
     );
     let rc = read(&tools.join("rc.conf"));
     assert!(
-        rc.starts_with("resize_root=YES\n") && rc.ends_with("rb_enable=\"YES\"\n"),
+        rc.starts_with("resize_root=YES\n") && rc.ends_with("rb_enable=\"YES\"\nsecurelevel=-1\n"),
         "{rc}"
     );
 

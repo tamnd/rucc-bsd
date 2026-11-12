@@ -605,9 +605,9 @@ jobs:
           retention-days: 7
 
   # The R image of each row, booted to the smoke suite. A row whose rucc kernel had failed units
-  # has no image, and its boot stops after the download. A NetBSD R image boots its kernel from the
-  # EFI system partition through boot.cfg, and the step fails when the console does not show the
-  # banner of that boot.cfg.
+  # has no image. Its boot stops after the download and fails, since nothing was booted. A NetBSD
+  # R image boots its kernel from the EFI system partition through boot.cfg, and the step fails
+  # when the console does not show the banner of that boot.cfg.
   r-boot:
     name: ${{ matrix.name }} R image boot
     needs: [rb, netbsd-r, freebsd-r]
@@ -675,6 +675,13 @@ jobs:
           name: tcg-${{ matrix.name }}-r-boot
           path: ${{ runner.temp }}/out
           retention-days: 14
+      # The steps above skip when there is no image, and the job would end green with no boot.
+      - name: no R image to boot
+        if: steps.image.outcome != 'success'
+        run: |
+          echo "There is no R image of $NAME, so nothing was booted: its rucc kernel did not link or had failed units." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 1
 
   # The R world of each NetBSD row, as the world job of netbsd-r.yml does it for amd64: "build.sh
   # distribution" through the control TOOLDIR, then every unit of that build compiled again with

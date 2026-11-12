@@ -397,6 +397,66 @@ fn modules_load_and_unload_one_at_a_time() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// The smoke suite on a NetBSD whose EFI system partition is mounted on /boot, as the riscv image
+/// has it. The spare check lists the mount that is there, and does not run fsck or mount on it,
+/// since a second mount of it fails.
+#[test]
+fn netbsd_spare_reads_a_wedge_the_system_mounted() {
+    let root = std::env::temp_dir().join(format!("rb-image-spare-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let boot = root.join("boot");
+    std::fs::create_dir_all(boot.join("EFI")).unwrap();
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let mounted = format!(
+        "echo '/dev/dk1 on / type ffs (local)'\necho '/dev/dk0 on {} type msdos (local)'",
+        boot.display()
+    );
+    for (name, body) in [
+        ("uname", "echo NetBSD"),
+        ("sysctl", "echo dk1"),
+        (
+            "dkctl",
+            "case $2 in\ngetwedgeinfo) echo \"$1 at ld4: netbsd-root\" ;;\nlistwedges) echo 'dk0: EFI system, 262144 blocks at 2048, type: msdos'; echo 'dk1: netbsd-root, 4194304 blocks at 264192, type: ffs' ;;\nesac",
+        ),
+        ("mount", &mounted),
+        ("fsck_msdos", "echo fsck_msdos must not run >&2; exit 1"),
+        ("mount_msdos", "echo mount_msdos must not run >&2; exit 1"),
+        ("ifconfig", "echo 'inet 10.0.2.15 netmask 0xffffff00'"),
+        ("ping", "exit 0"),
+        ("modload", "exit 0"),
+        ("modstat", "exit 1"),
+        ("modunload", "exit 0"),
+    ] {
+        let path = bin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let script = root.join("smoke");
+    std::fs::write(&script, guest::SMOKE).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("out"))
+        .env("PATH", path)
+        .env("rb_pkg_dir", root.join("no-packages"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    let log = std::fs::read_to_string(root.join("out/spare.log")).unwrap();
+    assert!(
+        console.contains("RB-CHECK pass spare\n"),
+        "{console}\n{log}"
+    );
+    assert!(
+        log.contains(&format!("/dev/dk0 is mounted on {}", boot.display())),
+        "{log}"
+    );
+    assert!(console.contains("RB-CHECK skip package\n"), "{console}");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// rb-bench built with the host's cc, where it has one, and run at a small scale.
 fn rb_bench(root: &Path) -> Option<PathBuf> {
     let top = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
