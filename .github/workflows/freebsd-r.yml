@@ -691,7 +691,7 @@ jobs:
               exit 1
             fi
             status=0
-            target/release/rb test --gg "$gg" "--$cell" "$claim" --out out/test || status=$?
+            target/release/rb test --gg "$gg" "--$cell" "$claim" --ungraded conf/freebsd/ungraded.tsv --out out/test || status=$?
             echo
             echo "rb test exited with $status."
           } >> "$GITHUB_STEP_SUMMARY"

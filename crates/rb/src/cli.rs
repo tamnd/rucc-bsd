@@ -405,6 +405,7 @@ fn graded_commands(command: &str) -> Option<Accepts> {
                 "gr-image",
                 "rr-image",
                 "baseline",
+                "ungraded",
                 "out",
                 "work",
                 "limit",
@@ -722,13 +723,14 @@ usage:
       speed over the gated benchmarks must be at least 0.98, and no gated benchmark may be below
       0.95. The report lists every benchmark more than 2% behind. Exits 1 when a gate fails.
   rb test (--gg RUNS | --gg-image IMG | --baseline DIR) [--rg RUNS | --rg-image IMG]
-          [--gr RUNS | --gr-image IMG] [--rr RUNS | --rr-image IMG] [--out DIR] [--work DIR]
-          [--limit N] [the options of rb boot] [--dry-run]
+          [--gr RUNS | --gr-image IMG] [--rr RUNS | --rr-image IMG] [--ungraded FILE] [--out DIR]
+          [--work DIR] [--limit N] [the options of rb boot] [--dry-run]
       The graded run with the 2x2: GG, RG (R's kernel on G's world), GR (G's kernel on R's world)
       and RR. RUNS are output directories of rb boot, as rb baseline --from takes them: runs
       separated by ',' and the shards of one run by '+'. An image is booted into DIR/<cell>,
       work/test by default. A case is graded when every GG run passed it, and with --baseline
-      when its verdict in DIR/cases.tsv is stable-pass. The claim is RR, or RG or GR when it is
+      when its verdict in DIR/cases.tsv is stable-pass. A case of --ungraded is not graded: each
+      line of FILE is the suite, the case and the reason, separated by tabs. The claim is RR, or RG or GR when it is
       the only cell given. It runs every suite, boot,smoke,tests by default; an RG or GR image
       next to an RR claim is booted only for the suites and top-level test directories of the
       cases RR failed. Each graded case the claim does not pass gets a verdict from RG and GR:
