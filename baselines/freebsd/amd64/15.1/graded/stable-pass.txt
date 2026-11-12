@@ -4,6 +4,7 @@ smoke	module
 smoke	network
 smoke	pkg-local
 smoke	shells
+smoke	static-dynamic
 smoke	tests-present
 tests	bin/cat/cat_test:align
 tests	bin/cat/cat_test:b_output
@@ -3748,6 +3749,7 @@ tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__overflow_fd_size
 tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__overflow_little_endian_size
 tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__send_closed_fd__dgram
 tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__send_closed_fd__stream
+tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__send_many_fds__dgram
 tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__send_many_fds__stream
 tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__send_nvlist__dgram
 tests	lib/libnv/nvlist_send_recv_test:nvlist_send_recv__send_nvlist__stream
@@ -5475,7 +5477,6 @@ tests	sys/audit/administrative:adjtime_failure
 tests	sys/audit/administrative:adjtime_success
 tests	sys/audit/administrative:auditctl_failure
 tests	sys/audit/administrative:auditctl_success
-tests	sys/audit/administrative:auditon_default_failure
 tests	sys/audit/administrative:auditon_default_success
 tests	sys/audit/administrative:auditon_getcar_failure
 tests	sys/audit/administrative:auditon_getclass_failure
@@ -6199,6 +6200,17 @@ tests	sys/geom/class/mirror/9_test:main
 tests	sys/geom/class/mirror/component_selection:run_latest_genid
 tests	sys/geom/class/mirror/sync_error:sync_read_error_2_disks
 tests	sys/geom/class/mirror/sync_error:sync_read_error_3_disks
+tests	sys/geom/class/multipath/misc:add
+tests	sys/geom/class/multipath/misc:create_A
+tests	sys/geom/class/multipath/misc:create_R
+tests	sys/geom/class/multipath/misc:depart_and_arrive
+tests	sys/geom/class/multipath/misc:fail
+tests	sys/geom/class/multipath/misc:fail_on_error
+tests	sys/geom/class/multipath/misc:physpath
+tests	sys/geom/class/multipath/misc:prefer
+tests	sys/geom/class/multipath/misc:restore
+tests	sys/geom/class/multipath/misc:restore_on_error
+tests	sys/geom/class/multipath/misc:rotate
 tests	sys/geom/class/nop/nop_test:io
 tests	sys/geom/class/nop/nop_test:physpath
 tests	sys/geom/class/nop/nop_test:physpath_blank
@@ -7492,7 +7504,6 @@ tests	sys/netinet/carp:nd6_ns_source_mac
 tests	sys/netinet/carp:negative_demotion
 tests	sys/netinet/carp:switch
 tests	sys/netinet/carp:unicast_ll_v6
-tests	sys/netinet/carp:unicast_v4
 tests	sys/netinet/carp:unicast_v6
 tests	sys/netinet/carp:vrrp_v4
 tests	sys/netinet/carp:vrrp_v6
@@ -7554,6 +7565,7 @@ tests	sys/netinet/redirect:valid_redirect
 tests	sys/netinet/so_reuseport_lb_test:basic_ipv4
 tests	sys/netinet/so_reuseport_lb_test:basic_ipv6
 tests	sys/netinet/so_reuseport_lb_test:bind_without_listen
+tests	sys/netinet/so_reuseport_lb_test:concurrent_add
 tests	sys/netinet/so_reuseport_lb_test:connect_bound
 tests	sys/netinet/so_reuseport_lb_test:connect_not_bound
 tests	sys/netinet/so_reuseport_lb_test:connect_udp
@@ -7867,7 +7879,6 @@ tests	sys/netpfil/pf/divert-to:pr260867_icmp
 tests	sys/netpfil/pf/dup:dup_to
 tests	sys/netpfil/pf/ether:anchor
 tests	sys/netpfil/pf/ether:bridge_to
-tests	sys/netpfil/pf/ether:captive
 tests	sys/netpfil/pf/ether:captive_long
 tests	sys/netpfil/pf/ether:direction
 tests	sys/netpfil/pf/ether:dummynet
@@ -8113,6 +8124,7 @@ tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_ipv4_random_table_ipv4
 tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_ipv4_random_table_ipv6
 tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_ipv6_random_prefix_ipv4
 tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_ipv6_random_prefix_ipv6
+tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_mixed_af_random_table_ipv4
 tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_mixed_af_roundrobin_ipv4
 tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_mixed_af_roundrobin_ipv6
 tests	sys/netpfil/pf/route_to:prefer_ipv6_nexthop_single_ipv4

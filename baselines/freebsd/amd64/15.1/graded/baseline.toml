@@ -6,81 +6,81 @@ version = "15.1-RELEASE"
 commit = "96841ea08dcfa84b954a32dc5ae1a26c28966cf4"
 row = "amd64"
 conf = "graded"
-made = "2026-11-10T10:02:51Z"
+made = "2026-11-12T09:18:03Z"
 image = "freebsd.img"
-image_sha256 = "a87cd06857d0542eac328f2e84838d3f549472265b74a4790650a47d7b4e9033"
+image_sha256 = "3ad161919eb2d6a76d8fa382d603115630c728a854fb10d8ec746c89ce1744b7"
 suites = ["boot", "smoke", "tests"]
 runs = 3
 complete = true
-cases = 10040
-stable_pass = 9789
-g_unstable = 251
+cases = 10053
+stable_pass = 9801
+g_unstable = 252
 
 [[run]]
 n = 1
 result = "pass"
 passed = true
-seconds = 4435.0
+seconds = 4456.0
 firmware = "seabios"
 accel = "kvm"
 restarts = 0
-cases = 10041
+cases = 10054
 
 [run.counts.boot]
 passed = 2
 
 [run.counts.smoke]
-passed = 6
+passed = 7
 
 [run.counts.tests]
-broken = 2
+broken = 1
 expected_failure = 44
-failed = 27
-passed = 9783
-skipped = 177
+failed = 25
+passed = 9797
+skipped = 178
 
 [[run]]
 n = 2
 result = "pass"
 passed = true
-seconds = 4485.0
+seconds = 4335.0
 firmware = "seabios"
 accel = "kvm"
 restarts = 0
-cases = 10041
+cases = 10054
 
 [run.counts.boot]
 passed = 2
 
 [run.counts.smoke]
-passed = 6
+passed = 7
 
 [run.counts.tests]
 broken = 1
-expected_failure = 44
+expected_failure = 43
 failed = 26
-passed = 9785
-skipped = 177
+passed = 9797
+skipped = 178
 
 [[run]]
 n = 3
 result = "pass"
 passed = true
-seconds = 4596.0
+seconds = 4612.0
 firmware = "seabios"
 accel = "kvm"
 restarts = 0
-cases = 10041
+cases = 10054
 
 [run.counts.boot]
 passed = 2
 
 [run.counts.smoke]
-passed = 6
+passed = 7
 
 [run.counts.tests]
 broken = 1
 expected_failure = 44
-failed = 24
-passed = 9787
-skipped = 177
+failed = 25
+passed = 9797
+skipped = 178
