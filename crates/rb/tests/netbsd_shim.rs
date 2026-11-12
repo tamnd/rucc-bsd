@@ -76,7 +76,8 @@ fn the_cc_shim_times_each_call() {
         .replace("@TARGET@", "x86_64--netbsd")
         .replace("@GNUC@", "14.4.0")
         .replace("@SYSROOT@", "/dest")
-        .replace("@TIME@", time);
+        .replace("@TIME@", time)
+        .replace("@LD_DIR@", "/tools/x86_64--netbsd/bin");
     let shim = d.join("x86_64--netbsd-gcc");
     executable(&shim, &text);
     std::fs::write(d.join("a.c"), "int a;\n").unwrap();
