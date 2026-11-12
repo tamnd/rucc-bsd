@@ -21,9 +21,9 @@
 # OUT/counts gets one line "passed/total". These settings come from rb.conf:
 #   rb_tests_only        run only these directories or test programs, separated by spaces
 #   rb_tests_except      run every top-level directory but these, or with rb_tests_only, every
-#                        directory of rb_tests_only but these. On NetBSD an entry can be under
-#                        a directory that runs, such as net/ipsec. That directory then runs as
-#                        the entries of its Atffile, without net/ipsec.
+#                        directory of rb_tests_only but these. An entry can be under a
+#                        directory that runs, such as net/ipsec. That directory then runs as
+#                        the entries of its Atffile or Kyuafile, without net/ipsec.
 #   rb_kyua_parallelism  kyua's parallelism, default 2 (plan 12.2)
 # The host tests set RB_TESTS to use another directory than /usr/tests.
 
@@ -31,20 +31,38 @@ out=$1
 mkdir -p "$out"
 tests=${RB_TESTS:-/usr/tests}
 
-# The top-level directories, from the top Kyuafile or Atffile.
+# The top-level directories. The top Kyuafile of FreeBSD has no include lines. It is Lua that
+# includes each directory with a Kyuafile, so top does the same.
 top()
 {
 	if [ -f $tests/Kyuafile ]; then
-		sed -n 's/^include("\([^/]*\)\/Kyuafile")$/\1/p' $tests/Kyuafile
+		for d in "$tests"/*/Kyuafile; do
+			if [ -f "$d" ]; then
+				d=${d%/Kyuafile}
+				echo "${d##*/}"
+			fi
+		done
 	else
 		sed -n 's/^tp:[[:space:]]*//p' $tests/Atffile
 	fi
 }
 
+# The entries of directory $1: the test programs and directories of its Kyuafile, or the entries
+# of its Atffile. Nothing when it has neither.
+children()
+{
+	if [ -f "$tests/$1/Kyuafile" ]; then
+		sed -n -e 's/^[a-z]*_test_program{name="\([^"]*\)".*/\1/p' \
+			-e 's/^include("\([^"]*\)\/Kyuafile")$/\1/p' "$tests/$1/Kyuafile"
+	elif [ -f "$tests/$1/Atffile" ]; then
+		sed -n 's/^tp:[[:space:]]*//p' "$tests/$1/Atffile"
+	fi
+}
+
 # Print $1, a directory or a test program, or nothing when rb_tests_except has it. When an entry
-# of rb_tests_except is under $1 and $1 has an Atffile, print each entry of the Atffile in place of
-# $1, with the same rule. The body is a subshell, so each call has its own variables, and exit
-# ends only that call.
+# of rb_tests_except is under $1, print each entry of $1 (see children) in place of $1, with the
+# same rule. The body is a subshell, so each call has its own variables, and exit ends only that
+# call.
 entries()
 (
 	for x in $rb_tests_except; do
@@ -52,18 +70,19 @@ entries()
 			exit 0
 		fi
 	done
-	if [ -f "$tests/$1/Atffile" ]; then
-		for x in $rb_tests_except; do
-			case $x in
-			"$1"/*)
-				for c in $(sed -n 's/^tp:[[:space:]]*//p' "$tests/$1/Atffile"); do
-					entries "$1/$c"
+	for x in $rb_tests_except; do
+		case $x in
+		"$1"/*)
+			c=$(children "$1")
+			if [ -n "$c" ]; then
+				for e in $c; do
+					entries "$1/$e"
 				done
 				exit 0
-				;;
-			esac
-		done
-	fi
+			fi
+			;;
+		esac
+	done
 	echo "$1"
 )
 
