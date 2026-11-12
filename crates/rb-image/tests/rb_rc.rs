@@ -605,6 +605,48 @@ fn netbsd_spare_reads_a_wedge_the_system_mounted() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// The smoke suite on NetBSD riscv64 skips the module check and says why on the console, since
+/// the system loads a module out of reach of its calls into the kernel. modload must not run.
+#[test]
+fn netbsd_riscv64_skips_the_module_check_with_its_reason() {
+    let root = std::env::temp_dir().join(format!("rb-image-rv-module-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for (name, body) in [
+        (
+            "uname",
+            "case $1 in -m) echo riscv ;; *) echo NetBSD ;; esac",
+        ),
+        ("modload", "echo modload must not run >&2; exit 1"),
+    ] {
+        let path = bin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let script = root.join("smoke");
+    std::fs::write(&script, guest::SMOKE).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("out"))
+        .env("PATH", path)
+        .env("rb_pkg_dir", root.join("no-packages"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    assert!(console.contains("RB-CHECK skip module\n"), "{console}");
+    assert!(
+        console.contains("RB-SKIP module NetBSD riscv64 loads modules more than 2 GiB"),
+        "{console}"
+    );
+    assert!(!console.contains("RB-SKIP package"), "{console}");
+    let results = std::fs::read_to_string(root.join("out/results")).unwrap();
+    assert!(results.contains("skip module\n"), "{results}");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// rb-bench built with the host's cc, where it has one, and run at a small scale.
 fn rb_bench(root: &Path) -> Option<PathBuf> {
     let top = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
