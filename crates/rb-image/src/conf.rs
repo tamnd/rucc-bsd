@@ -3,13 +3,13 @@
 //! `rb image` writes it into the image. `rb boot` can put another one on the results disk, and
 //! rb-rc then reads that one after the image's. The file is shell: one `rb_<name>=<value>` line
 //! per setting that is not the default. The settings are listed in `guest/rb-rc/run.sh`,
-//! `guest/rb-rc/tests.sh`, `guest/rb-rc/bench.sh` and `smoke/smoke.sh`.
+//! `guest/rb-rc/tests.sh`, `guest/rb-rc/bench.sh`, `guest/rb-rc/foreign.sh` and `smoke/smoke.sh`.
 
 use harness_agent::job::quote;
 use std::fmt::Write as _;
 
 /// The suites rb-rc knows (plan 12.2).
-pub const SUITES: &[&str] = &["boot", "smoke", "tests", "modules", "bench"];
+pub const SUITES: &[&str] = &["boot", "smoke", "tests", "modules", "bench", "foreign"];
 
 /// The settings of one boot.
 #[derive(Debug, Clone, PartialEq, Eq)]

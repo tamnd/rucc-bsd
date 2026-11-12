@@ -67,6 +67,11 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["set"],
             switches: &["tarball"],
         },
+        "foreign" => Accepts {
+            positional: false,
+            values: &["conf", "out", "r", "g", "limit"],
+            switches: &[],
+        },
         "image" => Accepts {
             positional: true,
             values: &[
@@ -179,6 +184,7 @@ fn boot_commands(command: &str) -> Option<Accepts> {
                 "bench",
                 "bench-scale",
                 "bench-only",
+                "pkgs",
                 "boot-timeout",
                 "timeout",
                 "reboots",
@@ -458,11 +464,11 @@ usage:
       benchmarks behind by more than 2%. DIR/<system>/<row>/<version>/bench.tsv gets the summary
       and runs.tsv every value; DIR is results/bench by default. --bench-scale multiplies the
       work, and --bench-only runs only the benchmarks named. Exits 1 when a run wrote no results.
-  rb boot --image IMG --out DIR [--suite boot,smoke,tests,modules,bench] [--row ROW]
+  rb boot --image IMG --out DIR [--suite boot,smoke,tests,modules,bench,foreign] [--row ROW]
           [--firmware ovmf|seabios|edk2|u-boot]
           [--tests-only DIR,...] [--tests-except DIR,...] [--tests-repeat N]
           [--modules DIR] [--modules-only NAME,...] [--modules-skip NAME,...]
-          [--bench FILE] [--bench-scale S] [--bench-only NAME,...]
+          [--bench FILE] [--bench-scale S] [--bench-only NAME,...] [--pkgs DIR]
           [--boot-timeout SECS] [--timeout SECS]
           [--reboots N] [--spare-disks N] [--disk-size SIZE] [--cpus N] [--memory SIZE]
           [--qemu PATH] [--ovmf-code FILE --ovmf-vars FILE] [--edk2-code FILE --edk2-vars FILE]
@@ -480,10 +486,12 @@ usage:
       NetBSD, loads and unloads each kernel module of the image, or of DIR of --modules, a tree
       of NAME/NAME.kmod that goes on the results disk; --modules-only and --modules-skip choose
       the modules. The bench suite runs the benchmark set once, with the rb-bench of --bench,
-      which goes on the results disk, else the image's. On a panic it sends bt to ddb and stops
-      QEMU. The results go to DIR/results and the outcome to DIR/boot.json. ROW is amd64 by
-      default, and the firmware is the row's test firmware. edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then the S-mode U-Boot of
-      riscv64, which loads the EFI loader from the disk.
+      which goes on the results disk, else the image's. The foreign suite installs the packages
+      of DIR of --pkgs, which rb foreign fetched and which go on the results disk, and runs the
+      check of each. On a panic it sends bt to ddb and stops QEMU. The results go to
+      DIR/results and the outcome to DIR/boot.json. ROW is amd64 by default, and the firmware is
+      the row's test firmware. edk2 is EDK2 for aarch64 in flash. u-boot is QEMU's OpenSBI, then
+      the S-mode U-Boot of riscv64, which loads the EFI loader from the disk.
       Exits 1 when the boot did not pass.
   rb build PIN --cc rucc|ref --root DIR [--row ROW] [--targets T,...] [--src DIR] [--jobs N]
           [--conf CONF] [--kernconf NAME] [--rucc PATH] [--log FILE] [--shim PATH] [--noise N]
@@ -561,6 +569,16 @@ usage:
       commit deep with git, and HEAD must be the pinned commit. A release with --tarball, or a pin
       with no commit, is downloaded and checked against the digest the project publishes. The
       tree's newvers.sh or param.h must give the pin's version. Prints where the tree is.
+  rb foreign --conf FILE --out DIR
+  rb foreign --r DIR [--g DIR] [--limit N]
+      Run the project's own packages on a rucc world (plan 12.8). The first form reads FILE, such
+      as conf/netbsd/foreign.toml, which names a package repository and the packages to check.
+      It fetches the repository's pkg_summary.gz and downloads each package and what it needs to
+      DIR/All, and writes DIR/checks for the foreign suite of rb boot --pkgs DIR. A file whose
+      size is not the one of the summary is an error. The second form reads the foreign results
+      of an rb boot of R, DIR/results/foreign/foreign.tsv, and of G with --g. A package that did
+      not pass on R counts when it passed on G, or when there are no G results. Each list stops
+      after N lines, 20 by default. Exits 1 when a package counts or none ran.
   rb frames --g LOG --r LOG [--g-root DIR --r-root DIR] [--limit N] [--top N]
       Compare the stack frame of each function in R and G, from the .su files that -fstack-usage
       writes beside each object, X.su for X.o. LOG is the compile.jsonl of each build, objects are

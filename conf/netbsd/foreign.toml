@@ -1,0 +1,138 @@
+# rb foreign for NetBSD (plan 12.8): the pkgsrc binary packages that the foreign suite installs
+# into the RR image, each with a check. GCC built them, against the libraries of the release, so
+# they test the ABI of rucc's libc, libm, libpthread, libutil and ld.elf_so from outside.
+#
+# rb foreign --conf conf/netbsd/foreign.toml --out DIR fetches each package and what it needs from
+# the repository. rb boot --suite foreign --pkgs DIR installs them with pkg_add, and sh runs each
+# check in an empty directory, as root, with /usr/pkg/bin and /usr/pkg/sbin first in PATH. A
+# check passes when it exits 0. It must fit on one line and have no tab.
+#
+# The repository is the pkgsrc quarterly branch for NetBSD 11. packages/NetBSD/x86_64/11.1 points
+# to it. The quarter pins the package set, and a new quarter is a change to this file.
+repository = "https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/x86_64/11.0_2026Q3/All"
+
+[[package]]
+name = "bash"
+check = '''bash -c 'a=(x y z); echo ${#a[@]} ${a[2]}' | grep -Fx '3 z' '''
+
+[[package]]
+name = "zsh"
+check = '''zsh -fc 'typeset -A m; m[k]=v; print -r -- $m[k]' | grep -Fx v'''
+
+[[package]]
+name = "perl"
+check = '''perl -MDigest::SHA=sha1_hex -e 'print sha1_hex("abc"), "\n"' | grep -Fx a9993e364706816aba3e25717850c26c9cd0d89d'''
+
+[[package]]
+name = "python313"
+check = '''python3.13 -c 'import ctypes, hashlib, json, sqlite3, ssl, zlib; print(hashlib.sha256(b"abc").hexdigest()[:8], ctypes.CDLL("libc.so.12").abs(-5), json.dumps([1]))' | grep -Fx 'ba7816bf 5 [1]' '''
+
+[[package]]
+name = "ruby33"
+check = '''ruby33 -e 'require "json"; require "openssl"; puts JSON.generate([1, "a"])' | grep -Fx '[1,"a"]' '''
+
+[[package]]
+name = "lua54"
+check = '''lua5.4 -e 'print(string.format("%d %s", 6 * 7, ("x"):rep(3)))' | grep -Fx '42 xxx' '''
+
+[[package]]
+name = "tcl"
+check = '''echo 'puts [expr {6 * 7}]' | tclsh | grep -Fx 42'''
+
+[[package]]
+name = "git-base"
+check = '''git init -q r && cd r && git -c user.name=rb -c user.email=rb@example.org commit -q --allow-empty -m one && git log --format=%s | grep -Fx one'''
+
+[[package]]
+name = "curl"
+check = '''echo hello > f && curl -fsS "file://$PWD/f" | grep -Fx hello && curl -V | grep -q https'''
+
+[[package]]
+name = "wget"
+check = '''wget --version | head -n 1 | grep -q '^GNU Wget' '''
+
+[[package]]
+name = "rsync"
+check = '''mkdir a && echo x > a/f && rsync -a a/ b/ && cmp a/f b/f'''
+
+[[package]]
+name = "sqlite3"
+check = '''sqlite3 :memory: 'create table t(x); insert into t values (6), (7); select x * 7 from t where x = 6;' | grep -Fx 42'''
+
+[[package]]
+name = "tmux"
+check = '''tmux -S "$PWD/s" new-session -d 'sleep 60' && tmux -S "$PWD/s" list-sessions | grep -q window; r=$?; tmux -S "$PWD/s" kill-server; exit $r'''
+
+[[package]]
+name = "vim"
+check = '''printf 'b\na\n' > f && vim -es -u NONE -c sort -c wq f && test "$(head -n 1 f)" = a'''
+
+[[package]]
+name = "nano"
+check = '''nano --version | grep -q 'GNU nano' '''
+
+[[package]]
+name = "nginx"
+check = '''echo hi > index.html && printf 'daemon off; error_log stderr; pid %s/pid; events {} http { access_log off; server { listen 127.0.0.1:8080; root %s; } }\n' "$PWD" "$PWD" > c && { nginx -p "$PWD" -c "$PWD/c" & } && sleep 3 && curl -fsS http://127.0.0.1:8080/ | grep -Fx hi; r=$?; kill "$(cat pid)"; exit $r'''
+
+[[package]]
+name = "postgresql17-server"
+check = '''mkdir pg && chown pgsql pg && su -m pgsql -c 'initdb -A trust -D pg/d > pg/init.log && pg_ctl -D pg/d -l pg/log -o "-k /tmp" -w start > /dev/null && psql -h /tmp -At -c "select 6 * 7" postgres > pg/out; pg_ctl -D pg/d -m fast -w stop > /dev/null' && grep -Fx 42 pg/out'''
+
+[[package]]
+name = "redis"
+check = '''redis-server --port 6390 --daemonize yes --save '' --dir "$PWD" && sleep 2 && redis-cli -p 6390 set k 42 > /dev/null && redis-cli -p 6390 get k | grep -Fx 42; r=$?; redis-cli -p 6390 shutdown nosave; exit $r'''
+
+# Rust.
+[[package]]
+name = "ripgrep"
+check = '''printf 'one\ntwo\n' > f && rg -c o f | grep -Fx 2'''
+
+# Rust.
+[[package]]
+name = "fd-find"
+check = '''mkdir -p d/e && touch d/e/x.c && fd -e c . d | grep -Fx d/e/x.c'''
+
+# Go.
+[[package]]
+name = "fzf"
+check = '''printf 'apple\nbanana\n' | fzf -f ban | grep -Fx banana'''
+
+# C++.
+[[package]]
+name = "ninja-build"
+check = '''printf 'rule cp\n  command = cp $in $out\nbuild b: cp a\n' > build.ninja && echo x > a && ninja && cmp a b'''
+
+# C++.
+[[package]]
+name = "cmake"
+check = '''printf abc > f && cmake -E sha256sum f | grep -q '^ba7816bf' '''
+
+[[package]]
+name = "jq"
+check = '''echo '{"a":[1,2,3]}' | jq '.a | add' | grep -Fx 6'''
+
+[[package]]
+name = "gawk"
+check = '''echo 'b a' | gawk '{ n = split($0, x); asort(x); print x[1] }' | grep -Fx a'''
+
+[[package]]
+name = "gsed"
+check = '''echo abc | gsed -E 's/(b)/[\1]/' | grep -Fx 'a[b]c' '''
+
+[[package]]
+name = "gmake"
+check = '''printf 'all:\n\t@echo $(words a b c)\n' > Makefile && gmake | grep -Fx 3'''
+
+[[package]]
+name = "zstd"
+check = '''seq 1 10000 > f && zstd -q f -o f.zst && zstd -dcq f.zst | cmp - f'''
+
+# C++.
+[[package]]
+name = "p7zip"
+check = '''seq 1 1000 > f && 7za a -bd x.7z f > /dev/null && rm f && 7za x -bd x.7z > /dev/null && test "$(wc -l < f)" -eq 1000'''
+
+[[package]]
+name = "mutt"
+check = '''mutt -v | head -n 1 | grep -q '^Mutt ' '''

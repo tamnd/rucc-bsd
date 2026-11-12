@@ -230,6 +230,9 @@ pub struct Request {
     pub modules: Option<PathBuf>,
     /// The rb-bench program that goes on the results disk as `rb-bench`, for the bench suite.
     pub bench: Option<PathBuf>,
+    /// The packages of rb foreign, a directory with `All/` and `checks`, that go on the results
+    /// disk under `pkgs/` for the foreign suite.
+    pub pkgs: Option<PathBuf>,
 }
 
 /// How a boot ended.
@@ -459,12 +462,14 @@ pub fn login_command() -> String {
 /// [`RbConf::scripts_on_disk`] it has them too, for an image whose scripts are older than rb's.
 /// With `modules`, it has that tree under `kmods/`. The name is not `modules`, which is the
 /// directory of the modules suite in the results. With `bench`, it has that file as `rb-bench`.
+/// With `pkgs`, it has that tree under `pkgs/`, for the same reason not under `foreign/`.
 pub fn results_disk(
     conf: &RbConf,
     size: u64,
     login: bool,
     modules: Option<&Path>,
     bench: Option<&Path>,
+    pkgs: Option<&Path>,
 ) -> Result<Vec<u8>, String> {
     let mut entries = vec![ustar::Entry::file("rb.conf", 0o644, conf.render())];
     if login || conf.scripts_on_disk {
@@ -473,6 +478,7 @@ pub fn results_disk(
             ("run", rb_image::guest::RUN),
             ("modules", rb_image::guest::MODULES),
             ("bench", rb_image::guest::BENCH),
+            ("foreign", rb_image::guest::FOREIGN),
             ("smoke", rb_image::guest::SMOKE),
             ("tests", rb_image::guest::TESTS),
         ] {
@@ -486,6 +492,10 @@ pub fn results_disk(
     if let Some(file) = bench {
         let data = std::fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
         entries.push(ustar::Entry::file("rb-bench", 0o555, data));
+    }
+    if let Some(dir) = pkgs {
+        entries.push(ustar::Entry::dir("pkgs"));
+        tree(dir, "pkgs", &mut entries)?;
     }
     let tar = ustar::write(&entries)?;
     if (tar.len() as u64) > size {
@@ -560,6 +570,7 @@ pub fn prepare(req: &Request) -> Result<(), String> {
             req.login,
             req.modules.as_deref(),
             req.bench.as_deref(),
+            req.pkgs.as_deref(),
         )?,
         req.disk_size,
     )?;
@@ -848,11 +859,12 @@ fn collect(req: &Request, seen: &Seen) -> Result<Option<String>, String> {
     let entries = ustar::read_disk(&paths(req).results_disk).unwrap_or_default();
     let results = req.out.join("results");
     // What rb wrote before the boot is not a result: the rb.conf, and rb-rc's scripts with
-    // --login, the modules of --modules and the program of --bench.
+    // --login, the modules of --modules, the program of --bench and the packages of --pkgs.
     let ours = |path: &str| {
-        ["rb.conf", "rb", "kmods", "rb-bench"].contains(&path)
+        ["rb.conf", "rb", "kmods", "rb-bench", "pkgs"].contains(&path)
             || path.starts_with("rb/")
             || path.starts_with("kmods/")
+            || path.starts_with("pkgs/")
     };
     if entries.iter().any(|e| !ours(&e.path)) {
         ustar::unpack(&entries, &results)?;
@@ -1020,6 +1032,7 @@ pub(crate) mod tests {
             login: false,
             modules: None,
             bench: None,
+            pkgs: None,
         }
     }
 
@@ -1126,16 +1139,16 @@ pub(crate) mod tests {
             suites: vec!["boot".into(), "smoke".into()],
             ..RbConf::default()
         };
-        let tar = results_disk(&conf, 1 << 20, false, None, None).unwrap();
+        let tar = results_disk(&conf, 1 << 20, false, None, None, None).unwrap();
         let entries = ustar::read(&tar).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "rb.conf");
         let text = String::from_utf8(entries[0].data.clone()).unwrap();
         assert!(text.contains("rb_suites='boot smoke'\n"), "{text}");
         assert!(text.contains("rb_poweroff=YES\n"), "{text}");
-        assert!(results_disk(&conf, 512, false, None, None).is_err());
+        assert!(results_disk(&conf, 512, false, None, None, None).is_err());
         // With --login, rb-rc's scripts come on the disk, where the typed command finds them.
-        let tar = results_disk(&conf, 1 << 20, true, None, None).unwrap();
+        let tar = results_disk(&conf, 1 << 20, true, None, None, None).unwrap();
         let entries = ustar::read(&tar).unwrap();
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(
@@ -1146,6 +1159,7 @@ pub(crate) mod tests {
                 "rb/run",
                 "rb/modules",
                 "rb/bench",
+                "rb/foreign",
                 "rb/smoke",
                 "rb/tests"
             ]
@@ -1162,7 +1176,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_results_disk_holds_the_modules() {
+    fn the_results_disk_holds_the_modules_the_program_and_the_packages() {
         let dir = std::env::temp_dir().join(format!("rb-boot-modules-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         for m in ["udf", "nfs"] {
@@ -1176,7 +1190,13 @@ pub(crate) mod tests {
         };
         let bench = std::env::temp_dir().join(format!("rb-boot-bench-{}", std::process::id()));
         std::fs::write(&bench, "elf").unwrap();
-        let tar = results_disk(&conf, 1 << 20, false, Some(&dir), Some(&bench)).unwrap();
+        let pkgs = std::env::temp_dir().join(format!("rb-boot-pkgs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&pkgs);
+        std::fs::create_dir_all(pkgs.join("All")).unwrap();
+        std::fs::write(pkgs.join("All/bash-5.3.tgz"), "xz").unwrap();
+        std::fs::write(pkgs.join("checks"), "bash\tbash -c :\n").unwrap();
+        let tar =
+            results_disk(&conf, 1 << 20, false, Some(&dir), Some(&bench), Some(&pkgs)).unwrap();
         let entries = ustar::read(&tar).unwrap();
         let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
         assert_eq!(
@@ -1188,15 +1208,21 @@ pub(crate) mod tests {
                 "kmods/nfs/nfs.kmod",
                 "kmods/udf",
                 "kmods/udf/udf.kmod",
-                "rb-bench"
+                "rb-bench",
+                "pkgs",
+                "pkgs/All",
+                "pkgs/All/bash-5.3.tgz",
+                "pkgs/checks"
             ]
         );
         assert_eq!(entries[5].data, b"udf");
         assert_eq!(entries[6].data, b"elf");
         assert_eq!(entries[6].mode, 0o555);
+        assert_eq!(entries[9].data, b"xz");
         let text = String::from_utf8(entries[0].data.clone()).unwrap();
         assert!(text.contains("rb_modules_skip=nfs\n"), "{text}");
         std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&pkgs).unwrap();
         std::fs::remove_file(&bench).unwrap();
     }
 
@@ -1395,6 +1421,7 @@ pub mod cli {
             login: args.has("login"),
             modules: args.get("modules").map(PathBuf::from),
             bench: args.get("bench").map(PathBuf::from),
+            pkgs: args.get("pkgs").map(PathBuf::from),
         })
     }
 
@@ -1481,7 +1508,8 @@ pub mod cli {
                 ["net/carp", "net/ndp", "net/carp", "net/ndp"]
             );
             assert!(req.conf.scripts_on_disk);
-            let disk = crate::boot::results_disk(&req.conf, 1 << 20, false, None, None).unwrap();
+            let disk =
+                crate::boot::results_disk(&req.conf, 1 << 20, false, None, None, None).unwrap();
             let names: Vec<String> = rb_image::ustar::read(&disk)
                 .unwrap()
                 .into_iter()

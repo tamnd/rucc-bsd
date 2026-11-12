@@ -21,6 +21,7 @@ pub mod demands;
 pub mod divergences;
 pub mod fetch;
 pub mod flagsdiff;
+pub mod foreign;
 pub mod frames;
 pub mod image;
 pub mod kmodrelocs;
