@@ -20,6 +20,12 @@
 //! `.comment`, function sizes and the names a compiler makes up, such as `*.cold` and
 //! `*.isra.0`. They are listed but not counted. ctfconvert adds `.SUNW_ctf` after the compile,
 //! so an object that the replay compiles again has none. The gate is zero counted differences.
+//!
+//! `rb sections-diff --allow FILE` also allows the statics that FILE names, each with its source
+//! and a reason (see [`Allow`]). GCC and rucc can put a static that the program never writes, or
+//! never uses, in different sections, or keep it in one build only. A data section that differs
+//! is allowed when its object symbols, with the allowed statics left out, are the same in G and
+//! R, and an allowed static is in it in G or R.
 
 use crate::census::{absolute, is_object};
 use harness_shim::record::CompileRecord;
@@ -28,6 +34,7 @@ use object::read::elf::{ElfFile, FileHeader, SectionHeader as _, Sym as _};
 use object::{
     Endianness, FileKind, Object as _, ObjectComdat as _, ObjectSection as _, ObjectSymbol as _,
 };
+use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
@@ -397,9 +404,130 @@ fn finding(kind: &'static str, allowed: Option<&'static str>, what: String) -> F
     }
 }
 
+/// The statics that `rb sections-diff --allow FILE` allows, by source.
+///
+/// FILE has one `[[static]]` table for each static, with `source`, the path of the unit under the
+/// source root, such as `sys/net/rss_config.c`, `symbol`, the name without the `.N` of a static
+/// local, and `why`, one line that says why the placement may differ.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Allow {
+    /// The allowed names of each source.
+    pub statics: BTreeMap<String, BTreeSet<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AllowFile {
+    #[serde(rename = "static", default)]
+    statics: Vec<AllowEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AllowEntry {
+    source: String,
+    symbol: String,
+    why: String,
+}
+
+impl Allow {
+    /// Read an allow list. Each entry must have a source, a symbol and a reason, and no entry may
+    /// be there twice.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let file: AllowFile = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut out = Self::default();
+        for e in file.statics {
+            if e.source.is_empty() || e.symbol.is_empty() || e.why.trim().is_empty() {
+                return Err(format!(
+                    "the entry {:?} of {:?} needs a source, a symbol and a reason",
+                    e.symbol, e.source
+                ));
+            }
+            if !out
+                .statics
+                .entry(e.source.clone())
+                .or_default()
+                .insert(e.symbol.clone())
+            {
+                return Err(format!("{} {} is there twice", e.source, e.symbol));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The allowed names of a unit: the entries whose source is the unit's source or the end of
+    /// it after a `/`.
+    #[must_use]
+    pub fn names(&self, source: &str) -> BTreeSet<String> {
+        self.statics
+            .iter()
+            .filter(|(s, _)| {
+                source == s.as_str()
+                    || source
+                        .strip_suffix(s.as_str())
+                        .is_some_and(|head| head.ends_with('/'))
+            })
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect()
+    }
+
+    /// The number of entries.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.statics.values().map(BTreeSet::len).sum()
+    }
+
+    /// Whether there is no entry.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.statics.is_empty()
+    }
+}
+
+/// Why a data section that differs is allowed by `--allow`.
+const MOVED: &str = "statics of the allow list, which GCC and rucc place differently";
+
+/// The allowed statics in `section` of G or R, joined, when the other object symbols of the
+/// section are the same in both, with the same sizes. `None` when there is no allowed static in
+/// it or another symbol differs.
+fn moved(g: &Object, r: &Object, section: &str, names: &BTreeSet<String>) -> Option<String> {
+    if names.is_empty() {
+        return None;
+    }
+    let mut seen = BTreeSet::new();
+    let mut rest = |o: &Object| {
+        let mut out: BTreeMap<(String, u64), usize> = BTreeMap::new();
+        for sym in &o.symbols {
+            if !sym.defined || sym.section != section || sym.kind != elf::STT_OBJECT.0 {
+                continue;
+            }
+            let name = if sym.binding == elf::STB_LOCAL.0 {
+                unnumbered(&sym.name)
+            } else {
+                &sym.name
+            };
+            if names.contains(name) {
+                seen.insert(name.to_string());
+            } else {
+                *out.entry((name.to_string(), sym.size)).or_default() += 1;
+            }
+        }
+        out
+    };
+    let (a, b) = (rest(g), rest(r));
+    (a == b && !seen.is_empty()).then(|| seen.into_iter().collect::<Vec<_>>().join(", "))
+}
+
 /// The differences between the sections of two objects, G first.
 #[must_use]
 pub fn sections(g: &Object, r: &Object) -> Vec<Finding> {
+    sections_allowing(g, r, &BTreeSet::new())
+}
+
+/// The differences between the sections of two objects, G first, with the statics `names` of the
+/// allow list (see [`Allow`]).
+#[must_use]
+pub fn sections_allowing(g: &Object, r: &Object, names: &BTreeSet<String>) -> Vec<Finding> {
     let index = |o: &Object| -> BTreeMap<String, Section> {
         let mut out = BTreeMap::new();
         for s in &o.sections {
@@ -417,14 +545,23 @@ pub fn sections(g: &Object, r: &Object) -> Vec<Finding> {
     };
     let (gs, rs) = (index(g), index(r));
     let mut out = Vec::new();
-    for (name, s) in &gs {
-        if !rs.contains_key(name) {
-            out.push(finding("section only in G", free_section(s), name.clone()));
-        }
-    }
-    for (name, s) in &rs {
-        if !gs.contains_key(name) {
-            out.push(finding("section only in R", free_section(s), name.clone()));
+    // A difference that counts, unless the statics of the allow list explain it.
+    let counted =
+        |kind: &'static str, why: Option<&'static str>, name: &str, what: String| match why {
+            Some(_) => finding(kind, why, what),
+            None => match moved(g, r, name, names) {
+                Some(statics) => finding(kind, Some(MOVED), format!("{what}; {statics}")),
+                None => finding(kind, None, what),
+            },
+        };
+    for (side, mine, theirs) in [
+        ("section only in G", &gs, &rs),
+        ("section only in R", &rs, &gs),
+    ] {
+        for (name, s) in mine {
+            if !theirs.contains_key(name) {
+                out.push(counted(side, free_section(s), name, name.clone()));
+            }
         }
     }
     for (name, a) in &gs {
@@ -460,7 +597,7 @@ pub fn sections(g: &Object, r: &Object) -> Vec<Finding> {
         }
         if a.size != b.size {
             let what = format!("{name}: {} bytes in G, {} in R", a.size, b.size);
-            out.push(finding("section size", free_size(a), what));
+            out.push(counted("section size", free_size(a), name, what));
         }
     }
     if g.properties != r.properties {
@@ -477,6 +614,13 @@ pub fn sections(g: &Object, r: &Object) -> Vec<Finding> {
     for name in r.groups.difference(&g.groups) {
         out.push(finding("group only in R", free_symbol(name), name.clone()));
     }
+    out.extend(linker_set_entries(g, r));
+    out
+}
+
+/// The entries of each linker set that only one of two objects has, G first.
+fn linker_set_entries(g: &Object, r: &Object) -> Vec<Finding> {
+    let mut out = Vec::new();
     let (gsets, rsets) = (linker_sets(g), linker_sets(r));
     let empty = BTreeMap::new();
     for set in gsets.keys().chain(rsets.keys()).collect::<BTreeSet<_>>() {
@@ -710,9 +854,10 @@ pub enum Pair {
     Unreadable(String),
 }
 
-/// Compare one pair of files.
+/// Compare one pair of files. `names` are the statics of the allow list for the unit, which only
+/// [`Mode::Sections`] uses.
 #[must_use]
-pub fn compare_files(mode: Mode, g: &str, r: &str) -> Pair {
+pub fn compare_files(mode: Mode, g: &str, r: &str, names: &BTreeSet<String>) -> Pair {
     let load = |path: &str| match std::fs::read(path) {
         Ok(data) => read(&data).map(Some).map_err(|e| format!("{path}: {e}")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -721,7 +866,7 @@ pub fn compare_files(mode: Mode, g: &str, r: &str) -> Pair {
     match (load(g), load(r)) {
         (Err(e), _) | (_, Err(e)) => Pair::Unreadable(e),
         (Ok(Some(a)), Ok(Some(b))) => Pair::Compared(match mode {
-            Mode::Sections => sections(&a, &b),
+            Mode::Sections => sections_allowing(&a, &b, names),
             Mode::Symbols => symbols(&a, &b),
         }),
         _ => Pair::Gone,
@@ -830,12 +975,13 @@ impl ObjDiff {
     }
 }
 
-/// Compare the objects of two builds, `jobs` pairs at a time.
+/// Compare the objects of two builds, `jobs` pairs at a time, with the statics of `allow`.
 #[must_use]
 pub fn compare(
     mode: Mode,
     g: &BTreeMap<String, Unit>,
     r: &BTreeMap<String, Unit>,
+    allow: &Allow,
     jobs: usize,
 ) -> ObjDiff {
     let mut diff = ObjDiff {
@@ -851,7 +997,8 @@ pub fn compare(
     let tasks: Vec<harness_agent::pool::Task<'_, Pair>> = pairs
         .iter()
         .map(|(_, a, b)| {
-            Box::new(move || compare_files(mode, &a.path, &b.path))
+            let names = allow.names(&a.source);
+            Box::new(move || compare_files(mode, &a.path, &b.path, &names))
                 as harness_agent::pool::Task<'_, _>
         })
         .collect();
@@ -879,7 +1026,7 @@ pub fn compare(
 
 /// `rb sections-diff` and `rb symbols-diff` on the command line.
 pub mod cli {
-    use super::{Mode, compare, units};
+    use super::{Allow, Mode, compare, units};
     use crate::cli::Args;
     use harness_shim::record::read_log;
     use std::path::Path;
@@ -901,10 +1048,21 @@ pub mod cli {
         };
         let g_units = read(g, args.get("g-root").unwrap_or_default())?;
         let r_units = read(r, args.get("r-root").unwrap_or_default())?;
+        let allow = match args.get("allow") {
+            None => Allow::default(),
+            Some(_) if mode != Mode::Sections => {
+                return Err("--allow is for rb sections-diff only".into());
+            }
+            Some(file) => {
+                let text = std::fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+                Allow::parse(&text).map_err(|e| format!("{file}: {e}"))?
+            }
+        };
         let diff = compare(
             mode,
             &g_units,
             &r_units,
+            &allow,
             number("jobs", harness_agent::pool::default_jobs(1))?,
         );
         let text = diff.report(mode, number("limit", 20)?);
@@ -1072,6 +1230,82 @@ mod tests {
     }
 
     #[test]
+    fn an_allowed_static_explains_a_data_section() {
+        let sym = |name: &str, size: u64, section: &str| Symbol {
+            name: name.into(),
+            binding: elf::STB_LOCAL.0,
+            kind: elf::STT_OBJECT.0,
+            visibility: 0,
+            size,
+            section: section.into(),
+            defined: true,
+        };
+        let o = |size: u64, symbols: Vec<Symbol>| Object {
+            sections: vec![Section {
+                name: ".data".into(),
+                kind: elf::SHT_PROGBITS.0,
+                flags: 0x3,
+                entsize: 0,
+                size,
+                group: String::new(),
+            }],
+            symbols,
+            groups: BTreeSet::new(),
+            properties: Vec::new(),
+        };
+        let g = o(24, vec![sym("x", 8, ".data"), sym("buf.3", 16, ".data")]);
+        let r = o(8, vec![sym("x", 8, ".data"), sym("buf.5", 16, ".rodata")]);
+        let names: BTreeSet<String> = ["buf".to_string()].into();
+        assert_eq!(kinds(&sections(&g, &r)), [("section size", true)]);
+        let found = sections_allowing(&g, &r, &names);
+        assert_eq!(kinds(&found), [("section size", false)]);
+        assert_eq!(found[0].allowed, Some(MOVED));
+        assert_eq!(found[0].what, ".data: 24 bytes in G, 8 in R; buf");
+        // Another symbol that differs still counts.
+        let r = o(16, vec![sym("x", 16, ".data"), sym("buf.5", 16, ".rodata")]);
+        assert_eq!(
+            kinds(&sections_allowing(&g, &r, &names)),
+            [("section size", true)]
+        );
+        // So does a section with no allowed static in it.
+        let g = o(16, vec![sym("x", 8, ".data"), sym("y", 8, ".data")]);
+        let r = o(8, vec![sym("x", 8, ".data"), sym("buf.5", 16, ".rodata")]);
+        assert_eq!(
+            kinds(&sections_allowing(&g, &r, &names)),
+            [("section size", true)]
+        );
+        // A data section in one build only, which holds only allowed statics.
+        let g = o(16, vec![sym("buf.1", 16, ".data")]);
+        let r = Object::default();
+        assert_eq!(
+            kinds(&sections_allowing(&g, &r, &names)),
+            [("section only in G", false)]
+        );
+    }
+
+    #[test]
+    fn an_allow_list_names_each_static_once_with_a_reason() {
+        let entry = |source: &str, symbol: &str, why: &str| {
+            format!("[[static]]\nsource = {source:?}\nsymbol = {symbol:?}\nwhy = {why:?}\n")
+        };
+        let text = entry("sys/dev/a.c", "t", "never written")
+            + &entry("sys/dev/a.c", "u", "never used")
+            + &entry("sys/b.c", "t", "never written");
+        let allow = Allow::parse(&text).unwrap();
+        assert_eq!(allow.len(), 3);
+        let names = |s: &str| allow.names(s).into_iter().collect::<Vec<_>>();
+        assert_eq!(names("/mnt/nb/src/sys/dev/a.c"), ["t", "u"]);
+        assert_eq!(names("sys/b.c"), ["t"]);
+        assert!(names("/mnt/nb/src/xsys/b.c").is_empty());
+        let twice = entry("sys/b.c", "t", "x") + &entry("sys/b.c", "t", "y");
+        assert!(Allow::parse(&twice).unwrap_err().contains("twice"));
+        assert!(Allow::parse(&entry("sys/b.c", "t", " ")).is_err());
+        assert!(Allow::parse("[[static]]\nsource = \"a.c\"\nsymbol = \"t\"\n").is_err());
+        let netbsd = include_str!("../../../conf/netbsd/sections-allow.toml");
+        assert_eq!(Allow::parse(netbsd).unwrap().len(), 24);
+    }
+
+    #[test]
     fn code_size_is_free_and_data_size_counts() {
         let g = read(&object(16, 4, "__set_a", false)).unwrap();
         let r = read(&object(16, 9, "__set_a", false)).unwrap();
@@ -1213,8 +1447,22 @@ mod tests {
                 source: String::new(),
             },
         );
-        let diff = compare(Mode::Sections, &g, &r, 2);
+        let diff = compare(Mode::Sections, &g, &r, &Allow::default(), 2);
+        let allow =
+            Allow::parse("[[static]]\nsource = \"a.c\"\nsymbol = \"table\"\nwhy = \"a test\"\n")
+                .unwrap();
+        let allowed = compare(Mode::Sections, &g, &r, &allow, 2);
+        let symbols = compare(Mode::Symbols, &g, &r, &allow, 2);
         std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(allowed.counted(), 0);
+        assert!(
+            allowed
+                .report(Mode::Sections, 10)
+                .contains(&format!("section size, {MOVED} (1)")),
+            "{}",
+            allowed.report(Mode::Sections, 10)
+        );
+        assert_eq!(symbols.counted(), 1);
         assert_eq!((diff.paired, diff.gone, diff.only_g.len()), (2, 1, 1));
         assert_eq!(diff.counted(), 1);
         let text = diff.report(Mode::Sections, 10);

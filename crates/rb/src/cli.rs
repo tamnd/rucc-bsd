@@ -84,7 +84,12 @@ pub fn accepted(command: &str) -> Option<Accepts> {
             values: &["arch"],
             switches: &[],
         },
-        "sections-diff" | "symbols-diff" | "vec-audit" => Accepts {
+        "sections-diff" => Accepts {
+            positional: false,
+            values: &["g", "r", "g-root", "r-root", "allow", "jobs", "limit"],
+            switches: &[],
+        },
+        "symbols-diff" | "vec-audit" => Accepts {
             positional: false,
             values: &["g", "r", "g-root", "r-root", "jobs", "limit"],
             switches: &[],
@@ -650,15 +655,19 @@ usage:
       probes-G.jsonl and probes-R.jsonl there. --all prints the probes that are the same too. A
       macro that mk-divergences.toml, or FILE, allows is listed with its reason and does not
       count. Exits 1 when a probe differs.
-  rb sections-diff --g LOG --r LOG [--g-root DIR --r-root DIR] [--jobs N] [--limit N]
+  rb sections-diff --g LOG --r LOG [--g-root DIR --r-root DIR] [--allow FILE] [--jobs N]
+          [--limit N]
       Compare each object of two builds. LOG is the compile.jsonl of each build, and objects are
       paired by path, with the roots replaced as for rb flags-diff. Section names must be the
       same. Each section both objects have must have the same flags, type, entry size and group,
       and each data section the same size. Each linker set, set_* or link_set_*, must hold the
       same entries, with the .N of a static local's name left out. Code, read-only data,
       relocation, debug, .SUNW_ctf and .comment sections may differ: they are listed but not
-      counted. Each difference is one line with the unit's source, grouped by kind. Each list
-      stops after N lines, 20 by default. Exits 1 when a difference counts or no object is paired.
+      counted. FILE lists statics by source and name, each with a reason, such as
+      conf/netbsd/sections-allow.toml. A data section that differs is allowed when an allowed
+      static of the unit is in it, and its other object symbols are the same in both builds.
+      Each difference is one line with the unit's source, grouped by kind. Each list stops after
+      N lines, 20 by default. Exits 1 when a difference counts or no object is paired.
   rb sets [--as-of TIME] [--write]
       Read what FreeBSD and NetBSD publish, expand sets.toml into pins and compare them with
       pins.toml. --write rewrites pins.toml. --as-of takes the newest commit at or before TIME on
