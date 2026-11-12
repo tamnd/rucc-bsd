@@ -123,7 +123,7 @@ cp "$rtests" "$c/tests.$suffix"
 	sed 's/^/tests	/' "$tmp/tests"
 	sed 's/^/base	/' "$tmp/base"
 } > "$list"
-echo "borrow.sh: $(wc -l < "$tmp/tests") paths of the tests set and $(wc -l < "$tmp/base") of the base set" >&2
+echo "borrow.sh: $(awk 'END { print NR }' "$tmp/tests") paths of the tests set and $(awk 'END { print NR }' "$tmp/base") of the base set" >&2
 
 sets=
 for s in modules base etc comp games gpufw man misc rescue text base32 base64 manhtml \
