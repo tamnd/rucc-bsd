@@ -167,6 +167,7 @@ jobs:
           path: ${{ runner.temp }}/rb-bench
       - name: the images
         run: |
+          set -o pipefail
           sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
           {
             echo "### FreeBSD images"
@@ -249,6 +250,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - name: the sysroot, from the base and comp sets
         run: |
+          set -o pipefail
           scripts/bench/artifact.sh netbsd-amd64-sets "$NB_ROOT/sets" | tee -a "$GITHUB_STEP_SUMMARY"
           mkdir -p "$NB_ROOT/sysroot"
           for set in base comp; do
@@ -295,6 +297,7 @@ jobs:
           path: ${{ runner.temp }}/rb-bench
       - name: the images
         run: |
+          set -o pipefail
           sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
           {
             echo "### NetBSD images"
