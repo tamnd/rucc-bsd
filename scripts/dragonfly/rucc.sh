@@ -5,8 +5,8 @@
 #   rucc.sh OUTDIR CCVER
 #
 # With RB_RUCC_BIN set, rucc.sh installs that rucc and does not build one.
-# The source of rucc is in /build/rucc-src, copied in by the host. rucc has no dependencies from
-# crates.io, so cargo needs no network. Rust is the rust package of the DragonFly package
+# The source of rucc is in /build/rucc-src, copied in by the host. cargo fetches the crates of
+# Cargo.lock from crates.io through the network of the VM, and then builds offline. Rust is the rust package of the DragonFly package
 # repository, as rustup has no host toolchain for DragonFly. /usr/local of the live system is on
 # its root disk, which has little free space, so the packages go to /build/local, which is mounted
 # on /usr/local with mount_null.
@@ -66,7 +66,7 @@ else
 		exit 1
 	fi
 	export CARGO_HOME=/build/cargo CARGO_TARGET_DIR=/build/rucc-target CARGO_BUILD_JOBS="$RB_JOBS"
-	(cd /build/rucc-src && cargo build -q --release --offline -p rucc)
+	(cd /build/rucc-src && cargo fetch --locked && cargo build -q --release --locked --offline -p rucc)
 	install -m 755 "$CARGO_TARGET_DIR/release/rucc" "$bin/rucc"
 fi
 # compilers.conf names one program for cpp, so a script gives rucc -E.
