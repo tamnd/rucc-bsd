@@ -17,7 +17,8 @@
 #   S COUNT              the 40 hottest kernel stacks follow, one frame on each line
 # OUT/bench.tsv gets the line of the benchmark, as in bench.sh. OUT/kernel.gz is /boot/kernel/kernel
 # of the image, so that the host can disassemble the hot functions. OUT/hwpmc.txt says if hwpmc
-# works in the VM.
+# works in the VM. OUT/pmap.txt has the superpage counters and the page sizes of the kernel map
+# after the last benchmark.
 
 out=$1
 mkdir -p "$out"
@@ -115,6 +116,11 @@ for name in ${rb_bench_only:-}; do
 		;;
 	esac
 done
+
+# A copy that runs at a third of the speed of the other kernel can come from smaller pages in the
+# direct map or in the user buffer, so the page sizes are kept.
+sysctl vm.pmap > "$out/pmap.txt" 2>&1
+sysctl -n vm.pmap.kernel_maps >> "$out/pmap.txt" 2>&1
 
 rm -rf "$tmp"
 echo "$done_/$total" > "$out/counts"

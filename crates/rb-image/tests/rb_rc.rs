@@ -855,6 +855,7 @@ fn profile_runs_each_benchmark_under_dtrace() {
     }
     assert_eq!(read("counts"), "2/2\n");
     assert_eq!(read("version"), "rb-bench 1\n");
+    assert!(root.join("out/pmap.txt").exists());
     assert!(!root.join("work/profile").exists());
     std::fs::remove_dir_all(&root).unwrap();
 }
