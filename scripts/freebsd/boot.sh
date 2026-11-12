@@ -18,7 +18,10 @@
 # Console markers and limits:
 #   RB-READY   rb-rc started; within RB_BOOT_LIMIT seconds (default 600)
 #   RB-DONE    the suites finished; within RB_RUN_LIMIT seconds of the start (default 14400)
-# On a timeout QEMU is killed. OUTDIR/boot.json says what happened.
+# On a timeout QEMU is killed. After RB-DONE the guest has RB_POWEROFF_LIMIT seconds (default 120)
+# to power off. The results are on the rb disk before RB-DONE, so when the shutdown hangs QEMU is
+# killed and the boot still counts as done, with "poweroff": "forced" in boot.json. OUTDIR/boot.json
+# says what happened.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -28,6 +31,7 @@ suites=$3
 out=$4
 : "${RB_BOOT_LIMIT:=600}"
 : "${RB_RUN_LIMIT:=14400}"
+: "${RB_POWEROFF_LIMIT:=120}"
 : "${RB_VM_CPUS:=2}"
 : "${RB_VM_MEM:=8G}"
 : "${RB_KYUA_FILTERS:=}"
@@ -91,6 +95,8 @@ qemu=$!
 
 ready=""
 done_line=""
+done_at=""
+poweroff=clean
 result=timeout
 while kill -0 "$qemu" 2>/dev/null; do
 	sleep 5
@@ -101,7 +107,14 @@ while kill -0 "$qemu" 2>/dev/null; do
 	fi
 	if [ -z "$done_line" ] && grep -q '^RB-DONE' "$console" 2>/dev/null; then
 		done_line="$(grep -a -m1 '^RB-DONE' "$console" | tr -d '"\\\r')"
+		done_at=$now
 		echo "$done_line after ${now}s"
+	fi
+	if [ -n "$done_at" ] && [ $((now - done_at)) -gt "$RB_POWEROFF_LIMIT" ]; then
+		echo "no power off in ${RB_POWEROFF_LIMIT}s after RB-DONE"
+		poweroff=forced
+		kill "$qemu"
+		break
 	fi
 	if [ -z "$ready" ] && [ "$now" -gt "$RB_BOOT_LIMIT" ]; then
 		echo "no RB-READY in ${RB_BOOT_LIMIT}s"
@@ -145,7 +158,7 @@ tar -xf "$out/rb.tar" -C "$out/results" 2>/dev/null || true
 rm -f "$out/disk.qcow2" "$out/rb.tar" "$out"/disk-* "$out/vars.fd"
 
 cat > "$out/boot.json" <<EOF
-{"firmware": "$firmware", "suites": "$suites", "result": "$result", "ready_seconds": ${ready:-null}, "seconds": $seconds, "done": "${done_line#RB-DONE }", "panic": "$(grep -a -m1 '^panic:' "$console" | tr -d '"\\\r' || true)"}
+{"firmware": "$firmware", "suites": "$suites", "result": "$result", "ready_seconds": ${ready:-null}, "seconds": $seconds, "done": "${done_line#RB-DONE }", "panic": "$(grep -a -m1 '^panic:' "$console" | tr -d '"\\\r' || true)", "poweroff": "$poweroff"}
 EOF
 cat "$out/boot.json"
 [ "$result" = "done" ]
