@@ -343,6 +343,11 @@ fn graded_commands(command: &str) -> Option<Accepts> {
             values: &["g", "r", "g-root", "r-root", "limit", "top"],
             switches: &[],
         },
+        "kmod-relocs" => Accepts {
+            positional: true,
+            values: &["limit"],
+            switches: &[],
+        },
         "mixed" => Accepts {
             positional: false,
             values: &[
@@ -560,6 +565,14 @@ usage:
       live-image target with its files added, and grows the image to SIZE. The suites go in
       /etc/rb.conf, boot only by default. --packages copies a local package repository to
       /var/db/rb-pkg. The logs go to --work, IMG.work by default. --dry-run prints the commands.
+  rb kmod-relocs DIR [--limit N]
+      Check that each kernel module under DIR, every *.ko file, has only the relocations the
+      FreeBSD amd64 kernel linker applies: in a relocation section whose target section is
+      SHF_ALLOC, the types NONE, 64, PC32, PLT32, 32S, GLOB_DAT, JUMP_SLOT, RELATIVE and
+      IRELATIVE. Any other type there makes kldload refuse the module. A file that is not an
+      x86-64 ET_REL object is listed and not counted. Each list stops after N lines, 40 by
+      default. Exits 1 when a module has another type, a module cannot be read, or there is no
+      module.
   rb mixed --g LOG --r LOG [--g-root DIR --r-root DIR] --into DIR --ctf-g K --ctf-r K
           [--allow-types T,T] (--link CMD --test CMD | --dry-run)
       Find the object that makes R fail, by bisection over builds that mix R's and G's objects. The
