@@ -5,7 +5,12 @@
 #   --target and -fgnuc-version: the triple and the persona of docs/plan 04.3 and 05.4;
 #   --sysroot=DESTDIR: tools/gcc/Makefile configures the in-tree GCC with --with-sysroot=DESTDIR,
 #   so the reference uses DESTDIR when the command line has no --sysroot. bsd.sys.mk passes one for
-#   the world; the kernel passes -nostdinc and does not need one.
+#   the world; the kernel passes -nostdinc and does not need one;
+#   -B TOOLDIR/x86_64--netbsd/bin: the in-tree GCC runs the ld of its tooldir for each link, and
+#   the tree does not name a linker. rucc looks for ld in the -B directories first. Without them it
+#   finds no NetBSD ld and runs the host's ld.lld. ld.lld -r puts the __start_link_set_* symbols of
+#   the kmodule script at the end of the section before the set, so a module that iterates a link
+#   set reads the wrong memory (amdgpu panics in drm_sysctl_init). rucc reads -B only for a link.
 # Each call appends one line to the log: the exit status, the directory, the slot, then the
 # arguments, all separated by tabs. RB_SHIM_LOG names another log, or none when it is empty.
 # With a log, and GNU time on the host (overlay.sh puts its path in timer), each call also appends
@@ -21,7 +26,7 @@ if [ -n "$log" ] && [ -n "$timer" ]; then use=$(mktemp "${TMPDIR:-/tmp}/rb-shim.
 run() {
 	if [ -n "$use" ]; then "$timer" -f '%e %U %S %M' -o "$use" "$@"; else "$@"; fi
 }
-args=(--target=@TARGET@ -fgnuc-version=@GNUC@)
+args=(--target=@TARGET@ -fgnuc-version=@GNUC@ -B@LD_DIR@)
 sysroot=--sysroot=@SYSROOT@
 for a in "$@"; do
 	case $a in --sysroot | --sysroot=*) sysroot= ;; esac

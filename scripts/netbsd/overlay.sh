@@ -28,6 +28,13 @@ if [ "$mode" != ref ]; then rucc=$(command -v "$mode"); fi
 dst=${NB_TOOLDIR_R:-$NB_ROOT/tools-r}
 gnu=$(nb_gnu "$NB_TOOLS")
 target=${RB_RUCC_TARGET:-$gnu}
+# The directory of the tooldir's ld, which the in-tree GCC runs for a link and shim-cc.sh names
+# with -B.
+ld_dir=$dst/$gnu/bin
+if [ ! -x "$NB_TOOLS/$gnu/bin/ld" ]; then
+	echo "overlay: $NB_TOOLS/$gnu/bin/ld is not there, and shim-cc.sh links with it" >&2
+	exit 1
+fi
 
 export LC_ALL=C
 : > "$NB_LOGS/shim.tsv"
@@ -47,6 +54,7 @@ for slot in cc:gcc cpp:cpp; do
 	if [ "$mode" = ref ]; then shim=ref; fi
 	sed -e "s|@SLOT@|${slot%%:*}|" -e "s|@RUCC@|$rucc|" -e "s|@LOG@|$NB_LOGS/shim.tsv|" \
 		-e "s|@TARGET@|$target|" -e "s|@GNUC@|$NB_PIN_GCC|" -e "s|@SYSROOT@|$NB_DEST|" -e "s|@TIME@|$timer|" \
+		-e "s|@LD_DIR@|$ld_dir|" \
 		"$NB_REPO/conf/netbsd/toolchain/shim-$shim.sh" > "$dst/bin/$name"
 	chmod 755 "$dst/bin/$name"
 done
@@ -69,5 +77,5 @@ if [ "$mode" = ref ]; then
 	echo "overlay: $dst runs the reference $gnu-gcc and $gnu-cpp through shim-ref.sh"
 else
 	echo "overlay: $dst runs $rucc ($("$rucc" --version 2>&1 | head -1)) as $gnu-gcc and $gnu-cpp"
-	echo "overlay: --target=$target -fgnuc-version=$NB_PIN_GCC --sysroot=$NB_DEST"
+	echo "overlay: --target=$target -fgnuc-version=$NB_PIN_GCC --sysroot=$NB_DEST -B$ld_dir"
 fi
