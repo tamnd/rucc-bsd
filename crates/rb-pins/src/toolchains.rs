@@ -180,6 +180,28 @@ impl Personas {
             .iter()
             .find(|p| p.system == pin.system && p.series.contains(&pin.series))
     }
+
+    /// Make the persona of a pin its fallback, for a G built by the fallback toolchain where the
+    /// reference fails (plan 04.3): the fallback builds G, and rucc claims its version. An error
+    /// when the persona has no fallback with its version.
+    pub fn fall_back(&mut self, pin: &Pin) -> Result<(), String> {
+        let persona = self
+            .persona
+            .iter_mut()
+            .find(|p| p.system == pin.system && p.series.contains(&pin.series))
+            .ok_or_else(|| format!("{PERSONAS} has no persona for {}", pin.name))?;
+        let (Some(reference), Some(gnuc)) = (&persona.fallback, &persona.fallback_gnuc) else {
+            return Err(format!(
+                "the persona of {} in {PERSONAS} has no fallback and fallback_gnuc",
+                pin.name
+            ));
+        };
+        persona.reference = reference.clone();
+        persona.gnuc = gnuc.clone();
+        persona.fallback = None;
+        persona.fallback_gnuc = None;
+        Ok(())
+    }
 }
 
 impl Persona {
@@ -435,6 +457,28 @@ binutils = "2.46"
                 "-fgnuc-version=14.4.0"
             ]
         );
+    }
+
+    #[test]
+    fn the_fallback_builds_g_and_gives_rucc_its_version() {
+        let (mut personas, _) = files();
+        let freebsd = pin("freebsd-stable-15", "freebsd", "15", "15.1-STABLE", None);
+        personas.fall_back(&freebsd).unwrap();
+        let persona = personas.for_pin(&freebsd).unwrap();
+        assert_eq!(persona.reference, "gcc14");
+        assert_eq!(
+            persona.rucc_args(&freebsd, "x86_64")[1],
+            "-fgnuc-version=14.2.0"
+        );
+        assert_eq!(persona.fallback, None);
+        // Once is all there is, and a persona with no fallback has none to take.
+        let again = personas.fall_back(&freebsd).unwrap_err();
+        assert!(again.contains("no fallback"), "{again}");
+        let netbsd = pin("netbsd-trunk", "netbsd", "current", "11.99.10", None);
+        assert!(personas.fall_back(&netbsd).is_err());
+        let none = pin("freebsd-13.5", "freebsd", "13", "13.5-RELEASE", None);
+        let why = personas.fall_back(&none).unwrap_err();
+        assert!(why.contains("no persona for freebsd-13.5"), "{why}");
     }
 
     #[test]

@@ -11,7 +11,8 @@
 #
 # Then rb toolchain RB_PIN_NAME --row RB_ROW writes /build/toolchain: the shims in bin, and ref.mk and rucc.mk.
 # The shims write one record per compiler call to RB_COMPILE_JSONL. A rucc that is not the pinned
-# release makes the build ungraded. OUTDIR/rb-tools.txt records the versions and the checks.
+# release makes the build ungraded. With RB_GCC=14, rb toolchain takes the fallback of the pin's
+# persona, amd64-gcc14, as provision.sh installs it. OUTDIR/rb-tools.txt records the versions and the checks.
 set -eu
 out=$1
 side=$2
@@ -21,6 +22,10 @@ commit=${3:-}
 : "${RB_ROW:=amd64}"
 : "${RB_COMPILE_JSONL:=/build/out/compile.jsonl}"
 : "${RB_JOBS:=$(sysctl -n hw.ncpu)}"
+fallback=
+if [ "${RB_GCC:-15}" = 14 ]; then
+	fallback=--fallback
+fi
 export RUSTUP_HOME=/build/rust/rustup CARGO_HOME=/build/rust/cargo
 export PATH="$CARGO_HOME/bin:$PATH" CARGO_BUILD_JOBS="$RB_JOBS"
 bin=/build/rb/bin
@@ -72,10 +77,10 @@ fi
 
 {
 	echo
-	echo "# rb toolchain $RB_PIN_NAME --row $RB_ROW --cc $side, in $(($(date +%s) - start))s from the start of rb-tools.sh"
+	echo "# rb toolchain $RB_PIN_NAME --row $RB_ROW --cc $side $fallback, in $(($(date +%s) - start))s from the start of rb-tools.sh"
 } >> "$out/rb-tools.txt"
 # shellcheck disable=SC2086
 "$bin/rb" toolchain "$RB_PIN_NAME" --row "$RB_ROW" --dir /build/toolchain --cc "$side" --log "$RB_COMPILE_JSONL" \
-	--shim "$bin/rb-cc" $rucc_flags >> "$out/rb-tools.txt" 2>&1 || status=$?
+	--shim "$bin/rb-cc" $rucc_flags $fallback >> "$out/rb-tools.txt" 2>&1 || status=$?
 cat "$out/rb-tools.txt"
 exit "${status:-0}"
