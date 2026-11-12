@@ -115,6 +115,7 @@ const BENCH: Accepts = Accepts {
         "g-from",
         "r-from",
         "runs",
+        "budget",
         "dir",
         "work",
         "system",
@@ -450,7 +451,7 @@ usage:
       commands, and nothing boots. A run in shards, one boot per shard, joins the directories
       of its shards with '+', as in --from smoke+net+lib. Exits 1 when a run did not pass.
   rb bench PIN --g-image IMG --r-image IMG --g-bench FILE --r-bench FILE [--runs N] [--row ROW]
-          [--dir DIR] [--work DIR] [--system freebsd|netbsd] [--bench-scale S]
+          [--budget SECONDS] [--dir DIR] [--work DIR] [--system freebsd|netbsd] [--bench-scale S]
           [--bench-only NAME,...] [the options of rb boot]
   rb bench PIN --g-from DIR,... --r-from DIR,... [--g-image IMG] [--r-image IMG] [--dir DIR]
       Run the benchmark set of plan 13.2 on G and R (13.3). The first form boots R, then G, N
@@ -463,7 +464,9 @@ usage:
       CV of at most 1% on G. The report gives the geometric mean of the gated speeds and the
       benchmarks behind by more than 2%. DIR/<system>/<row>/<version>/bench.tsv gets the summary
       and runs.tsv every value; DIR is results/bench by default. --bench-scale multiplies the
-      work, and --bench-only runs only the benchmarks named. Exits 1 when a run wrote no results.
+      work, and --bench-only runs only the benchmarks named. With --budget, a run starts only
+      when its two boots can end within SECONDS of the first boot, each at the limit of
+      --timeout, and the summary has the runs that ran. Exits 1 when a run wrote no results.
   rb boot --image IMG --out DIR [--suite boot,smoke,tests,modules,bench,foreign] [--row ROW]
           [--firmware ovmf|seabios|edk2|u-boot]
           [--tests-only DIR,...] [--tests-except DIR,...] [--tests-repeat N]

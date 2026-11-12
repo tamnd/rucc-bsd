@@ -481,7 +481,7 @@ pub mod cli {
     /// The options of `rb bench` that `rb boot` does not take.
     const OURS: &[&str] = &[
         "g-image", "r-image", "g-bench", "r-bench", "g-from", "r-from", "runs", "dir", "work",
-        "system",
+        "system", "budget",
     ];
 
     fn dirs(v: Option<&str>) -> Vec<PathBuf> {
@@ -566,6 +566,42 @@ pub mod cli {
             .unwrap_or_default()
     }
 
+    /// Boot each request in turn, and return how many runs finished and a note when the budget
+    /// stopped the boots. A run is two boots, R then G. It starts only when both can still end in
+    /// the budget, each at its limit.
+    fn boot_all(
+        reqs: &[(&str, usize, boot::Request)],
+        runs: usize,
+        budget: Option<u64>,
+    ) -> Result<(usize, String), String> {
+        let start = std::time::Instant::now();
+        for (side, n, req) in reqs {
+            if *side == "r"
+                && let Some(b) = budget
+                && start.elapsed().as_secs() + 2 * req.timeout > b
+            {
+                eprintln!("rb bench: stop before run {n}: the budget of {b} s");
+                return Ok((
+                    n - 1,
+                    format!(
+                        "\nrb bench stopped before run {n} of {runs}: two more boots of up to {} s each would pass the budget of {b} s.\n",
+                        req.timeout
+                    ),
+                ));
+            }
+            eprintln!(
+                "rb bench: {side} run {n} of {runs} in {}",
+                req.out.display()
+            );
+            let o = boot::run(req)?;
+            eprintln!(
+                "rb bench: {side} run {n}: {} in {:.0} s",
+                o.result, o.seconds
+            );
+        }
+        Ok((runs, String::new()))
+    }
+
     /// Run `rb bench`, and return the report and whether every run wrote results.
     pub fn run(
         args: &Args,
@@ -574,6 +610,7 @@ pub mod cli {
         rows: &Rows,
     ) -> Result<(String, bool), String> {
         let mut meta = meta(args, pins)?;
+        let mut stopped = String::new();
         let top = args
             .get("dir")
             .map_or_else(|| root.join("results/bench"), PathBuf::from);
@@ -599,6 +636,13 @@ pub mod cli {
             if runs == 0 {
                 return Err("--runs must be 1 or more".into());
             }
+            let budget: Option<u64> = args
+                .get("budget")
+                .map(|v| {
+                    v.parse()
+                        .map_err(|_| format!("--budget {v} is not a number"))
+                })
+                .transpose()?;
             let work = args
                 .get("work")
                 .map_or_else(|| root.join("work/bench").join(meta.place()), PathBuf::from);
@@ -629,19 +673,12 @@ pub mod cli {
                     true,
                 ));
             }
-            for (side, n, req) in &reqs {
-                eprintln!(
-                    "rb bench: {side} run {n} of {runs} in {}",
-                    req.out.display()
-                );
-                let o = boot::run(req)?;
-                eprintln!(
-                    "rb bench: {side} run {n}: {} in {:.0} s",
-                    o.result, o.seconds
-                );
-            }
+            let (ran, note) = boot_all(&reqs, runs, budget)?;
+            stopped = note;
             meta.g_image = file_name(&gi);
             meta.r_image = file_name(&ri);
+            gd.truncate(ran);
+            rd.truncate(ran);
             (gd, rd)
         } else {
             if g_from.is_empty() || r_from.is_empty() {
@@ -668,7 +705,7 @@ pub mod cli {
             std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         }
         let mut report = summary.report();
-        let _ = write!(report, "\nWritten to {}.\n", place.display());
+        let _ = write!(report, "{stopped}\nWritten to {}.\n", place.display());
         Ok((report, summary.complete()))
     }
 }

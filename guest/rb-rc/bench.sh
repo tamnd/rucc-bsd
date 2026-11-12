@@ -153,11 +153,14 @@ done
 head -c "$(($(amount 64) * 1048576))" "$tmp/log" > "$tmp/corpus" 2>> "$log"
 
 # tools
+# sh_loop: parameter expansion, case and arithmetic in sh. Each turn takes 10 characters off s and
+# adds at most 9, so s stays under 20 characters. It took 5 and added up to 8, so s grew to
+# megabytes, each case scanned all of it, and the loop ran past every limit on FreeBSD and NetBSD.
 cat > "$tmp/loop.sh" <<'EOF'
 i=0
 s=
 while [ $i -lt "$1" ]; do
-	s="${s#?????}x$i"
+	s="${s#??????????}x$i"
 	case $s in
 	*7*) n=${#s} ;;
 	*) n=$((i % 13)) ;;
