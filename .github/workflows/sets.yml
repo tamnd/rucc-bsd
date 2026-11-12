@@ -10,6 +10,11 @@
 # step summary. A push by the workflow token starts no other workflow; later runs read the new
 # pins.toml.
 #
+# A release pin that the commit adds is a release tagged since the last run. For a FreeBSD one the
+# run starts freebsd-g on main with that pin, so its G build starts on the day the release is
+# tagged (04.7). fetch.sh reads its src.txz from pins.toml. A NetBSD one is listed in the step
+# summary, for netbsd-g with its pin.
+#
 # The cron runs at 22:37 UTC. The run takes about 15 minutes, so it ends well before the nightly of
 # tcg.yml at 01:23 UTC and the two never overlap.
 
@@ -34,6 +39,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: Swatinem/rust-cache@v2.9.2
@@ -78,6 +84,8 @@ jobs:
             echo
             cat "$RUNNER_TEMP/write.txt"
           } > "$RUNNER_TEMP/message.txt"
+          git show HEAD:pins.toml > "$RUNNER_TEMP/old-pins.toml"
+          python3 -I scripts/sets/new-releases.py "$RUNNER_TEMP/old-pins.toml" pins.toml > "$RUNNER_TEMP/new-releases.txt"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pins.toml
@@ -89,3 +97,19 @@ jobs:
             sleep 10
           done
           echo "committed pins.toml to main: $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - name: start the G build of each new release
+        if: steps.sets.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while read -r system name; do
+            case $system in
+            freebsd)
+              gh workflow run freebsd-g.yml -R "$GITHUB_REPOSITORY" --ref main -f pin="$name"
+              echo "new release $name: started freebsd-g with pin $name" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "new release $name: start its G build of $system by hand" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            esac
+          done < "$RUNNER_TEMP/new-releases.txt"

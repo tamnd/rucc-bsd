@@ -41,7 +41,7 @@ on:
   workflow_dispatch:
     inputs:
       pin:
-        description: A pin of conf/freebsd/pins.conf
+        description: A pin of conf/freebsd/pins.conf, or a FreeBSD pin of pins.toml such as freebsd-14.5
         required: false
         default: 15.1-release
       commit:
@@ -100,7 +100,7 @@ env:
     RB_SRCCONF=/root/harness/conf/freebsd/${{ inputs.conf || 'graded' }}.conf RB_TOOLCHAIN=/build/toolchain/ref.mk
     RB_HARNESS=/root/harness RB_DESTDIR=/build/destdir RB_IMAGE=/build/image/freebsd.img
     RB_CONF=${{ inputs.conf || 'graded' }} RB_COMPILE_JSONL=/build/out/compile.jsonl
-    RB_PIN_NAME=${{ (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
+    RB_PIN_NAME=${{ startsWith(inputs.pin, 'freebsd-') && inputs.pin || (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
     RB_GCC=${{ inputs.gcc || '15' }}
 
 jobs:
@@ -343,8 +343,8 @@ jobs:
             read -r job build < <(awk -v p="$RB_PIN" '$1 == p { print $2, $3 }' conf/freebsd/published.conf) || true
           if [ -z "${job:-}" ]; then
             case $RB_PIN in
-            main) job=FreeBSD-main-amd64-test ;;
-            stable-14) job=FreeBSD-stable-14-amd64-test ;;
+            main | freebsd-main) job=FreeBSD-main-amd64-test ;;
+            stable-14 | freebsd-stable-14 | freebsd-14.*) job=FreeBSD-stable-14-amd64-test ;;
             *) job=FreeBSD-stable-15-amd64-test ;;
             esac
           fi
@@ -375,7 +375,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      RB_PIN_NAME: ${{ (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
+      RB_PIN_NAME: ${{ startsWith(inputs.pin, 'freebsd-') && inputs.pin || (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/download-artifact@v8.0.1
