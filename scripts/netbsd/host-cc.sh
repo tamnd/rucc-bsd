@@ -5,6 +5,8 @@
 #
 # NB_HOST_CC_RUCC is the rucc binary. Each call appends one line to NB_HOST_CC_LOG, when that is
 # set: the directory and the arguments. So the log tells which host tools rucc compiled.
+# The gnuhost tools build under env -i, so a caller that sets these variables must put them in a
+# wrapper that runs this script, as netbsd-host.yml does.
 if [ -n "${NB_HOST_CC_LOG:-}" ]; then
 	printf '%s\t%s\n' "$PWD" "$*" >> "$NB_HOST_CC_LOG"
 fi

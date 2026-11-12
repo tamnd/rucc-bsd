@@ -186,8 +186,13 @@ jobs:
           if [ "$R_HOST" = true ]; then
             chmod +x "$NB_ROOT/rucc/rucc"
             provision/builders/netbsd-host/run.sh "$NB_ROOT/rucc/rucc" --version | head -1 > "$NB_ROOT/out/host-cc.txt"
-            export NB_HOST_CC_LOG="$NB_ROOT/out/host-cc.log" NB_HOST_CC_RUCC="$NB_ROOT/rucc/rucc"
-            provision/builders/netbsd-host/run.sh env HOST_CC="$PWD/scripts/netbsd/host-cc.sh" \
+            # The gnuhost tools (isl, gmp and the rest) build under env -i, which drops the
+            # NB_HOST_CC_ variables. Thus HOST_CC is a wrapper that has the paths in it.
+            printf '#!/bin/sh\nNB_HOST_CC_LOG=%s NB_HOST_CC_RUCC=%s exec %s "$@"\n' \
+              "$NB_ROOT/out/host-cc.log" "$NB_ROOT/rucc/rucc" "$PWD/scripts/netbsd/host-cc.sh" \
+              > "$NB_ROOT/rucc/host-cc"
+            chmod +x "$NB_ROOT/rucc/host-cc"
+            provision/builders/netbsd-host/run.sh env HOST_CC="$NB_ROOT/rucc/host-cc" \
               scripts/netbsd/phase.sh tools -P tools
             {
               echo "R-host: build.sh tools with HOST_CC=rucc ($(cat "$NB_ROOT/out/host-cc.txt"))."
