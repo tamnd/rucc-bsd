@@ -55,7 +55,7 @@ Every pin has a reference toolchain and a persona, written in `personas.toml` an
 | System | Pin | Reference GCC | Reference binutils | rucc persona |
 |---|---|---|---|---|
 | FreeBSD | `main`, `stable/15`, `releng/15.x` | `amd64-gcc15` package, GCC 15.2.0 with the port's patches | `binutils` package, BFD ld | 15.2.0 |
-| FreeBSD | `stable/14`, `releng/14.x` | `amd64-gcc15`, falling back to `amd64-gcc14` (14.2.0) where 15 fails and 14 does not | same | the reference's version |
+| FreeBSD | `stable/14`, `releng/14.x` | `amd64-gcc15`, falling back to `amd64-gcc14` (14.2.0) where 15 fails and 14 does not; `stable/14` uses `amd64-gcc14` with `WITHOUT_SSP=yes` for G and R | same | the reference's version |
 | NetBSD | `trunk` | the in-tree GCC 14.4.0, as `build.sh tools` builds it | in-tree binutils 2.46 | 14.4.0 |
 | NetBSD | `netbsd-11`, 11.x | in-tree GCC 12.5.0 | in-tree 2.42 | 12.5.0 |
 | NetBSD | `netbsd-10`, 10.x | in-tree GCC 10.5.0 | in-tree | 10.5.0 |
@@ -144,7 +144,9 @@ Rucc cannot be graded on a head the reference cannot build. So:
 
 B0's first measurement is whether the FreeBSD heads have a G-good commit at all within the last 60 days (open question 1).
 
-B0 found G-good commits on `main` and `stable/15`, and none on `stable/14` with `amd64-gcc15`. `freebsd-g` cannot select the `amd64-gcc14` fallback yet (#85). So `sets.toml` names `stable/14` under `freebsd.current.no_ref` with the reason. `rb sets` pins a branch there at its head with `reference = "no-ref"` and the reason, and no baseline makes it good, until the entry is removed.
+B0 found G-good commits on `main` and `stable/15`, and none on `stable/14` with `amd64-gcc15`. #146 lets `freebsd-g` select the `amd64-gcc14` fallback.
+
+The `stable/14` row builds with `amd64-gcc14` and `WITHOUT_SSP=yes`, for G and R alike (#85). GCC 15 does not build 14.x: `buildworld` of 14.5 fails. The kernel that GCC 14 builds with SSP panics at boot in `__stack_chk_fail` from `mi_startup`. On 14.x, `mi_startup` ends with a tail call to `swapper()`, which is not declared noreturn, so GCC checks the canary before the jump. The `stack_chk` SYSINIT at `SI_SUB_RANDOM` has changed `__stack_chk_guard` since `mi_startup` saved it. On 15.x, `mi_startup` ends with a `tsleep` loop and never checks. The knob is the fifth field of the `stable-14` line of `conf/freebsd/pins.conf`, not a shared SRCCONF, so no other row changes. So `sets.toml` names `stable/14` under `freebsd.current.no_ref` with the reason. `rb sets` pins a branch there at its head with `reference = "no-ref"` and the reason, and no baseline makes it good, until the entry is removed.
 
 ## 04.7 The calendar ahead
 

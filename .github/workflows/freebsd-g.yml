@@ -7,9 +7,12 @@
 # with rustup's Rust, and rb toolchain puts G's shims in /build/toolchain. Then it builds the pinned,
 # unmodified tree with
 #
-#   make -j4 buildworld buildkernel CROSS_TOOLCHAIN=/build/toolchain/ref.mk SRCCONF=conf/freebsd/<conf>.conf
+#   make -j4 buildworld buildkernel CROSS_TOOLCHAIN=/build/toolchain/ref.mk SRCCONF=/root/out/src.conf
 #
-# which is the command line of FreeBSD's own GCC CI jobs with our SRCCONF and the shims in place of
+# where src.conf is conf/freebsd/<conf>.conf and the src.conf lines of the pin's fifth field in
+# conf/freebsd/pins.conf, such as WITHOUT_SSP=yes for stable-14. freebsd-r adds the same lines, so
+# G and R build the same configuration. That is the command line of FreeBSD's own GCC CI jobs with
+# our SRCCONF and the shims in place of
 # the package's CROSS_TOOLCHAIN file. The shims run the same amd64-gcc15 with the same arguments, and
 # write a record of each call to compile.jsonl. Then it installs world,
 # kernel and distribution into a staging tree, adds the image changes of conf/freebsd/image and rb-rc,
@@ -97,7 +100,7 @@ env:
   # pins.toml, for rb.
   VM_ENV: >-
     RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
-    RB_SRCCONF=/root/harness/conf/freebsd/${{ inputs.conf || 'graded' }}.conf RB_TOOLCHAIN=/build/toolchain/ref.mk
+    RB_SRCCONF=/root/out/src.conf RB_TOOLCHAIN=/build/toolchain/ref.mk
     RB_HARNESS=/root/harness RB_DESTDIR=/build/destdir RB_IMAGE=/build/image/freebsd.img
     RB_CONF=${{ inputs.conf || 'graded' }} RB_COMPILE_JSONL=/build/out/compile.jsonl
     RB_PIN_NAME=${{ startsWith(inputs.pin, 'freebsd-') && inputs.pin || (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
@@ -203,6 +206,11 @@ jobs:
           ls -l "$archive"
           scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
           scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
+          # The SRCCONF: the conf and the src.conf lines of the pin.
+          scripts/freebsd/builder.sh ssh "cat /root/harness/conf/freebsd/$RB_CONF.conf - > /root/out/src.conf" < record/pin.conf
+          if [ -s record/pin.conf ]; then
+            echo "The pin $RB_PIN adds to the SRCCONF: $(paste -sd' ' record/pin.conf)" >> "$GITHUB_STEP_SUMMARY"
+          fi
           scripts/freebsd/builder.sh ssh 'du -sh /build/src; df -h /build'
       - name: buildworld
         if: env.RB_HIT != 'true' && env.RB_STOP != 'provision'

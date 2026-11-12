@@ -5,7 +5,9 @@
 #
 # It prints the path of an archive of the tree and the number of leading path parts to strip from
 # its member names (tar --strip-components). When RB_OUT is set, it writes "pin kind source hash" to
-# RB_OUT/source.txt. Archives are kept in RB_CACHE. A cached txz is checked again before it is used.
+# RB_OUT/source.txt and the src.conf lines of the pin's fifth field, one per line, to
+# RB_OUT/pin.conf, which is empty when the pin has none. Archives are kept in RB_CACHE. A cached txz
+# is checked again before it is used.
 #
 # A txz pin is the release file itself, checked by SHA-256. Its members start with usr/src/.
 # A pin that pins.conf does not list, such as freebsd-15.2, is read from pins.toml by pin-line.py:
@@ -28,7 +30,7 @@ if [ -z "$line" ]; then
 		exit 2
 	}
 fi
-read -r _ kind source hash <<< "$line"
+read -r _ kind source hash knobs <<< "$line"
 if [ -n "${RB_COMMIT:-}" ]; then
 	if [ "$kind" != git ] || ! [[ $RB_COMMIT =~ ^[0-9a-f]{40}$ ]]; then
 		echo "RB_COMMIT must be a full commit hash, for a git pin" >&2
@@ -78,5 +80,10 @@ esac
 if [ -n "${RB_OUT:-}" ]; then
 	mkdir -p "$RB_OUT"
 	printf '%s\t%s\t%s\t%s\n' "$pin" "$kind" "$source" "$hash" > "$RB_OUT/source.txt"
+	if [ -n "${knobs:-}" ]; then
+		tr ',' '\n' <<< "$knobs" > "$RB_OUT/pin.conf"
+	else
+		: > "$RB_OUT/pin.conf"
+	fi
 fi
 echo "$archive $strip"
