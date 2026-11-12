@@ -23,6 +23,7 @@
 //! | not the same | types | other types | yes |
 //! | lost | types | the symbol with no type | yes |
 //! | gained | no type, no symbol, or fewer symbols | types, with G's among them | no |
+//! | gained | an array with no length | the same array with its length | no |
 //! | not in R | types, with R's among them | no symbol, or fewer, as when rucc inlined a static function | no |
 //! | another number | types | the same types, in another number of symbols | no |
 //!
@@ -30,7 +31,22 @@
 //! log and not in G's, given with `--g-log` and `--r-log`. They are lines such as
 //! `WARNING: nbctfconvert: ...`.
 //!
-//! The gate holds when no part has a difference, no file is on one side only and R has no loss.
+//! An array with no length in G and its length in R comes from a definition such as
+//! `const u_char bold16x32_data[] = { ... }` that a header declares as `extern ... []`. gcc
+//! writes the declaration with the type of no length and the definition with its length, and
+//! `ctfconvert` reads the declaration. rucc writes the definition only. So R has more
+//! information, and it is gained.
+//!
+//! The types only in G and only in R are reported, and they do not count. A type that a named
+//! type or a symbol reaches is compared there, written in full. The rest are types that nothing in
+//! the CTF reaches, such as the anonymous union of a local variable, and a type only in R is more
+//! information.
+//!
+//! `--allow-types` and `--allow-symbols` name the named types and the symbols whose differences
+//! are known and have an issue. They are reported as allowed and do not count.
+//!
+//! The gate holds when no counted difference is left, no file is on one side only and R has no
+//! loss.
 
 use crate::ctf::{self, Ctf};
 use std::collections::BTreeMap;
@@ -100,6 +116,9 @@ pub struct Pair {
     pub objects: Symbols,
     /// The function symbols whose types are not the same.
     pub functions: Symbols,
+    /// The differences that `--allow-types` and `--allow-symbols` name, each as
+    /// `class<TAB>kind<TAB>line`. They do not count.
+    pub allowed: Vec<String>,
 }
 
 /// The symbols of one kind whose types are not the same, by class. Each line is
@@ -140,15 +159,40 @@ impl Symbols {
 }
 
 impl Pair {
-    /// How many differences count in this pair.
+    /// How many differences count in this pair. The types only in G or only in R do not.
     #[must_use]
     pub fn counted(&self) -> usize {
         self.names.len()
-            + self.only_g.values().sum::<usize>()
-            + self.only_r.values().sum::<usize>()
             + self.objects.counted()
             + self.functions.counted()
             + usize::from(!self.symbols_compared)
+    }
+
+    /// Move the named types in `types`, and the symbols in `symbols` that are not the same or
+    /// lost, to [`Pair::allowed`], so that they do not count.
+    pub fn allow(&mut self, types: &[String], symbols: &[String]) {
+        let (allowed, kept) = std::mem::take(&mut self.names)
+            .into_iter()
+            .partition(|n| types.contains(n));
+        self.names = kept;
+        for n in allowed {
+            self.allowed.push(format!("named\ttype\t{n}"));
+        }
+        for (kind, v) in [
+            ("object", &mut self.objects),
+            ("function", &mut self.functions),
+        ] {
+            for (class, lines) in [("differ", &mut v.differ), ("lost", &mut v.lost)] {
+                let (allowed, kept) = std::mem::take(lines).into_iter().partition(|l| {
+                    let name = l.split('\t').next().unwrap_or_default();
+                    symbols.iter().any(|s| s == name)
+                });
+                *lines = kept;
+                for l in allowed {
+                    self.allowed.push(format!("{class}\t{kind}\t{l}"));
+                }
+            }
+        }
     }
 }
 
@@ -217,6 +261,7 @@ pub fn compare(path: &str, g: &Ctf, r: &Ctf) -> Pair {
         symbols_compared,
         objects,
         functions,
+        allowed: Vec::new(),
     }
 }
 
@@ -287,7 +332,7 @@ fn classify(g: &BTreeMap<String, Side>, r: &BTreeMap<String, Side>) -> Symbols {
                 };
                 if gt == rt {
                     continue;
-                } else if within(gt, rt) {
+                } else if within(gt, rt) || within(&lengthened(gt, rt), rt) {
                     &mut out.gained
                 } else if within(rt, gt) {
                     &mut out.not_in_r
@@ -302,6 +347,23 @@ fn classify(g: &BTreeMap<String, Side>, r: &BTreeMap<String, Side>) -> Symbols {
             (false, true) => &mut out.gained,
         };
         class.push(format!("{name}\t{}\t{}", side_text(gs), side_text(rs)));
+    }
+    out
+}
+
+/// G's types, with each array of no length that R has with its length given that length.
+fn lengthened(g: &BTreeMap<String, usize>, r: &BTreeMap<String, usize>) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    for (t, n) in g {
+        let longer = t.strip_suffix("[0]").and_then(|elem| {
+            r.keys().find(|rt| {
+                rt.strip_prefix(elem)
+                    .and_then(|l| l.strip_prefix('['))
+                    .and_then(|l| l.strip_suffix(']'))
+                    .is_some_and(|l| l.parse::<u64>().is_ok_and(|l| l > 0))
+            })
+        });
+        *out.entry(longer.unwrap_or(t).clone()).or_insert(0) += n;
     }
     out
 }
@@ -499,7 +561,9 @@ impl Diff {
                 ),
                 (
                     "ctf-symbols.diff",
-                    symbols("object", &p.objects) + &symbols("function", &p.functions),
+                    symbols("object", &p.objects)
+                        + &symbols("function", &p.functions)
+                        + &lines(&p.allowed, "allowed\t"),
                 ),
             ];
             for (name, text) in files {
@@ -578,7 +642,7 @@ fn pair_report(s: &mut String, p: &Pair, limit: usize) {
         };
         let _ = writeln!(
             s,
-            "Types only in {label}: {} ({detail}).\n",
+            "Types only in {label}, not counted: {} ({detail}).\n",
             only.values().sum::<usize>()
         );
     }
@@ -609,6 +673,14 @@ fn pair_report(s: &mut String, p: &Pair, limit: usize) {
         list(s, &lines, limit);
     } else {
         s.push_str("The data object and function sections do not follow the symbol table on one side, so the symbols are not compared.\n\n");
+    }
+    if !p.allowed.is_empty() {
+        let _ = writeln!(
+            s,
+            "Allowed by --allow-types and --allow-symbols, not counted: {}.\n",
+            p.allowed.len()
+        );
+        list(s, &p.allowed, limit);
     }
 }
 
@@ -701,6 +773,21 @@ pub mod cli {
                 .map_err(|_| format!("--limit {n} is not a number"))
         })?;
         let mut diff = run(Path::new(g), Path::new(r))?;
+        let names = |key: &str| -> Vec<String> {
+            args.get(key)
+                .map(|v| {
+                    v.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let (types, symbols) = (names("allow-types"), names("allow-symbols"));
+        for p in &mut diff.pairs {
+            p.allow(&types, &symbols);
+        }
         let log = |key: &str| -> Result<Option<Vec<String>>, String> {
             args.get(key)
                 .map(|f| {
@@ -883,6 +970,103 @@ mod tests {
         );
         assert_eq!(o.count, vec!["n\tint x2 | long\tint | long x2".to_string()]);
         assert_eq!(p.counted(), 1);
+    }
+
+    #[test]
+    fn an_array_with_its_length_in_r_is_gained() {
+        let side = |pairs: &[(&str, &str)]| -> BTreeMap<String, Side> {
+            sides(pairs.iter().map(|(n, t)| (*n, (*t).to_string())), &[])
+        };
+        let g = side(&[
+            ("data", "u_char[0]"),
+            ("cmds", "struct db_command[0]"),
+            ("short", "u_char[4]"),
+            ("other", "u_char[0]"),
+        ]);
+        let r = side(&[
+            ("data", "u_char[16256]"),
+            ("cmds", "struct db_command[38]"),
+            ("short", "u_char[8]"),
+            ("other", "char[3]"),
+        ]);
+        let o = classify(&g, &r);
+        assert_eq!(
+            o.gained,
+            vec![
+                "cmds\tstruct db_command[0]\tstruct db_command[38]".to_string(),
+                "data\tu_char[0]\tu_char[16256]".to_string()
+            ]
+        );
+        assert_eq!(
+            o.differ,
+            vec![
+                "other\tu_char[0]\tchar[3]".to_string(),
+                "short\tu_char[4]\tu_char[8]".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn types_only_on_one_side_do_not_count() {
+        let g = ctf(vec![int("int"), strukt("", 1, 4)]);
+        let r = ctf(vec![int("int"), strukt("", 1, 8)]);
+        let p = compare("netbsd", &g, &r);
+        assert_eq!(p.only_g.values().sum::<usize>(), 1);
+        assert_eq!(p.only_r.values().sum::<usize>(), 1);
+        assert_eq!(p.counted(), 0);
+        let d = Diff {
+            pairs: vec![p],
+            ..Diff::default()
+        };
+        assert!(d.same());
+        assert!(d.report(5).contains("Types only in G, not counted: 1"));
+    }
+
+    #[test]
+    fn allowed_names_do_not_count() {
+        let mut g = ctf(vec![int("int"), int("short"), strukt("response", 1, 4)]);
+        let mut r = ctf(vec![int("int"), int("short"), strukt("response", 2, 4)]);
+        g.functions.push((
+            "store_num".into(),
+            Function {
+                ret: 1,
+                args: vec![1],
+            },
+        ));
+        r.untyped_functions.push("store_num".into());
+        g.functions.push((
+            "f".into(),
+            Function {
+                ret: 1,
+                args: vec![1],
+            },
+        ));
+        r.functions.push((
+            "f".into(),
+            Function {
+                ret: 1,
+                args: vec![2],
+            },
+        ));
+        let mut p = compare("netbsd", &g, &r);
+        assert_eq!(p.counted(), 3);
+        p.allow(&["response".into()], &["store_num".into()]);
+        assert_eq!(p.counted(), 1);
+        assert_eq!(
+            p.allowed,
+            vec![
+                "named\ttype\tresponse".to_string(),
+                "lost\tfunction\tstore_num\tint (int)\tno type".to_string()
+            ]
+        );
+        assert_eq!(p.functions.differ.len(), 1);
+        let d = Diff {
+            pairs: vec![p],
+            ..Diff::default()
+        };
+        let text = d.report(5);
+        assert!(text.contains("not counted: 2."), "{text}");
+        assert!(!d.same());
     }
 
     #[test]

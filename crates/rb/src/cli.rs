@@ -335,7 +335,16 @@ fn graded_commands(command: &str) -> Option<Accepts> {
     Some(match command {
         "ctf-diff" => Accepts {
             positional: false,
-            values: &["g", "r", "g-log", "r-log", "out", "limit"],
+            values: &[
+                "g",
+                "r",
+                "g-log",
+                "r-log",
+                "out",
+                "limit",
+                "allow-types",
+                "allow-symbols",
+            ],
             switches: &[],
         },
         "frames" => Accepts {
@@ -515,15 +524,19 @@ usage:
       first letter is the kernel and the second the modules. A module that passes in GG and not
       in another cell is a finding. Exits 1 when there is a finding.
   rb ctf-diff --g FILE|DIR --r FILE|DIR [--g-log LOG --r-log LOG] [--out DIR] [--limit N]
+          [--allow-types T,T] [--allow-symbols S,S]
       Compare the CTF of G's and R's kernels and modules. Each side is an ELF file with a
       .SUNW_ctf section, or a directory, where the files with one are paired by their path under
       it. Each named type must have the same members, member types and bit offsets, or the same
-      values; all types, anonymous ones too, are compared by kind and by how a use of them is
-      written; and each data and function symbol must have the same type. The symbol types are
-      read in symbol table order, as libctf reads them. LOG is a build log as text: the warnings
-      and errors of ctfconvert and ctfmerge only R's log has are the losses. --out writes the
-      named types of each side and the differences. Each list stops after N lines, 40 by default.
-      Exits 1 when anything is not the same, a file has CTF on one side only, or R has a loss.
+      values, and each data and function symbol must have the same type, or a type where G has
+      none. An array with no length in G may have its length in R. The symbol types are read in
+      symbol table order, as libctf reads them. All types, anonymous ones too, are compared by
+      kind and by how a use of them is written, and are reported, but they do not count. LOG is a
+      build log as text: the warnings and errors of ctfconvert and ctfmerge only R's log has are
+      the losses. --allow-types and --allow-symbols name the named types and symbols whose
+      differences are reported as allowed and do not count. --out writes the named types of each
+      side and the differences. Each list stops after N lines, 40 by default. Exits 1 when a
+      difference counts, a file has CTF on one side only, or R has a loss.
   rb demands LOG [--pin PIN --row ROW --conf CONF [--write]] [--flags-only] [--jobs N] [--limit N]
       Count the compiler features one build uses, from its compile.jsonl. Every C and assembly
       unit of the C compiler slot is run again with -E in place of -c, in its own directory, and
