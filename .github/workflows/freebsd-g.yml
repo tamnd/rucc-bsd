@@ -2,7 +2,8 @@
 #
 # The build job boots the official FreeBSD 15.1-RELEASE BASIC-CI image under QEMU with KVM on the
 # runner, with all the runner's vCPUs, 12 GB and a sparse 100 GB build disk on /mnt. In that VM it
-# installs amd64-gcc15 and amd64-binutils from the FreeBSD package repository. It builds rb and rb-cc
+# installs amd64-gcc15 and amd64-binutils from the FreeBSD package repository, or amd64-gcc14 with
+# gcc: 14, the fallback of personas.toml for stable/14 (plan 04.3). It builds rb and rb-cc
 # with rustup's Rust, and rb toolchain puts G's shims in /build/toolchain. Then it builds the pinned,
 # unmodified tree with
 #
@@ -72,6 +73,11 @@ on:
         description: Run kyua in the UEFI boot
         type: boolean
         default: true
+      gcc:
+        description: The reference, amd64-gcc15, or its fallback amd64-gcc14 of personas.toml where 15 fails
+        type: choice
+        options: ["15", "14"]
+        default: "15"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
@@ -95,6 +101,7 @@ env:
     RB_HARNESS=/root/harness RB_DESTDIR=/build/destdir RB_IMAGE=/build/image/freebsd.img
     RB_CONF=${{ inputs.conf || 'graded' }} RB_COMPILE_JSONL=/build/out/compile.jsonl
     RB_PIN_NAME=${{ (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
+    RB_GCC=${{ inputs.gcc || '15' }}
 
 jobs:
   rb:
@@ -114,7 +121,7 @@ jobs:
           retention-days: 7
 
   build:
-    name: build ${{ inputs.pin || '15.1-release' }} ${{ inputs.conf || 'graded' }}${{ matrix.build == 2 && ' again' || '' }}
+    name: build ${{ inputs.pin || '15.1-release' }} ${{ inputs.conf || 'graded' }}${{ inputs.gcc == '14' && ' gcc14' || '' }}${{ matrix.build == 2 && ' again' || '' }}
     if: ${{ !inputs.image-run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
@@ -184,7 +191,7 @@ jobs:
             | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
       - name: provision
         if: env.RB_HIT != 'true'
-        run: scripts/freebsd/builder.sh ssh 'sh /root/harness/scripts/freebsd/provision.sh /root/out'
+        run: scripts/freebsd/builder.sh ssh "RB_GCC=${{ inputs.gcc || '15' }} sh /root/harness/scripts/freebsd/provision.sh /root/out"
       - name: rb, rb-cc and G's shims
         if: env.RB_HIT != 'true' && env.RB_STOP != 'provision'
         run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out ref"

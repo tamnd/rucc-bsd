@@ -718,7 +718,10 @@ pub mod cli {
 
     /// Run `rb toolchain`.
     pub fn make(args: &Args, root: &Path) -> Result<Made, String> {
-        let files = Files::load(root, args.target.as_deref(), args.get("row"))?;
+        let mut files = Files::load(root, args.target.as_deref(), args.get("row"))?;
+        if args.has("fallback") {
+            files.personas.fall_back(&files.pin)?;
+        }
         let dir = PathBuf::from(args.get("dir").ok_or("give --dir DIR")?);
         let cc = args.get("cc").map(Cc::parse).transpose()?;
         let rucc_pin = files.toolchains.rucc.as_ref();
@@ -764,6 +767,9 @@ pub mod cli {
         let expected = files.expected()?;
         let ungraded = args.has("ungraded");
         let mut text = String::new();
+        if args.has("fallback") {
+            let _ = writeln!(text, "reference: the fallback {}", shims.reference);
+        }
         let checks = if files.pin.system == "freebsd" {
             let (g, r) = make_freebsd(&dir, &binary, &shims, &files.toolchains)?;
             let _ = writeln!(text, "CROSS_TOOLCHAIN for G: {}", g.display());

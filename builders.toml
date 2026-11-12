@@ -10,7 +10,8 @@ image = "FreeBSD-15.1-RELEASE-amd64-BASIC-CI-ufs.raw.xz"
 url = "https://download.freebsd.org/releases/CI-IMAGES/15.1-RELEASE/amd64/Latest/FreeBSD-15.1-RELEASE-amd64-BASIC-CI-ufs.raw.xz"
 checksum_url = "https://download.freebsd.org/releases/CI-IMAGES/15.1-RELEASE/amd64/Latest/CHECKSUM.SHA256"
 sha256 = "908e735f18ba192eaf48c2703b549225c9b96e74e3784bd9278c7120b4139962"
-toolchains = ["amd64-gcc15", "amd64-binutils"]
+# amd64-gcc14 is installed in place of amd64-gcc15 for a fallback build (freebsd-g with gcc 14).
+toolchains = ["amd64-gcc15", "amd64-gcc14", "amd64-binutils"]
 qemu = "qemu-system-x86_64"
 machine = "q35"
 accel = "kvm"

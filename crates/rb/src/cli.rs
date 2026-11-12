@@ -260,7 +260,7 @@ fn toolchain_commands(command: &str) -> Option<Accepts> {
                 "bringup",
                 "bringup-units",
             ],
-            switches: &["ungraded"],
+            switches: &["ungraded", "fallback"],
         },
         "build" => Accepts {
             positional: true,
@@ -707,8 +707,10 @@ usage:
       case, or nothing is graded.
   rb toolchain PIN --dir DIR [--row ROW] [--cc rucc|ref] [--rucc PATH] [--log FILE] [--tools DIR]
           [--destdir DIR] [--shim PATH] [--bringup as,cxx-c [--bringup-units UNIT,...]]
-          [--ungraded]
+          [--ungraded] [--fallback]
       Make the toolchain a build of the pin reads, then run the checks of rb toolchain-diff on it.
+      With --fallback, the persona's fallback of personas.toml builds G and rucc claims its
+      version, as for FreeBSD stable/14 where amd64-gcc15 fails and amd64-gcc14 does not.
       For FreeBSD, DIR gets the shims in DIR/bin and the CROSS_TOOLCHAIN files DIR/ref.mk for G
       and DIR/rucc.mk for R. For NetBSD, DIR becomes a copy of the TOOLDIR of build.sh tools in
       --tools, with the shim as its C compiler and preprocessor for the side --cc gives. Give DIR
