@@ -124,6 +124,9 @@ jobs:
           scripts/dragonfly/builder.sh ssh 'mkdir -p /build/src && tar -xf - -C /build/src' < "$archive"
           scripts/dragonfly/builder.sh put record/source.txt /root/out/source.txt
           scripts/dragonfly/builder.sh ssh 'du -sh /build/src; df -h /build'
+      - name: the make variables of gcc80 and ${{ env.RB_CCVER }}
+        if: env.RB_STOP == 'all'
+        run: scripts/dragonfly/builder.sh ssh "env $VM_ENV sh /root/harness/scripts/dragonfly/mkdiff.sh /root/out gcc80 $RB_CCVER"
       - name: buildworld
         if: env.RB_STOP == 'all'
         run: scripts/dragonfly/builder.sh ssh "env $VM_ENV sh /root/harness/scripts/dragonfly/build.sh world"
@@ -185,6 +188,11 @@ jobs:
                 cat record/boot/results/out/smoke/results
                 echo '```'
               fi
+            fi
+            if [ -f record/mk-diff.txt ]; then
+              echo '```'
+              cat record/mk-diff.txt
+              echo '```'
             fi
             if [ -f record/rucc.txt ]; then
               echo '```'
