@@ -12,6 +12,10 @@
 //! For a final link the slot adds `-u __start_set_NAME -u __stop_set_NAME` for each `set_NAME`
 //! section of the input objects, which is the reference that the objects of a Clang build make.
 //! It adds nothing to a relocatable link (`-r`), whose output keeps its sections for the next link.
+//! It adds nothing to a link with `--gc-sections` either, such as that of the boot blocks: there a
+//! `-u` is a root that keeps each set section and all the code it points to, while the weak
+//! references of a Clang object keep nothing, so the link would pull in commands whose callees
+//! are not linked (`gptzfsboot` and `command_errmsg`).
 //! It changes no argument the build wrote, records nothing and prints nothing.
 
 use std::collections::BTreeSet;
@@ -36,12 +40,26 @@ pub fn is_set(name: &str) -> bool {
         && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
+/// Whether the link collects unused sections: the last of `--gc-sections` and `--no-gc-sections`
+/// wins, and GNU ld takes each with one dash too.
+#[must_use]
+pub fn gc_sections(rest: &[String]) -> bool {
+    rest.iter()
+        .rev()
+        .find_map(|a| match a.trim_start_matches('-') {
+            "gc-sections" if a.starts_with('-') => Some(true),
+            "no-gc-sections" if a.starts_with('-') => Some(false),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
 /// The arguments for the real linker: `-u` for both bounds of every set in the input objects of
-/// a final link, then the build's own arguments. `sections` reads the section names of an
+/// a final link that does not collect sections, then the build's own arguments. `sections` reads the section names of an
 /// operand, and gives none for a file that is not a relocatable ELF object.
 #[must_use]
 pub fn args(rest: &[String], cwd: &Path, sections: &dyn Fn(&Path) -> Vec<String>) -> Vec<String> {
-    if relocatable(rest) {
+    if relocatable(rest) || gc_sections(rest) {
         return rest.to_vec();
     }
     let sets: BTreeSet<String> = rest
@@ -344,6 +362,28 @@ mod tests {
         ] {
             assert_eq!(args(&words(line), Path::new("/"), &sections), words(line));
         }
+    }
+
+    /// The G world: `gptzfsboot` links `zfs_cmd.o` with `--gc-sections`, and a `-u` for
+    /// `set_Xcommand_set` kept `command_lszfs` and its reference to `command_errmsg`, which the
+    /// boot block does not link.
+    #[test]
+    fn a_link_that_collects_sections_is_passed_as_it_is() {
+        let sections = |_: &Path| words(".text set_Xcommand_set");
+        for line in [
+            "-m elf_i386_fbsd -static -N --gc-sections -e start -o gptzfsboot.out zfs_cmd.o",
+            "-static -gc-sections -o a.out a.o",
+            "--no-gc-sections --gc-sections -o a.out a.o",
+        ] {
+            assert_eq!(args(&words(line), Path::new("/"), &sections), words(line));
+        }
+        let line = "--gc-sections --no-gc-sections -o a.out a.o";
+        assert_eq!(
+            args(&words(line), Path::new("/"), &sections),
+            words(&format!(
+                "-u __start_set_Xcommand_set -u __stop_set_Xcommand_set {line}"
+            ))
+        );
     }
 
     #[test]
