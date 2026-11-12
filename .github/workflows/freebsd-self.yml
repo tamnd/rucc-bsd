@@ -379,17 +379,27 @@ jobs:
             echo "Ungraded: cxx-c bring-up for $RB_BRINGUP_UNITS_IN, as in R." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "RB_BRINGUP_ENV=$bringup" >> "$GITHUB_ENV"
+      - name: the host compilers
+        # The src Makefile sets PATH to /sbin:/bin:/usr/sbin:/usr/bin, and the RR image has no cc,
+        # c++ or cpp there. The host CC is the rucc of the package. It finds ld in /usr/local/bin
+        # by -B. The image has no C++ compiler and no cpp, so the host CXX and CPP are of gcc15,
+        # which provision.sh installed.
+        run: |
+          host="CC='/usr/local/bin/rucc -B/usr/local/bin/' CXX=/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
+          host="$host CPP=/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15"
+          scripts/freebsd/rr-vm.sh ssh "env $host sh -c '\$CC -v 2>&1 | head -1; \$CXX --version | head -1; \$CPP --version | head -1'"
+          echo "RB_HOST_ENV=$host" >> "$GITHUB_ENV"
       - name: make buildworld in RR
         run: |
-          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_BRINGUP_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_BRINGUP_ENV $RB_HOST_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=world-rr sh /root/harness/scripts/freebsd/build.sh world"
       - name: make buildkernel in RR
         run: |
-          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_BRINGUP_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_BRINGUP_ENV $RB_HOST_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=kernel-rr sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: install, as image.sh does
         run: |
-          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_DESTDIR=/build/destdir \
+          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_HOST_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_DESTDIR=/build/destdir \
             RB_IMAGE=/build/image/freebsd.img sh /root/harness/scripts/freebsd/image.sh"
       - name: copy the record out
         if: always()
