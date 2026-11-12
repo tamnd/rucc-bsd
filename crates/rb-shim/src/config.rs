@@ -106,7 +106,9 @@ pub struct ShimConfig {
     #[serde(default)]
     pub bringup: Vec<String>,
     /// The C units `cxx-c` hands to the reference, each a path suffix of the source file and the
-    /// issue that tracks it, as in `stand/i386/boot2/boot2.c=tamnd/rucc#4097`. Overridden by
+    /// issue that tracks it, as in `stand/i386/boot2/boot2.c=tamnd/rucc#4097`. A path that ends in
+    /// `/` names a directory, and each C unit under it goes, as in `stand/=tamnd/rucc#4097`. A unit is
+    /// under it when its source is, or when make compiles it in a directory under it. Overridden by
     /// `RB_BRINGUP_UNITS`, a comma separated list. Plan 16 asks for an issue for each delegated
     /// unit, so a unit without one is refused.
     #[serde(default)]
@@ -137,13 +139,24 @@ pub fn check_units(units: &[String]) -> Result<(), String> {
                 && !number.is_empty()
                 && number.bytes().all(|b| b.is_ascii_digit())
         });
-        if unit.is_empty() || !good {
+        if unit.trim_matches('/').is_empty() || !good {
             return Err(format!(
                 "bring-up unit {entry} names no issue: write it as PATH=OWNER/REPO#N, as in stand/i386/boot2/boot2.c=tamnd/rucc#4097"
             ));
         }
     }
     Ok(())
+}
+
+/// Whether a bring-up unit names the source file at `path`. A unit that ends in `/` names each
+/// file under a directory of that name, and any other unit names the files whose path ends in it.
+#[must_use]
+pub fn names_path(unit: &str, path: &str) -> bool {
+    if unit.ends_with('/') {
+        path.starts_with(unit) || path.contains(&format!("/{unit}"))
+    } else {
+        path == unit || path.ends_with(&format!("/{unit}"))
+    }
 }
 
 /// The bring-up classes of 00: `as` sends assembly to the reference, and `cxx-c` sends the named C
@@ -315,10 +328,40 @@ mod tests {
             "lib/a.c=#4097",
             "lib/a.c=rucc#4097",
             "=tamnd/rucc#1",
+            "/=tamnd/rucc#1",
+            "stand/",
         ] {
             let said = ShimConfig::load(None, &env_of(&[("RB_BRINGUP_UNITS", wrong)])).unwrap_err();
             assert!(said.contains("names no issue"), "{wrong}: {said}");
         }
+    }
+
+    #[test]
+    fn a_unit_that_ends_in_a_slash_names_each_file_under_the_directory() {
+        let config = ShimConfig::load(
+            None,
+            &env_of(&[("RB_BRINGUP_UNITS", "stand/=tamnd/rucc#4097")]),
+        )
+        .unwrap();
+        assert_eq!(
+            unit_and_issue(&config.bringup_units[0]),
+            ("stand/", Some("tamnd/rucc#4097"))
+        );
+        assert!(names_path("stand/", "/build/src/stand/libsa/printf.c"));
+        assert!(names_path("stand/", "stand/ficl/ficl.c"));
+        assert!(names_path(
+            "stand/i386/",
+            "/obj/stand/i386/loader_4th/vers.c"
+        ));
+        assert!(!names_path("stand/", "/build/src/standalone/x.c"));
+        assert!(!names_path("stand/", "/build/src/lib/libstand/x.c"));
+        assert!(!names_path("stand/", "/build/src/stand"));
+        assert!(names_path(
+            "boot2/boot2.c",
+            "/build/src/stand/i386/boot2/boot2.c"
+        ));
+        assert!(names_path("boot2.c", "boot2.c"));
+        assert!(!names_path("boot2.c", "/build/src/xboot2.c"));
     }
 
     #[test]

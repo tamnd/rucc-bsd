@@ -16,7 +16,7 @@
 //! | `as` | the reference `as` | the reference `as` | `other` |
 //! | `ld` | the reference `ld`, through [`crate::link`] | the same | none, and no record |
 
-use crate::config::{ShimConfig, Side, unit_and_issue};
+use crate::config::{ShimConfig, Side, names_path, unit_and_issue};
 use harness_shim::args::{self, Invocation, Mode};
 use std::path::{Path, PathBuf};
 
@@ -223,7 +223,7 @@ fn decide_cc(
     // delegated unit with the issue that lets it be delegated (plan 16, B2).
     if kind == Kind::C
         && config.delegates("cxx-c")
-        && let Some(delegated) = named_unit(&invocation, config)
+        && let Some(delegated) = named_unit(&invocation, cwd, config)
     {
         return reference(
             &config.ref_cc,
@@ -339,17 +339,24 @@ fn makes_object(invocation: &Invocation) -> bool {
 }
 
 /// When a C unit is one `cxx-c` hands to the reference, the delegated label of its record:
-/// `cxx-c` and the issue its entry names.
-fn named_unit(invocation: &Invocation, config: &ShimConfig) -> Option<String> {
+/// `cxx-c` and the issue its entry names, and for a directory entry also the directory, as in
+/// `cxx-c tamnd/rucc#4097 stand/`. A relative input is read from `cwd`. A directory entry also
+/// names each unit that make compiles in a directory under it, because a build such as
+/// FreeBSD's `stand` compiles sources of `lib/libc` and `contrib` there.
+fn named_unit(invocation: &Invocation, cwd: &Path, config: &ShimConfig) -> Option<String> {
+    let here = format!("{}/", cwd.to_string_lossy().trim_end_matches('/'));
     config.bringup_units.iter().find_map(|entry| {
         let (unit, issue) = unit_and_issue(entry);
-        let named = invocation
-            .inputs
-            .iter()
-            .any(|input| input == unit || input.ends_with(&format!("/{unit}")));
-        named.then(|| match issue {
-            Some(issue) => format!("cxx-c {issue}"),
-            None => "cxx-c".to_string(),
+        let named = (unit.ends_with('/') && names_path(unit, &here))
+            || invocation.inputs.iter().any(|input| {
+                names_path(unit, input) || names_path(unit, &cwd.join(input).to_string_lossy())
+            });
+        named.then(|| {
+            let mut label = format!("cxx-c {}", issue.unwrap_or_default());
+            if unit.ends_with('/') {
+                label = format!("{label} {unit}");
+            }
+            label.trim_end().to_string()
         })
     })
 }
@@ -644,6 +651,42 @@ mod tests {
         let other = decide_line("x-rb-cc-rucc", &config, "-c /src/lib/libc/x.c").unwrap();
         assert_eq!(other.delegated, None);
         assert_eq!(other.compiler, config.rucc);
+    }
+
+    #[test]
+    fn bringup_hands_each_unit_under_a_named_directory_to_the_reference() {
+        let config = ShimConfig {
+            bringup: words("cxx-c"),
+            bringup_units: vec!["stand/=tamnd/rucc#4097".to_string()],
+            ..config()
+        };
+        let under =
+            decide_line("x-rb-cc-rucc", &config, "-Os -c /src/stand/libsa/printf.c").unwrap();
+        assert_eq!(under.compiler, config.ref_cc);
+        assert_eq!(under.origin, Some("ref-c"));
+        assert_eq!(
+            under.delegated.as_deref(),
+            Some("cxx-c tamnd/rucc#4097 stand/")
+        );
+        let other = decide_line("x-rb-cc-rucc", &config, "-c /src/lib/libstand/x.c").unwrap();
+        assert_eq!(other.delegated, None);
+        assert_eq!(other.compiler, config.rucc);
+        let asm = decide_line("x-rb-cc-rucc", &config, "-c /src/stand/i386/btx/btx.S").unwrap();
+        assert_eq!(asm.delegated, None);
+        // A unit that make compiles in a directory under the entry goes too, whatever its
+        // source. The directory of each call here is /b.
+        let config = ShimConfig {
+            bringup_units: vec!["b/=tamnd/rucc#1".to_string()],
+            ..config
+        };
+        for line in ["-c vers.c", "-c /src/lib/libc/string/strlen.c"] {
+            let here = decide_line("x-rb-cc-rucc", &config, line).unwrap();
+            assert_eq!(
+                here.delegated.as_deref(),
+                Some("cxx-c tamnd/rucc#1 b/"),
+                "{line}"
+            );
+        }
     }
 
     #[test]

@@ -75,9 +75,8 @@ pub struct Census {
     pub linked_directly: BTreeMap<String, usize>,
     /// Calls delegated under a bring-up class, which make the run ungraded.
     pub delegated: usize,
-    /// The sources of the delegated calls, by class, each with the issue its entry names and
-    /// what rucc said first when it tried, if it did.
-    pub delegated_units: BTreeMap<String, BTreeMap<String, (String, String)>>,
+    /// The sources of the delegated calls, by class.
+    pub delegated_units: BTreeMap<String, BTreeMap<String, Delegated>>,
     /// The sides the records name.
     pub sides: BTreeSet<String>,
     /// Every object, by absolute path.
@@ -131,27 +130,12 @@ pub fn from_records(records: &[CompileRecord]) -> Census {
         }
         if let Some(delegated) = &r.delegated {
             census.delegated += 1;
-            // The shim writes the class, and for a named unit the issue after it, as in
-            // `cxx-c tamnd/rucc#4097`.
-            let (class, issue) = delegated
-                .split_once(' ')
-                .map_or((delegated.as_str(), ""), |(c, i)| (c, i.trim()));
-            let source = r
-                .inputs
-                .first()
-                .map_or_else(|| "(no input)".to_string(), |i| absolute(&r.cwd, &i.path));
-            let said = r
-                .stderr
-                .lines()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or_default()
-                .trim()
-                .to_string();
+            let (class, source, unit) = delegated_unit(r, delegated);
             census
                 .delegated_units
-                .entry(class.to_string())
+                .entry(class)
                 .or_default()
-                .insert(source, (issue.to_string(), said));
+                .insert(source, unit);
         }
         if slot == "cpp" {
             let input = r
@@ -277,6 +261,40 @@ pub fn absolute(cwd: &str, path: &str) -> String {
         }
     }
     out.to_string_lossy().into_owned()
+}
+
+/// A source that a bring-up class handed to the reference.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Delegated {
+    /// The issue the entry names, or empty.
+    pub issue: String,
+    /// The directory the entry names, when it named one and not the file.
+    pub dir: String,
+    /// What rucc said first when it tried, if it did.
+    pub said: String,
+}
+
+/// The class, the source and the entry of a call that a bring-up class handed to the reference.
+fn delegated_unit(r: &CompileRecord, delegated: &str) -> (String, String, Delegated) {
+    // The shim writes the class, and for a named unit the issue after it, as in
+    // `cxx-c tamnd/rucc#4097`. For a unit under a named directory the directory follows,
+    // as in `cxx-c tamnd/rucc#4097 stand/`.
+    let mut words = delegated.split_whitespace().map(String::from);
+    let class = words.next().unwrap_or_default();
+    let issue = words.next().unwrap_or_default();
+    let dir = words.next().unwrap_or_default();
+    let source = r
+        .inputs
+        .first()
+        .map_or_else(|| "(no input)".to_string(), |i| absolute(&r.cwd, &i.path));
+    let said = r
+        .stderr
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    (class, source, Delegated { issue, dir, said })
 }
 
 impl Census {
@@ -463,21 +481,31 @@ impl Census {
             s,
             "\n## Delegated units\n\nEach unit here needs an issue before the run can be graded.\n\n| class | source | issue | what rucc said |\n|---|---|---|---|"
         );
-        let rows: Vec<(&String, &String, &(String, String))> = self
-            .delegated_units
-            .iter()
-            .flat_map(|(class, units)| units.iter().map(move |(u, said)| (class, u, said)))
-            .collect();
-        for (class, unit, (issue, said)) in rows.iter().take(limit) {
-            let said = said.replace('|', "\\|");
-            let issue = if issue.is_empty() {
-                "none"
-            } else {
-                issue.as_str()
-            };
-            let _ = writeln!(s, "| {class} | `{unit}` | {issue} | {said} |");
+        // The units under a named directory make one row for each directory, with their count.
+        let mut dirs: BTreeMap<(&str, &str, &str), usize> = BTreeMap::new();
+        let mut rows: Vec<(&str, String, &str, &str)> = Vec::new();
+        for (class, units) in &self.delegated_units {
+            for (unit, d) in units {
+                if d.dir.is_empty() {
+                    rows.push((class, format!("`{unit}`"), &d.issue, &d.said));
+                } else {
+                    *dirs.entry((class, &d.dir, &d.issue)).or_default() += 1;
+                }
+            }
         }
-        more(s, rows.len(), limit);
+        let mut lines: Vec<(&str, String, &str, &str)> = dirs
+            .into_iter()
+            .map(|((class, dir, issue), n)| {
+                (class, format!("each unit under `{dir}`: {n}"), issue, "")
+            })
+            .collect();
+        lines.append(&mut rows);
+        for (class, unit, issue, said) in lines.iter().take(limit) {
+            let said = said.replace('|', "\\|");
+            let issue = if issue.is_empty() { "none" } else { issue };
+            let _ = writeln!(s, "| {class} | {unit} | {issue} | {said} |");
+        }
+        more(s, lines.len(), limit);
     }
 
     fn cpp_part(&self, s: &mut String, limit: usize) {
@@ -627,6 +655,28 @@ not json
         assert!(report.contains("## Delegated units"), "{report}");
         assert!(report.contains(" | tamnd/rucc#4097 | "), "{report}");
         assert_eq!(c.delegated_units["cxx-c"].len(), 1);
+    }
+
+    #[test]
+    fn the_units_under_a_named_directory_make_one_row() {
+        let r = G
+            .replace("\"side\":\"G\"", "\"side\":\"R\"")
+            .replace(
+                "\"origin\":\"ref-cxx\"",
+                "\"origin\":\"cxx-on-cc\",\"delegated\":\"cxx-c tamnd/rucc#4097 lib/\"",
+            )
+            .replacen(
+                "\"origin\":\"ref\"",
+                "\"origin\":\"ref-c\",\"delegated\":\"cxx-c tamnd/rucc#4097 lib/\"",
+                2,
+            );
+        let c = from_records(&parse_log(&r).0);
+        let units = c.delegated_units["cxx-c"].len();
+        assert!(units > 1, "{units}");
+        let report = c.report("r", 10);
+        let row = format!("| cxx-c | each unit under `lib/`: {units} | tamnd/rucc#4097 |  |");
+        assert!(report.contains(&row), "{report}");
+        assert!(!report.contains("| cxx-c | `"), "{report}");
     }
 
     #[test]

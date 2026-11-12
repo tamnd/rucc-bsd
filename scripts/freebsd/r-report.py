@@ -17,7 +17,8 @@ number, the unit and the first error line as rucc wrote it. --src is the source 
 prefix is removed from the unit names; /build/src by default.
 
 A unit that the shim delegated under bring-up (plan 00) is listed after the groups, with its
-class and its issue, and the first line says that the build is ungraded.
+class and its issue, and the first line says that the build is ungraded. The units under a
+directory entry such as stand/=tamnd/rucc#4097 make one line with their count.
 """
 
 import argparse
@@ -112,8 +113,8 @@ def main():
         units += 1
         by_origin[rec.get("origin") or "none"] += 1
         if rec.get("delegated"):
-            cls, _, issue = rec["delegated"].partition(" ")
-            delegated[unit] = (cls, issue.strip() or "none")
+            words = rec["delegated"].split() + ["", "", ""]
+            delegated[unit] = (words[0], words[1] or "none", words[2])
         if rec.get("exit") == 0 and not rec.get("signal"):
             ok += 1
             continue
@@ -143,8 +144,11 @@ def main():
             out.write(f"\n{len(ordered) - a.limit} more groups with {rest} units are in the TSV file.\n")
     if delegated:
         out.write("\n| delegated unit | class | issue |\n|---|---|---|\n")
-        for unit, (cls, issue) in sorted(delegated.items())[: a.limit]:
-            out.write(f"| `{unit}` | {cls} | {issue} |\n")
+        dirs = collections.Counter((d, cls, issue) for cls, issue, d in delegated.values() if d)
+        lines = [f"| each unit under `{d}`: {n} | {cls} | {issue} |" for (d, cls, issue), n in sorted(dirs.items())]
+        lines += [f"| `{unit}` | {cls} | {issue} |" for unit, (cls, issue, d) in sorted(delegated.items()) if not d]
+        for line in lines[: a.limit]:
+            out.write(line + "\n")
     if a.tsv:
         with open(a.tsv, "w", encoding="utf-8") as f:
             f.write("group\tunit\tfirst error\n")
