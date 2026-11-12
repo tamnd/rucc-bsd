@@ -16,7 +16,7 @@
 //! | `as` | the reference `as` | the reference `as` | `other` |
 //! | `ld` | the reference `ld`, through [`crate::link`] | the same | none, and no record |
 
-use crate::config::{ShimConfig, Side};
+use crate::config::{ShimConfig, Side, unit_and_issue};
 use harness_shim::args::{self, Invocation, Mode};
 use std::path::{Path, PathBuf};
 
@@ -219,13 +219,18 @@ fn decide_cc(
     if kind == Kind::Asm && config.delegates("as") {
         return reference(&config.ref_cc, "ref-cc", "RB_REF_CC", "ref-c", Some("as"));
     }
-    if kind == Kind::C && config.delegates("cxx-c") && named_unit(&invocation, config) {
+    // The record says the class and the issue, so that the census can list each
+    // delegated unit with the issue that lets it be delegated (plan 16, B2).
+    if kind == Kind::C
+        && config.delegates("cxx-c")
+        && let Some(delegated) = named_unit(&invocation, config)
+    {
         return reference(
             &config.ref_cc,
             "ref-cc",
             "RB_REF_CC",
             "ref-c",
-            Some("cxx-c"),
+            Some(delegated.as_str()),
         );
     }
     let added = rucc_added(config, rest);
@@ -333,13 +338,19 @@ fn makes_object(invocation: &Invocation) -> bool {
         || invocation.mode == Mode::Compile && invocation.language.is_some()
 }
 
-/// Whether a C unit is one `cxx-c` hands to the reference.
-fn named_unit(invocation: &Invocation, config: &ShimConfig) -> bool {
-    invocation.inputs.iter().any(|input| {
-        config
-            .bringup_units
+/// When a C unit is one `cxx-c` hands to the reference, the delegated label of its record:
+/// `cxx-c` and the issue its entry names.
+fn named_unit(invocation: &Invocation, config: &ShimConfig) -> Option<String> {
+    config.bringup_units.iter().find_map(|entry| {
+        let (unit, issue) = unit_and_issue(entry);
+        let named = invocation
+            .inputs
             .iter()
-            .any(|unit| input == unit || input.ends_with(&format!("/{unit}")))
+            .any(|input| input == unit || input.ends_with(&format!("/{unit}")));
+        named.then(|| match issue {
+            Some(issue) => format!("cxx-c {issue}"),
+            None => "cxx-c".to_string(),
+        })
     })
 }
 
@@ -621,7 +632,7 @@ mod tests {
     fn bringup_hands_assembly_and_named_units_to_the_reference() {
         let config = ShimConfig {
             bringup: words("as cxx-c"),
-            bringup_units: vec!["lib/libunwind/unwind.c".to_string()],
+            bringup_units: vec!["lib/libunwind/unwind.c=tamnd/rucc#1".to_string()],
             ..config()
         };
         let asm = decide_line("x-rb-cc-rucc", &config, "-c locore.S").unwrap();
@@ -629,7 +640,7 @@ mod tests {
         assert_eq!(asm.delegated.as_deref(), Some("as"));
         assert_eq!(asm.origin, Some("ref-c"));
         let named = decide_line("x-rb-cc-rucc", &config, "-c /src/lib/libunwind/unwind.c").unwrap();
-        assert_eq!(named.delegated.as_deref(), Some("cxx-c"));
+        assert_eq!(named.delegated.as_deref(), Some("cxx-c tamnd/rucc#1"));
         let other = decide_line("x-rb-cc-rucc", &config, "-c /src/lib/libc/x.c").unwrap();
         assert_eq!(other.delegated, None);
         assert_eq!(other.compiler, config.rucc);

@@ -75,9 +75,9 @@ pub struct Census {
     pub linked_directly: BTreeMap<String, usize>,
     /// Calls delegated under a bring-up class, which make the run ungraded.
     pub delegated: usize,
-    /// The sources of the delegated calls, by class, each with what rucc said first when it
-    /// tried, if it did.
-    pub delegated_units: BTreeMap<String, BTreeMap<String, String>>,
+    /// The sources of the delegated calls, by class, each with the issue its entry names and
+    /// what rucc said first when it tried, if it did.
+    pub delegated_units: BTreeMap<String, BTreeMap<String, (String, String)>>,
     /// The sides the records name.
     pub sides: BTreeSet<String>,
     /// Every object, by absolute path.
@@ -129,8 +129,13 @@ pub fn from_records(records: &[CompileRecord]) -> Census {
         if !r.succeeded() {
             calls.1 += 1;
         }
-        if let Some(class) = &r.delegated {
+        if let Some(delegated) = &r.delegated {
             census.delegated += 1;
+            // The shim writes the class, and for a named unit the issue after it, as in
+            // `cxx-c tamnd/rucc#4097`.
+            let (class, issue) = delegated
+                .split_once(' ')
+                .map_or((delegated.as_str(), ""), |(c, i)| (c, i.trim()));
             let source = r
                 .inputs
                 .first()
@@ -144,9 +149,9 @@ pub fn from_records(records: &[CompileRecord]) -> Census {
                 .to_string();
             census
                 .delegated_units
-                .entry(class.clone())
+                .entry(class.to_string())
                 .or_default()
-                .insert(source, said);
+                .insert(source, (issue.to_string(), said));
         }
         if slot == "cpp" {
             let input = r
@@ -456,16 +461,21 @@ impl Census {
         }
         let _ = writeln!(
             s,
-            "\n## Delegated units\n\nEach unit here needs an issue before the run can be graded.\n\n| class | source | what rucc said |\n|---|---|---|"
+            "\n## Delegated units\n\nEach unit here needs an issue before the run can be graded.\n\n| class | source | issue | what rucc said |\n|---|---|---|---|"
         );
-        let rows: Vec<(&String, &String, &String)> = self
+        let rows: Vec<(&String, &String, &(String, String))> = self
             .delegated_units
             .iter()
             .flat_map(|(class, units)| units.iter().map(move |(u, said)| (class, u, said)))
             .collect();
-        for (class, unit, said) in rows.iter().take(limit) {
+        for (class, unit, (issue, said)) in rows.iter().take(limit) {
             let said = said.replace('|', "\\|");
-            let _ = writeln!(s, "| {class} | `{unit}` | {said} |");
+            let issue = if issue.is_empty() {
+                "none"
+            } else {
+                issue.as_str()
+            };
+            let _ = writeln!(s, "| {class} | `{unit}` | {issue} | {said} |");
         }
         more(s, rows.len(), limit);
     }
@@ -599,7 +609,7 @@ not json
             .replace("\"side\":\"G\"", "\"side\":\"R\"")
             .replace(
                 "\"origin\":\"ref-cxx\"",
-                "\"origin\":\"cxx-on-cc\",\"delegated\":\"cxx-c\"",
+                "\"origin\":\"cxx-on-cc\",\"delegated\":\"cxx-c tamnd/rucc#4097\"",
             )
             .replacen("\"origin\":\"ref\"", "\"origin\":\"rucc-c\"", 2);
         let c = from_records(&parse_log(&r).0);
@@ -615,6 +625,7 @@ not json
             "{report}"
         );
         assert!(report.contains("## Delegated units"), "{report}");
+        assert!(report.contains(" | tamnd/rucc#4097 | "), "{report}");
         assert_eq!(c.delegated_units["cxx-c"].len(), 1);
     }
 
