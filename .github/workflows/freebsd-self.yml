@@ -16,8 +16,6 @@
 name: freebsd-self
 
 on:
-  push:
-    branches: [b10-rucc-pkg]
   workflow_dispatch:
     inputs:
       rucc:
