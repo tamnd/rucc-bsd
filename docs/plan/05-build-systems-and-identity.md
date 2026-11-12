@@ -96,7 +96,15 @@ The `--version` text matters only to `build.sh`'s host compiler check (`build.sh
 
 ### DragonFly (B11)
 
-The identity is the `CCVER` name. `gcc120` gives the GCC warning sets and `-Werror`. rucc is installed as a custom `CCVER`, `rucc120` or similar, through `compilers.conf`. Whether `bsd.sys.mk`'s `${_WCCVER:Mgcc*}` then still matches is a B11 question. If it does not, the build takes the non-GCC path, which is configured differently from G and is not acceptable. Open question 10.
+The identity is the `CCVER` name. `gcc80` on 6.4 and `gcc120` on master give the GCC warning sets, `-Werror`, the CPU flags and the kernel code flags. rucc is a custom `CCVER` in `/etc/compilers.conf` on the builder (`scripts/dragonfly/rucc.sh`), and the build runs `env WORLD_CCVER=gcc80rucc make buildworld`, as compilers.conf(5) says. C++ stays with the `g++` of the reference in the cross-tools of the build.
+
+The tree tests the name in two ways:
+- With patterns. `bsd.sys.mk` keys the GCC warning sets on `${_WCCVER:Mgcc*}` and `${_WCCVER:Mgcc8*}`, and `sys/platform/pc64/conf/kern.mk`, `sys/conf/bsd.kern.mk`, `lib/libzstd` and `sbin/devd` test `${CCVER:Mgcc*}` and similar. A name that does not start with `gcc` takes the non-GCC path. rucc's name starts with the name of the reference, `gcc80rucc` or `gcc120rucc`, so each pattern gives the same answer as for the reference.
+- With equality. `bsd.cpu.mk` includes `bsd.cpu.gcc80.mk` only for `CCVER == gcc80`, and otherwise `bsd.cpu.custom.mk`, which gives a different `MACHINE_CPU`. `bsd.sys.mk` adds `-Werror` only for `_WCCVER == gcc80`, and `kern.pre.mk` and `kmod.mk` set `WERROR=-Werror` only for `CCVER == gcc80`. The harness puts `CCVER_BSD_CPU_MK=bsd.cpu.gcc80.mk`, `_WCCVER=gcc80` and `WERROR=-Werror` on the make command line (`scripts/dragonfly/ccver.sh`). These are the knob that `bsd.cpu.mk` has for this, a plain assignment that a command line variable overrides, and the value that `kmod.mk` gives for the reference. make passes them to each make below it.
+
+`scripts/dragonfly/mkdiff.sh` is the DragonFly form of `rb mk-diff`. Before each R build it compares the make variables of the reference with those of rucc's `CCVER` and the three variables, at lib/libc, lib/libzstd, bin/sh, sbin/devd and sys/vfs/ext2fs, and the job stops on a difference. It also records the difference that the name alone gives. Open question 10 has the runs.
+
+The libraries of the compiler, `gnu/lib/gcc80`, set `CCVER=gcc80` in their own Makefile, so the reference GCC builds libgcc in R as in G.
 
 ### The probe census
 

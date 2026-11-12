@@ -21,7 +21,7 @@ A question past its deadline blocks that milestone. The numbers are stable, beca
 | 9 | 15. A GCC import into NetBSD trunk | continuous | a persona and warning set change mid-plan |
 | 10 | 7. arm64 hardware | B7 | aarch64 stays weekly and has no performance gate |
 | 11 | 9. Storage on gpc | B0 | fewer pins kept, or another disk |
-| 12 | 10. DragonFly's `CCVER` | B11 | DragonFly needs a different entry point |
+| 12 | 10. DragonFly's `CCVER`, answered at B11 | B11 | DragonFly needs a different entry point |
 | 13 | 8. rucc on a NetBSD host | B10 | no NetBSD fixed point |
 | 14 | 3. OpenBSD, answered at B11 | B11 | none for this plan |
 | 15 | 16. Reporting results and bugs upstream | B4 | none for the plan; a lot for how it is seen |
@@ -141,6 +141,8 @@ The answer is written into 04.2.
 **Risk.** DragonFly's `bsd.sys.mk` keys its GCC warning sets on `${_WCCVER:Mgcc*}`. A `CCVER` that does not start with `gcc` takes the non-GCC path, which configures the build differently from G. A name starting with `gcc` that runs rucc would get the right configuration, but would be a lie in a name, and the shim rules of 14.4 say the name should not decide the type.
 
 **How to find out.** At B11, run `rb mk-diff` between `CCVER=gcc120` and `CCVER=rucc120` with both pointing at the reference GCC. Any difference in the compiler-dependent variables is the answer. If there is one, the fallback is a `CCVER` named for the GCC version it imitates, with the shim recording which compiler ran, and that choice written down in 05.3.
+
+**Answer.** The name alone does not give the configuration of G, so the build uses the fallback, with three make variables. Run 43220187148 of `dragonfly-r` compared `CCVER=gcc80` and `CCVER=rucc80` on 6.4.2 with `scripts/dragonfly/mkdiff.sh`. With `rucc80`, `bin/sh` lost `-Werror` and five of its `-Wno-` options, and the ext2fs module lost `-Werror`, `-mpreferred-stack-boundary=4`, `-mno-ssse3` and the other `-mno-` options, and `-mindirect-branch=thunk-inline`. rucc is now the `CCVER` `gcc80rucc`, and `gcc120rucc` on master. The name starts with the name of the GCC that rucc imitates, so all the `Mgcc*` and `Mgcc8*` patterns of `share/mk`, `sys/conf`, `sys/platform/pc64/conf/kern.mk` and `lib/libzstd` match. Four tests compare `CCVER` to `gcc80` exactly: `bsd.cpu.mk`, the two `-Werror` tests of `bsd.sys.mk`, and `WERROR` in `kern.pre.mk` and `kmod.mk`. With the name only, run 43226747023 showed that `MACHINE_CPU` and `-Werror` were the only differences. The harness gives these four tests the values of the reference with three variables on the make command line, `CCVER_BSD_CPU_MK=bsd.cpu.gcc80.mk`, `_WCCVER=gcc80` and `WERROR=-Werror`, and make passes them to each make below it. With them, the make variables at lib/libc, lib/libzstd, bin/sh, sbin/devd and sys/vfs/ext2fs are the same as with `gcc80` (run 43226747023), and the R job stops if they are not. The tree is not changed, and `compilers.conf` is the only file on the builder that names rucc. The name and `rucc.txt` of the build record say which compiler ran. 05.3 has the details.
 
 **Deadline.** B11.
 
