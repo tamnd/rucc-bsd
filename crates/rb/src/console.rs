@@ -15,6 +15,7 @@
 //! | `RB-SUITE-END <suite> <counts>` | a suite ended |
 //! | `RB-DONE <suite>=<counts> ... archive=<disk\|console>` | all suites ended |
 //! | `RB-POWEROFF-FORCE <seconds>` | the shutdown did not end in time, so rb-rc powers off with no sync |
+//! | `RB-LOGIN-REBOOT <securelevel>` | after `rb boot --login` on NetBSD, rb-rc was installed and the guest reboots to run it from `/etc/rc` |
 //!
 //! On FreeBSD, kyua prints `<dir>/<program>:<case>  ->  ` when a case starts and the result on
 //! the same line when it ends. So the last such line names the running case, as `RB-CASE` does.
@@ -105,6 +106,9 @@ pub struct Seen {
     /// Whether rb-rc powered off with no sync because the shutdown did not end in time.
     #[serde(default)]
     pub forced_poweroff: bool,
+    /// Whether rb-rc's `login` script installed rb-rc and rebooted, after `rb boot --login`.
+    #[serde(default)]
+    pub login_reboot: bool,
     /// The results archive, when rb-rc wrote it to the console.
     #[serde(skip)]
     pub console_tar: Option<Vec<u8>>,
@@ -198,6 +202,8 @@ impl Seen {
             self.done = Some(rest.to_string());
         } else if line.starts_with("RB-POWEROFF-FORCE") {
             self.forced_poweroff = true;
+        } else if line.starts_with("RB-LOGIN-REBOOT") {
+            self.login_reboot = true;
         } else {
             self.other(line);
         }

@@ -20,6 +20,9 @@ pub const BENCH: &str = include_str!("../../../guest/rb-rc/bench.sh");
 pub const FOREIGN: &str = include_str!("../../../guest/rb-rc/foreign.sh");
 /// `/usr/libexec/rb/smoke`, the smoke suite.
 pub const SMOKE: &str = include_str!("../../../smoke/smoke.sh");
+/// `rb/login` on the results disk of `rb boot --login`, which starts rb-rc after the login. It is
+/// not part of an image.
+pub const LOGIN: &str = include_str!("../../../guest/rb-rc/login.sh");
 
 /// The line that enables rb-rc in `rc.conf`.
 pub const RC_CONF: &str = "rb_enable=\"YES\"\n";

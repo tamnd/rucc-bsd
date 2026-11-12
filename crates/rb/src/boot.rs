@@ -18,6 +18,11 @@
 //! `login`, which passes the boot suite and nothing else. With `--login`, rb logs in as root
 //! instead and starts rb-rc from the results disk, which then also holds rb-rc's scripts. So the
 //! suites run on such an image too, and the boot limit is until `RB-READY`.
+//!
+//! On NetBSD, the shell after the login is at securelevel 1, where `modload` fails. There rb-rc's
+//! `login` script installs rb-rc into the image, prints `RB-LOGIN-REBOOT` and reboots, and rb
+//! starts QEMU again once for that reboot, in addition to `--reboots`. rb-rc then runs from
+//! `/etc/rc` at level 0.
 
 use crate::console::{Lines, Seen};
 use rb_image::conf::RbConf;
@@ -445,21 +450,24 @@ pub fn kvm_usable(qemu: &str) -> bool {
 const LOGIN_DIR: &str = "/tmp";
 
 /// What rb types at the shell prompt with `--login`. It unpacks the results disk into
-/// [`LOGIN_DIR`] and runs rb-rc from there. The disk is the second disk: `vtbd1` on FreeBSD, and on
-/// NetBSD `ld1` on amd64 and `ld5` on evbarm and riscv, where `ld4` is the root. `sh -c` and the
-/// single quotes make the line the same in sh and in csh.
+/// [`LOGIN_DIR`] and runs `rb/login` from there, which starts rb-rc. The disk is the second disk:
+/// `vtbd1` on FreeBSD, and on NetBSD `ld1` on amd64 and `ld5` on evbarm and riscv, where `ld4` is
+/// the root. `sh -c` and the single quotes make the line the same in sh and in csh.
+///
+/// On NetBSD at a securelevel above 0, `rb/login` installs rb-rc into the image, prints
+/// `RB-LOGIN-REBOOT` and reboots, and rb-rc runs from `/etc/rc` at the next boot
+/// (`guest/rb-rc/login.sh`).
 #[must_use]
 pub fn login_command() -> String {
     format!(
         "sh -c 'cd {LOGIN_DIR} && for d in /dev/vtbd1 /dev/rld1d /dev/rld5c; do \
-         tar -xf $d 2>/dev/null && break; done; \
-         exec env RB_LIBEXEC={LOGIN_DIR}/rb sh {LOGIN_DIR}/rb/run'\r"
+         tar -xf $d 2>/dev/null && break; done; exec sh {LOGIN_DIR}/rb/login'\r"
     )
 }
 
 /// The results disk before the boot: an archive with the `rb.conf`, and room after it. With
-/// `login`, the archive also has rb-rc's scripts, for an image that does not have them. With
-/// [`RbConf::scripts_on_disk`] it has them too, for an image whose scripts are older than rb's.
+/// `login`, the archive also has rb-rc's scripts, for an image that does not have them, and
+/// `rb/login` and the rc script as `rb/rc`. With [`RbConf::scripts_on_disk`] it has them too, for an image whose scripts are older than rb's.
 /// With `modules`, it has that tree under `kmods/`. The name is not `modules`, which is the
 /// directory of the modules suite in the results. With `bench`, it has that file as `rb-bench`.
 /// With `pkgs`, it has that tree under `pkgs/`, for the same reason not under `foreign/`.
@@ -481,6 +489,14 @@ pub fn results_disk(
             ("foreign", rb_image::guest::FOREIGN),
             ("smoke", rb_image::guest::SMOKE),
             ("tests", rb_image::guest::TESTS),
+        ] {
+            entries.push(ustar::Entry::file(&format!("rb/{name}"), 0o555, text));
+        }
+    }
+    if login {
+        for (name, text) in [
+            ("login", rb_image::guest::LOGIN),
+            ("rc", rb_image::guest::RC_SCRIPT),
         ] {
             entries.push(ustar::Entry::file(&format!("rb/{name}"), 0o555, text));
         }
@@ -811,6 +827,7 @@ pub fn run(req: &Request) -> Result<Outcome, String> {
     };
     let mut w = Watch::new(&req.out)?;
     let _ = writeln!(w.qemu_log, "{}", command.join(" "));
+    let mut login_restarted = false;
     loop {
         let status = w.once(req, &command)?;
         if w.stop.is_some() {
@@ -818,8 +835,17 @@ pub fn run(req: &Request) -> Result<Outcome, String> {
         }
         outcome.qemu_exit = status.code();
         let s = &w.seen;
-        let rebooted =
-            status.success() && s.ready.is_none() && !s.login && s.panic.is_none() && !s.ddb;
+        let clean = status.success() && s.ready.is_none() && s.panic.is_none() && !s.ddb;
+        if clean && s.login_reboot && !login_restarted {
+            login_restarted = true;
+            outcome.restarts += 1;
+            let _ = writeln!(
+                w.qemu_log,
+                "rb boot: the guest installed rb-rc after the login and rebooted, starting it again"
+            );
+            continue;
+        }
+        let rebooted = clean && !s.login;
         if !rebooted || outcome.restarts >= req.reboots {
             break;
         }
@@ -1161,13 +1187,19 @@ pub(crate) mod tests {
                 "rb/bench",
                 "rb/foreign",
                 "rb/smoke",
-                "rb/tests"
+                "rb/tests",
+                "rb/login",
+                "rb/rc"
             ]
         );
         assert!(entries[2..].iter().all(|e| e.mode == 0o555));
+        assert_eq!(entries[8].data, rb_image::guest::LOGIN.as_bytes());
+        assert_eq!(entries[9].data, rb_image::guest::RC_SCRIPT.as_bytes());
         assert_eq!(entries[2].data, rb_image::guest::RUN.as_bytes());
         let line = login_command();
-        assert!(line.starts_with("sh -c 'cd /tmp && ") && line.ends_with("/tmp/rb/run'\r"));
+        assert!(
+            line.starts_with("sh -c 'cd /tmp && ") && line.ends_with("exec sh /tmp/rb/login'\r")
+        );
         assert!(
             line.contains(" /dev/vtbd1 /dev/rld1d /dev/rld5c;"),
             "{line}"
