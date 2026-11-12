@@ -647,6 +647,65 @@ fn netbsd_riscv64_skips_the_module_check_with_its_reason() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// tests.sh on NetBSD leaves out an entry under a directory that runs: the directory then runs as
+/// the other entries of its Atffile. This holds with `rb_tests_only` and with `rb_tests_except`
+/// alone.
+#[test]
+fn tests_leave_out_an_entry_under_a_directory() {
+    let root = std::env::temp_dir().join(format!("rb-image-tests-under-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    for d in ["usr/tests/net/carp", "usr/tests/net/ipsec", "usr/tests/lib"] {
+        std::fs::create_dir_all(root.join(d)).unwrap();
+    }
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(root.join("usr/tests/Atffile"), "tp: net\ntp: lib\n").unwrap();
+    std::fs::write(
+        root.join("usr/tests/net/Atffile"),
+        "Content-Type: application/X-atf-atffile; version=\"1\"\n\ntp: carp\ntp: ipsec\ntp: t_bind\n",
+    )
+    .unwrap();
+    let atf_run = bin.join("atf-run");
+    std::fs::write(
+        &atf_run,
+        "#!/bin/sh\nprintf 'tp-start: 1.0, t_a, 1\\ntc-start: 1.0, a\\ntc-end: 2.0, a, passed\\n'\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&atf_run, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let script = root.join("tests");
+    std::fs::write(&script, guest::TESTS).unwrap();
+    for (only, except) in [("net", "net/ipsec"), ("", "lib net/ipsec")] {
+        let out_dir = root.join("out");
+        let _ = std::fs::remove_dir_all(&out_dir);
+        let out = Command::new("sh")
+            .arg(&script)
+            .arg(&out_dir)
+            .env("PATH", &path)
+            .env("RB_TESTS", root.join("usr/tests"))
+            .env("rb_tests_only", only)
+            .env("rb_tests_except", except)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let console = String::from_utf8(out.stdout).unwrap();
+        let ran: Vec<&str> = console
+            .lines()
+            .filter_map(|l| l.strip_prefix("RB-TESTS-DIR "))
+            .collect();
+        assert_eq!(
+            ran,
+            ["net/carp", "net/t_bind"],
+            "{only} {except}: {console}"
+        );
+        assert!(
+            console.contains("RB-CASE net/carp/t_a:a"),
+            "{only} {except}: {console}"
+        );
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// tests.sh on NetBSD riscv64 turns module autoload off before the tests and says so on the
 /// console, since a module that a test autoloads panics the kernel there.
 #[test]
