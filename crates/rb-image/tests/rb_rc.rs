@@ -445,7 +445,10 @@ fn netbsd_spare_reads_a_wedge_the_system_mounted() {
     assert!(out.status.success(), "{out:?}");
     let console = String::from_utf8(out.stdout).unwrap();
     let log = std::fs::read_to_string(root.join("out/spare.log")).unwrap();
-    assert!(console.contains("RB-CHECK pass spare\n"), "{console}\n{log}");
+    assert!(
+        console.contains("RB-CHECK pass spare\n"),
+        "{console}\n{log}"
+    );
     assert!(
         log.contains(&format!("/dev/dk0 is mounted on {}", boot.display())),
         "{log}"
