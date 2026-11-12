@@ -72,6 +72,11 @@ on:
         description: Build the R world of each row beside its kernel
         type: boolean
         default: true
+      leg:
+        description: The leg whose kernel goes into the R image, rucc, or ref for the same kernel built by GCC as a G baseline
+        type: choice
+        options: [rucc, ref]
+        default: rucc
 
 # One run of each cadence at a time. A scheduled run waits for the one before it, and is not
 # cancelled, so the queue holds at most one more.
@@ -305,6 +310,9 @@ jobs:
       NB_MACHINE_ARCH: ${{ matrix.arch }}
       NB_VARS: ${{ matrix.vars }}
       KERNEL: ${{ matrix.kernel }}
+      # The ref leg's kernel makes a G baseline image, for a kernel that the release does not
+      # ship, such as GENERIC_PAE of i386.
+      LEG: ${{ inputs.leg || 'rucc' }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: work directory on /mnt
@@ -372,9 +380,9 @@ jobs:
         if: always() && matrix.image == 'release'
         continue-on-error: true
         run: |
-          kernel="$NB_ROOT/cmp/rucc/obj/sys/arch/$NB_MACHINE/compile/$KERNEL/netbsd"
+          kernel="$NB_ROOT/cmp/$LEG/obj/sys/arch/$NB_MACHINE/compile/$KERNEL/netbsd"
           if [ ! -f "$kernel" ]; then
-            echo "The rucc leg did not link the kernel, so this run has no R image." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "The $LEG leg did not link the kernel, so this run has no R image." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           g=$(scripts/tcg/image.sh "$NAME" "$RUNNER_TEMP/g" 16G)
@@ -393,9 +401,9 @@ jobs:
         if: always() && matrix.image == 'sets'
         continue-on-error: true
         run: |
-          kerndir="$NB_ROOT/cmp/rucc/obj/sys/arch/$NB_MACHINE/compile"
+          kerndir="$NB_ROOT/cmp/$LEG/obj/sys/arch/$NB_MACHINE/compile"
           if [ ! -f "$kerndir/$KERNEL/netbsd" ]; then
-            echo "The rucc leg did not link the kernel, so this run has no R image." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "The $LEG leg did not link the kernel, so this run has no R image." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           mkdir -p "$NB_ROOT/release/$NB_MACHINE" "$NB_ROOT/destdir"
@@ -422,7 +430,7 @@ jobs:
           {
             echo "### $NAME R image"
             echo
-            echo "The official sets of NetBSD 11.1 ($sets), with kern-GENERIC made from the rucc $KERNEL kernel."
+            echo "The official sets of NetBSD 11.1 ($sets), with kern-GENERIC made from the $LEG $KERNEL kernel."
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           NAME: ${{ matrix.name }}
