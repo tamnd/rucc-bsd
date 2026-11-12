@@ -23,6 +23,11 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
     match args.command.as_str() {
+        "abi-diff" => {
+            let (text, ok) = rb::abidiff::cli::run(args)?;
+            print!("{text}");
+            Ok(exit(ok))
+        }
         "baseline" | "bench" => runs(args),
         "boot" => {
             let repo = rb::repo::Repo::find()?;

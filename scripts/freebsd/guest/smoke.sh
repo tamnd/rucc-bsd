@@ -78,6 +78,28 @@ module()
 	! kldstat -q -m nullfs
 }
 
+# A static program and a dynamic one (plan 09.4). /rescue is one static program, so the ifunc
+# resolvers of libc.a run through IRELATIVE before main. /usr/bin has dynamic programs, so those of
+# libc.so.7 run in rtld. gzip and tar use the memcpy family. Both programs come from one source, so
+# their output must be the same.
+static_dynamic()
+{
+	local d=/var/rb/static-dynamic
+	file -b /rescue/gzip | grep 'statically linked' &&
+	file -b /usr/bin/gzip | grep 'dynamically linked' &&
+	mkdir -p ${d} &&
+	jot 50000 > ${d}/in &&
+	/rescue/gzip -c -n ${d}/in > ${d}/static.gz &&
+	/usr/bin/gzip -c -n ${d}/in > ${d}/dynamic.gz &&
+	cmp ${d}/static.gz ${d}/dynamic.gz &&
+	/rescue/gzip -d -c ${d}/dynamic.gz | cmp - ${d}/in &&
+	/usr/bin/gzip -d -c ${d}/static.gz | cmp - ${d}/in &&
+	/rescue/tar -cf ${d}/static.tar -C ${d} in &&
+	/usr/bin/tar -xOf ${d}/static.tar in | cmp - ${d}/in &&
+	[ "$(/rescue/sh -c 'echo $((6 * 7))')" = 42 ] &&
+	rm -rf ${d}
+}
+
 tests_present()
 {
 	[ -f /usr/tests/Kyuafile ] && kyua about version
@@ -88,6 +110,7 @@ check network network
 check fsck-mount fsck_mount
 check pkg-local pkg_local
 check module module
+check static-dynamic static_dynamic
 check tests-present tests_present
 
 passed=$(grep -c '^pass ' "$out/results")

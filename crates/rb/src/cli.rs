@@ -45,6 +45,11 @@ impl Accepts {
 pub fn accepted(command: &str) -> Option<Accepts> {
     Some(match command {
         "help" | "version" => Accepts::NOTHING,
+        "abi-diff" => Accepts {
+            positional: false,
+            values: &["g", "r", "jobs", "limit"],
+            switches: &[],
+        },
         "bench" => return Some(BENCH),
         "baseline" | "boot" | "cross-modules" => return boot_commands(command),
         "census" => Accepts {
@@ -404,6 +409,17 @@ pub const USAGE: &str = "\
 rb: build pinned FreeBSD and NetBSD trees with rucc and with a reference GCC
 
 usage:
+  rb abi-diff --g DIR --r DIR [--jobs N] [--limit N]
+      Compare the libraries of two worlds (plan 09.4). DIR holds the libraries of one side, such
+      as the tree of scripts/freebsd/libs.sh, and files are paired by their path under it. For
+      each shared object: each dynamic symbol with its version (name@@V, name@V for a hidden
+      version, or name), and its binding, type, visibility and size; the version definitions and
+      needs; DT_SONAME, DT_NEEDED, DT_FLAGS and DT_FLAGS_1; the program headers with their flags;
+      and the number of IRELATIVE relocations. For each archive, such as libc.a, the ifunc
+      symbols of each member. A link must point to the same place, and another file must have
+      the same bytes. A file on one side only counts. The size of a function and a symbol that
+      is used but not defined may differ: they are listed but not counted. Each list stops after
+      N lines, 20 by default. Exits 1 when a difference counts or no file is paired.
   rb baseline PIN --conf C (--image IMG | --from DIR,DIR,DIR) [--row ROW] [--runs N] [--dir DIR]
           [--work DIR] [--system freebsd|netbsd] [--suite boot,smoke,tests] [the options of rb boot]
       Boot G's image N times, 3 by default, each on a fresh overlay, and write the baseline to
