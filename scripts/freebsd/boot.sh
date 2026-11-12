@@ -14,6 +14,8 @@
 #
 # The bench suite is the one of guest/rb-rc. RB_BENCH is the rb-bench program to run, which goes on
 # the rb disk. RB_BENCH_SCALE and RB_BENCH_ONLY become rb_bench_scale and rb_bench_only.
+# RB_BENCH_SCRIPT is the script that goes on the rb disk as bench.sh, guest/rb-rc/bench.sh by
+# default. The bench-profile workflow sets guest/rb-rc/profile.sh.
 #
 # Console markers and limits:
 #   RB-READY   rb-rc started; within RB_BOOT_LIMIT seconds (default 600)
@@ -38,6 +40,7 @@ out=$4
 : "${RB_BENCH:=}"
 : "${RB_BENCH_SCALE:=1}"
 : "${RB_BENCH_ONLY:=}"
+: "${RB_BENCH_SCRIPT:=$here/../../guest/rb-rc/bench.sh}"
 : "${OVMF_CODE:=/usr/share/OVMF/OVMF_CODE_4M.fd}"
 : "${OVMF_VARS:=/usr/share/OVMF/OVMF_VARS_4M.fd}"
 
@@ -58,7 +61,7 @@ rb_bench_scale=$RB_BENCH_SCALE
 rb_bench_only="$RB_BENCH_ONLY"
 EOF
 cp "$here/guest/smoke.sh" "$here/guest/kyua.sh" "$here/../../conf/freebsd/image/kyua-exclude" "$out/rb-in/"
-cp "$here/../../guest/rb-rc/bench.sh" "$out/rb-in/"
+cp "$RB_BENCH_SCRIPT" "$out/rb-in/bench.sh"
 if [ -n "$RB_BENCH" ]; then
 	install -m 555 "$RB_BENCH" "$out/rb-in/rb-bench"
 fi

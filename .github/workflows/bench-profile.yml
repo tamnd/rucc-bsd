@@ -1,0 +1,124 @@
+# A kernel profile of R and G for milestone B8 (plan 13.3, "When a benchmark is slow").
+#
+# The job boots the FreeBSD 15.1 images of bench.yml, R and then G, RUNS times each, with the
+# suite guest/rb-rc/profile.sh in place of the bench suite. It runs each benchmark of the input
+# benchmarks once under the DTrace probe profile-997 and keeps the kernel samples by function and
+# the hottest kernel stacks. scripts/bench/profile-table.py then compares R and G function by
+# function in the step summary. The artifact bench-profile-freebsd has the profiles and the
+# /boot/kernel/kernel of each image, so that the hot functions can be disassembled on a host.
+#
+# The images are the newest of runs on main (scripts/bench/artifact.sh), or the freebsd-r-image of
+# the run r_run. rb-bench is the bench-freebsd-rb-bench of the newest bench run, so a bench run
+# of the last 7 days must exist. The run is for diagnosis only. It applies no gate.
+
+name: bench-profile
+
+on:
+  workflow_dispatch:
+    inputs:
+      benchmarks:
+        description: The benchmarks to profile, separated by spaces
+        required: false
+        default: "seq_read mmap_64k open_close pipe_rw1 stat"
+      scale:
+        description: rb_bench_scale, the work of each benchmark as a multiple of the default
+        required: false
+        default: "1"
+      runs:
+        description: Boots per side
+        required: false
+        default: "1"
+      r_run:
+        description: The run of freebsd-r whose freebsd-r-image to boot, or empty for the newest
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BENCHMARKS: ${{ inputs.benchmarks }}
+  SCALE: ${{ inputs.scale }}
+  RUNS: ${{ inputs.runs }}
+  R_RUN: ${{ inputs.r_run }}
+
+jobs:
+  freebsd:
+    name: profile freebsd-15.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf zstd
+      - name: the images and rb-bench
+        run: |
+          set -o pipefail
+          sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
+          {
+            echo "### FreeBSD images"
+            echo
+            scripts/bench/artifact.sh freebsd-image-15.1-release-graded /mnt/rb/g
+            echo
+            if [ -n "$R_RUN" ]; then
+              gh run download "$R_RUN" -R "$GITHUB_REPOSITORY" -n freebsd-r-image -D /mnt/rb/r
+              echo "freebsd-r-image: run $R_RUN"
+            else
+              scripts/bench/artifact.sh freebsd-r-image /mnt/rb/r
+            fi
+            echo
+            scripts/bench/artifact.sh bench-freebsd-rb-bench "$RUNNER_TEMP/rb-bench"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          for side in g r; do
+            zstd -d -q --rm "/mnt/rb/$side/freebsd.img.zst" -o "/mnt/rb/$side.img"
+          done
+          chmod +x "$RUNNER_TEMP"/rb-bench/rb-bench-*
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: boot R, then G, under the profile suite
+        timeout-minutes: 150
+        run: |
+          mkdir -p /mnt/rb/boots
+          for n in $(seq "$RUNS"); do
+            for side in r g; do
+              d=/mnt/rb/boots/$side-$n
+              RB_BENCH="$RUNNER_TEMP/rb-bench/rb-bench-$side" RB_BENCH_SCALE="$SCALE" RB_BENCH_ONLY="$BENCHMARKS" \
+                RB_BENCH_SCRIPT=guest/rb-rc/profile.sh RB_RUN_LIMIT=3600 \
+                scripts/freebsd/boot.sh "/mnt/rb/$side.img" uefi bench "$d" > "$d.log" 2>&1 || true
+              echo "$side-$n: $(tail -1 "$d.log")" | tee -a "$GITHUB_STEP_SUMMARY"
+            done
+          done
+      - name: compare the profiles
+        if: always()
+        run: |
+          mkdir -p out
+          for d in /mnt/rb/boots/*; do
+            [ -d "$d" ] || continue
+            mkdir -p "out/${d##*/}"
+            cp "$d/boot.json" "$d/console.log" "$d.log" "out/${d##*/}/" 2>/dev/null || true
+            cp -r "$d/results/out/bench/." "out/${d##*/}/" 2>/dev/null || true
+          done
+          for n in $(seq "$RUNS"); do
+            if [ -d "out/r-$n" ] && [ -d "out/g-$n" ]; then
+              echo "## boot $n" >> "$GITHUB_STEP_SUMMARY"
+              echo >> "$GITHUB_STEP_SUMMARY"
+              python3 scripts/bench/profile-table.py "out/r-$n" "out/g-$n" | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: bench-profile-freebsd
+          path: out
+          retention-days: 14

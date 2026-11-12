@@ -308,6 +308,7 @@ fn shellcheck() {
         "guest/rb-rc/bench.sh",
         "guest/rb-rc/foreign.sh",
         "guest/rb-rc/login.sh",
+        "guest/rb-rc/profile.sh",
         "smoke/smoke.sh",
     ];
     let Ok(out) = Command::new("shellcheck")
@@ -732,5 +733,86 @@ fn bench_writes_one_line_per_benchmark() {
     assert_eq!(read("version"), "rb-bench 1\n");
     // The suite's scratch files are gone.
     assert!(!root.join("work/bench").exists());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A stub of dtrace: it marks the -o file ready and writes a profile when it gets SIGTERM.
+const DTRACE: &str = r#"#!/bin/sh
+while [ $# -gt 0 ]; do
+	if [ "$1" = -o ]; then
+		o=$2
+		shift
+	fi
+	shift
+done
+echo RB-PROFILE-READY > "$o"
+trap 'printf "N kernel 7\nF 5 kernel\`vm_fault\nS 5\n  kernel\`vm_fault+0x10\n" >> "$o"; exit 0' TERM
+while :; do
+	sleep 1
+done
+"#;
+
+/// A stub of rb-bench: one result line for each benchmark, and the command of -x run.
+const RB_BENCH: &str = r#"#!/bin/sh
+case $1 in
+-V) echo "rb-bench 1" ;;
+-s) echo "syscalls	$3	0.5	lower" ;;
+-x)
+	g=$2
+	n=$3
+	shift 3
+	"$@" || exit 1
+	echo "$g	$n	0.25	lower"
+	;;
+esac
+"#;
+
+/// The profile suite of bench-profile.yml, with stubs of dtrace and rb-bench: one profile and one
+/// result line for each benchmark, also for `seq_read`, which reads a file that the suite writes.
+#[test]
+fn profile_runs_each_benchmark_under_dtrace() {
+    let root = std::env::temp_dir().join(format!("rb-image-profile-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for (name, body) in [
+        ("dtrace", DTRACE),
+        ("rb-bench", RB_BENCH),
+        ("kldload", "#!/bin/sh\nexit 1\n"),
+        ("kldstat", "#!/bin/sh\nexit 1\n"),
+    ] {
+        let path = bin.join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let top = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("sh")
+        .arg(top.join("guest/rb-rc/profile.sh"))
+        .arg(root.join("out"))
+        .env("PATH", path)
+        .env("RB_WORK", root.join("work"))
+        .env("RB_BENCH", bin.join("rb-bench"))
+        .env("rb_bench_scale", "0.0005")
+        .env("rb_bench_only", "mmap_64k seq_read")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(console, "RB-CASE bench/mmap_64k\nRB-CASE bench/seq_read\n");
+    let read = |name: &str| std::fs::read_to_string(root.join("out").join(name)).unwrap();
+    assert_eq!(
+        read("bench.tsv"),
+        "syscalls\tmmap_64k\t0.5\tlower\nfs\tseq_read\t0.25\tlower\n"
+    );
+    for name in ["mmap_64k", "seq_read"] {
+        assert_eq!(
+            read(&format!("{name}.prof")),
+            "N kernel 7\nF 5 kernel`vm_fault\nS 5\n  kernel`vm_fault+0x10\n"
+        );
+    }
+    assert_eq!(read("counts"), "2/2\n");
+    assert_eq!(read("version"), "rb-bench 1\n");
+    assert!(!root.join("work/profile").exists());
     std::fs::remove_dir_all(&root).unwrap();
 }
