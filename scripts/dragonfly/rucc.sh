@@ -69,8 +69,80 @@ else
 	(cd /build/rucc-src && cargo fetch --locked && cargo build -q --release --locked --offline -p rucc)
 	install -m 755 "$CARGO_TARGET_DIR/release/rucc" "$bin/rucc"
 fi
-# compilers.conf names one program for cpp, so a script gives rucc -E.
-printf '#!/bin/sh\nexec %s -E "$@"\n' "$bin/rucc" > "$bin/rucc-cpp"
+# compilers.conf names one program for cpp. rpcgen runs it on .x files (include/rpc), so it must
+# act as cpp and not as a compiler driver.
+cat > "$bin/rucc-cpp" <<'CPPEOF'
+#!/bin/sh
+# cpp of the rucc CCVER, as the rb-cpp of crates/rb-shim does it (decide_cpp in route.rs).
+# cpp [options] [infile [outfile]] becomes rucc -E. The second operand becomes -o outfile.
+# GCC's cpp reads an input of any suffix as C, and so does standard input, but a compiler
+# driver gives a .x file to the linker, so -x c comes first when no -x is given. With no input
+# file, cpp reads standard input.
+n=$#
+take=
+lang=
+operands=0
+inputs=0
+other=
+while [ "$n" -gt 0 ]; do
+	a=$1
+	shift
+	n=$((n - 1))
+	if [ -n "$take" ]; then
+		take=
+		set -- "$@" "$a"
+		continue
+	fi
+	case $a in
+	-o|-I|-D|-U|-A|-include|-imacros|-isystem|-iquote|-idirafter|-iprefix|-iwithprefix|-iwithprefixbefore|-isysroot|--sysroot|-MF|-MT|-MQ)
+		take=yes
+		set -- "$@" "$a"
+		;;
+	-x)
+		take=yes
+		lang=yes
+		set -- "$@" "$a"
+		;;
+	-x*)
+		lang=yes
+		set -- "$@" "$a"
+		;;
+	-*)
+		if [ "$a" != - ]; then
+			set -- "$@" "$a"
+			continue
+		fi
+		operands=$((operands + 1))
+		if [ "$operands" -ne 2 ]; then
+			inputs=$((inputs + 1))
+			other=yes
+			set -- "$@" "$a"
+		fi
+		;;
+	*)
+		operands=$((operands + 1))
+		if [ "$operands" -eq 2 ]; then
+			set -- "$@" -o "$a"
+			continue
+		fi
+		inputs=$((inputs + 1))
+		case $a in
+		*.c|*.h|*.i|*.S|*.s|*.sx) ;;
+		*) other=yes ;;
+		esac
+		set -- "$@" "$a"
+		;;
+	esac
+done
+if [ "$inputs" -eq 0 ]; then
+	set -- "$@" -
+	other=yes
+fi
+if [ -z "$lang" ] && [ -n "$other" ]; then
+	set -- -x c "$@"
+fi
+exec "$(dirname "$0")/rucc" -E "$@"
+CPPEOF
 chmod 755 "$bin/rucc-cpp"
 
 # The lines of CCVER are replaced, so a second run gives the same file.
