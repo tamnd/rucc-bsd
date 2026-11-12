@@ -14,15 +14,15 @@
 //! The diagnostics of each unit are then compared with the reference's, as `rb warnings` does: a
 //! warning rucc gives that the reference did not counts, even when the unit passes (06.9). The
 //! shim keeps only the first bytes of the reference's standard error. When that part is full, a
-//! diagnostic of rucc past the last line the reference kept for the same file cannot be judged, so
-//! it is listed apart and does not count.
+//! diagnostic of rucc that may come past the cut cannot be judged, so it is listed apart and does
+//! not count.
 
 use crate::census::absolute;
 use crate::demands;
 use crate::warnings::{self, Diagnostic};
 use harness_shim::record::CompileRecord;
 use harness_shim::run::STDERR_KEEP;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -174,12 +174,15 @@ pub fn check(
 
 /// The diagnostics of `r_err` that the reference's `g_err` does not have: those that count, then
 /// those past the cut. When `g_err` filled what the shim keeps, a diagnostic counts only when the
-/// reference kept a later line of the same file. The last line kept may be cut in the middle, so
-/// a diagnostic on that line does not count.
+/// reference kept a later line of the same file, and rucc gave it before the last diagnostic it
+/// shares with the reference. Both are needed: `#line` can put a later line first, as `byacc` does
+/// with the code after its rules. The last line kept may be cut in the middle, so a diagnostic on
+/// that line does not count.
 #[must_use]
 pub fn judge(g_err: &str, r_err: &str) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let g = warnings::parse(g_err);
-    let only_r = warnings::compare_unit(&g, &warnings::parse(r_err)).only_r;
+    let r = warnings::parse(r_err);
+    let only_r = warnings::compare_unit(&g, &r).only_r;
     if g_err.len() < STDERR_KEEP {
         return (only_r, Vec::new());
     }
@@ -188,9 +191,11 @@ pub fn judge(g_err: &str, r_err: &str) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
         let line = last.entry(d.file.as_str()).or_default();
         *line = (*line).max(d.line);
     }
-    only_r
-        .into_iter()
-        .partition(|d| last.get(d.file.as_str()).is_some_and(|&l| d.line < l))
+    let shared = r.iter().rposition(|d| d.in_(&g)).unwrap_or(0);
+    let before: BTreeSet<_> = r[..shared].iter().map(Diagnostic::key).collect();
+    only_r.into_iter().partition(|d| {
+        before.contains(&d.key()) && last.get(d.file.as_str()).is_some_and(|&l| d.line < l)
+    })
 }
 
 /// Run every C and assembly unit of the records through rucc, `jobs` at a time.
@@ -452,8 +457,8 @@ mod tests {
         g += &w("a.c", 9, "b");
         g.truncate(STDERR_KEEP);
         let r = [
-            w("a.h", 30, "a"),
             w("a.h", 12, "c"),
+            w("a.h", 30, "a"),
             w("a.h", 31, "d"),
             w("a.c", 9, "e"),
             w("b.h", 2, "f"),
@@ -474,6 +479,12 @@ mod tests {
                 ("b.h".to_string(), 2)
             ]
         );
+        // rucc gave a.h:12 after the last diagnostic it shares with the reference, as with a
+        // `#line` that goes back.
+        let back = [w("a.h", 30, "a"), w("a.h", 12, "c")].concat();
+        let (count, past) = judge(&g, &back);
+        assert!(count.is_empty(), "{count:?}");
+        assert_eq!(lines(&past), [("a.h".to_string(), 12)]);
         // When the reference's standard error is not full, every diagnostic counts.
         let (count, past) = judge(&w("a.h", 30, "a"), &r);
         assert_eq!(count.len(), 4);
