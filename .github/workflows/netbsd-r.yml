@@ -856,6 +856,10 @@ jobs:
 
   # The c-only row (plan 10.5): the RR build again with MKCXX=no, which also turns off ATF, kyua,
   # the GCC commands, GDB and groff. The shims and RB_SHIM_REF are those of the rr job.
+  # CHECKFLIST_FLAGS=-m lets checkflist pass with files of the flists that MKCXX=no does not
+  # install. distrib/sets/lists/comp/md.amd64 gives the two c++config.h of usr/include/g++/bits
+  # the tags gcc,compat and no cxx, so a MKCXX=no world misses them. checkflist still lists the
+  # missing files in the log.
   c-only:
     name: c-only distribution, kernel and sets with rucc
     needs: [tools, rb]
@@ -865,7 +869,7 @@ jobs:
     env:
       RB_RUCC_TARGET: ${{ inputs.target }}
       RB_SHIM_REF: external/gpl3/gcc/lib/libobjc,tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
-      NB_VARS: MKCXX=no
+      NB_VARS: MKCXX=no CHECKFLIST_FLAGS=-m
     steps:
       - uses: actions/checkout@v7.0.1
       - name: work directory on /mnt
