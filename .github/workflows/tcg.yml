@@ -473,7 +473,7 @@ jobs:
       RB_VM_DIR: /mnt/rb-builder
       VM_ENV: >-
         RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
-        RB_SRCCONF=/root/harness/conf/freebsd/graded.conf RB_HARNESS=/root/harness
+        RB_SRCCONF=/root/out/src.conf RB_HARNESS=/root/harness
         RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=${{ matrix.pin_name }}
         RB_COMPILE_JSONL=/build/out/compile.jsonl RB_ROW=${{ matrix.row }}
         RB_TARGET=${{ matrix.target }} RB_TARGET_ARCH=${{ matrix.target_arch }}
@@ -519,6 +519,9 @@ jobs:
           read -r archive strip < <(RB_OUT=record scripts/freebsd/fetch.sh "$RB_PIN")
           scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
           scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
+          # The SRCCONF: graded.conf and the src.conf lines of the pin, as in freebsd-g and
+          # freebsd-r. stable-14 needs its lines for WITHOUT_SSP and for -gdwarf-4.
+          scripts/freebsd/builder.sh ssh "cat /root/harness/conf/freebsd/graded.conf - > /root/out/src.conf" < record/pin.conf
       - name: rb, rb-cc, rucc and the shims
         run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
       - name: make kernel-toolchain
@@ -922,7 +925,7 @@ jobs:
       RB_VM_DIR: /mnt/rb-builder
       VM_ENV: >-
         RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
-        RB_SRCCONF=/root/harness/conf/freebsd/graded.conf RB_HARNESS=/root/harness
+        RB_SRCCONF=/root/out/src.conf RB_HARNESS=/root/harness
         RB_KERNCONF=${{ matrix.kernel }} RB_PIN_NAME=${{ matrix.pin_name }}
         RB_COMPILE_JSONL=/build/out/compile.jsonl RB_ROW=${{ matrix.row }}
         RB_TARGET=${{ matrix.target }} RB_TARGET_ARCH=${{ matrix.target_arch }}
@@ -967,6 +970,9 @@ jobs:
           read -r archive strip < <(RB_OUT=record scripts/freebsd/fetch.sh "$RB_PIN")
           scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
           scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
+          # The SRCCONF: graded.conf and the src.conf lines of the pin, as in freebsd-g and
+          # freebsd-r. stable-14 needs its lines for WITHOUT_SSP and for -gdwarf-4.
+          scripts/freebsd/builder.sh ssh "cat /root/harness/conf/freebsd/graded.conf - > /root/out/src.conf" < record/pin.conf
       - name: rb, rb-cc, rucc and the shims
         run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
       - name: make buildworld with ref, the control
