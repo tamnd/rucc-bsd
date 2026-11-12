@@ -273,15 +273,15 @@ jobs:
           image=$(scripts/tcg/image.sh "$NAME" "$RUNNER_TEMP/image" 16G)
           echo "IMAGE=$image" >> "$GITHUB_ENV"
           ls -l "$image"
-      # rb's own limit ends ten minutes before the job's, so that the results are kept.
+      # rb's own limit ends ten minutes before the job's, so that the results are kept. A boot
+      # whose kernel panics is made again, at most two more times, in the same limit
+      # (scripts/tcg/boot.sh). The summary names each panic.
       - name: rb boot
         run: |
-          set -o pipefail
           chmod +x "$RUNNER_TEMP/rb/rb"
           # shellcheck disable=SC2086
-          "$RUNNER_TEMP/rb/rb" boot --image "$IMAGE" --out "$RUNNER_TEMP/out" --row "$ROW" \
-            --login --suite "$SUITE" $TESTS --timeout $(((MINUTES - 10) * 60)) \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          scripts/tcg/boot.sh "$RUNNER_TEMP/out" $(((MINUTES - 10) * 60)) "$RUNNER_TEMP/rb/rb" \
+            --image "$IMAGE" --row "$ROW" --login --suite "$SUITE" $TESTS
       # A boot that did not get far has no console log or no counts, and a nightly boot has no
       # tests suite. None of that fails this step, which only reports: rb boot has the result.
       - name: summary
@@ -769,9 +769,9 @@ jobs:
           zstd -d -q --rm --sparse "$image.zst" -o "$image"
           truncate -s 16G "$image"
           chmod +x "$RUNNER_TEMP/rb/rb"
-          "$RUNNER_TEMP/rb/rb" boot --image "$image" --out "$RUNNER_TEMP/out" --row "$ROW" \
-            --login --suite boot,smoke --timeout $(((MINUTES - 10) * 60)) ${CPUS:+--cpus "$CPUS"} \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+          # A boot whose kernel panics is made again, as in the boot job.
+          scripts/tcg/boot.sh "$RUNNER_TEMP/out" $(((MINUTES - 10) * 60)) "$RUNNER_TEMP/rb/rb" \
+            --image "$image" --row "$ROW" --login --suite boot,smoke ${CPUS:+--cpus "$CPUS"}
           if [ "${NAME%%-*}" = netbsd ] && [ "$KIND" = release ] \
             && ! grep -aq 'rb R image: the rucc kernel' "$RUNNER_TEMP/out/console.log"; then
             echo "The console does not show the banner of the R boot.cfg, so the rucc kernel did not boot." \
