@@ -63,6 +63,9 @@
 # g_run, the G image of that run does the same, and a package counts only when it passes on G.
 # The G image must come from a netbsd-g run whose rb-rc has the foreign suite. The rucc and
 # target inputs apply as for the kernel, and atf, modules and mixed do not apply.
+# With c_only, the c-only job builds the same world again with MKCXX=no (plan 10.5). That turns
+# off ATF and kyua too, so the c-only-image job borrows the tests set, ATF and kyua from the RR
+# sets (scripts/netbsd/borrow.sh), lists each borrowed path, and boots the image as rr-boot does.
 #
 # The ref leg of the kernel and the ref build of the world also run rb syntax: every C unit of
 # that build, which is G, through the front end of rucc (scripts/netbsd/syntax.sh). shim-ref.sh
@@ -103,6 +106,10 @@ on:
         description: An ATF case, DIR/PROGRAM:CASE, for rb mixed to find the rucc object that makes it fail, when g_run is given
         required: false
         default: ""
+      c_only:
+        description: Also build the c-only row (MKCXX=no) and boot it with the tests set, ATF and kyua of the RR sets, when build=rr
+        type: boolean
+        default: false
 
 # A manual run is its own group, so that a push to the branch does not cancel it.
 concurrency:
@@ -560,6 +567,7 @@ jobs:
     timeout-minutes: 355
     outputs:
       image: ${{ steps.image.outcome }}
+      sets: ${{ steps.sets.outcome }}
     env:
       RB_RUCC_TARGET: ${{ inputs.target }}
       RB_SHIM_REF: external/gpl3/gcc/lib/libobjc,tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
@@ -864,6 +872,250 @@ jobs:
             ${{ runner.temp }}/boot/*/console.log
             ${{ runner.temp }}/boot/*/boot.json
             ${{ runner.temp }}/boot/*/results
+          retention-days: 14
+
+  # The c-only row (plan 10.5): the RR build again with MKCXX=no, which also turns off ATF, kyua,
+  # the GCC commands, GDB and groff. The shims and RB_SHIM_REF are those of the rr job.
+  c-only:
+    name: c-only distribution, kernel and sets with rucc
+    needs: [tools, rb]
+    if: inputs.build == 'rr' && inputs.c_only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    env:
+      RB_RUCC_TARGET: ${{ inputs.target }}
+      RB_SHIM_REF: external/gpl3/gcc/lib/libobjc,tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
+      NB_VARS: MKCXX=no
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: host packages
+        run: |
+          scripts/ci/apt-install.sh zlib1g-dev
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: rucc ${{ inputs.rucc }} from source
+        if: inputs.rucc != ''
+        run: |
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$REF"
+          cargo build --release --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "$RUNNER_TEMP/rucc-src/target/release" >> "$GITHUB_PATH"
+          echo "rucc built from $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          REF: ${{ inputs.rucc }}
+      - name: rucc ${{ env.RUCC_VERSION }}
+        if: inputs.rucc == ''
+        run: |
+          name="rucc-$RUCC_VERSION-x86_64-unknown-linux-gnu"
+          gh release download "$RUCC_VERSION" -R tamnd/rucc -p "$name.tar.gz" -D "$RUNNER_TEMP"
+          echo "$RUCC_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name" >> "$GITHUB_PATH"
+          echo "rucc $RUCC_VERSION, the release tarball" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: the R TOOLDIR
+        run: |
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          scripts/netbsd/overlay.sh rucc
+      - name: build.sh distribution with rucc and MKCXX=no
+        id: distribution
+        run: NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh distribution-c-only -u distribution
+      - name: build.sh kernel=GENERIC with rucc
+        id: kernel
+        run: |
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh kernel-c-only -u kernel=GENERIC
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh releasekernel-c-only -u releasekernel=GENERIC
+      - name: build.sh sets
+        id: sets
+        run: |
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh sets-c-only -u sets
+          NB_TOOLDIR="$NB_ROOT/tools-r" scripts/netbsd/phase.sh kernset -- scripts/netbsd/kernset.sh GENERIC
+          tar -C "$NB_ROOT/destdir" -cf "$NB_ROOT/release/destdir-meta.tar" METALOG etc/mtree
+      - uses: actions/upload-artifact@v7.0.1
+        if: steps.sets.outcome == 'success'
+        with:
+          name: netbsd-r-amd64-sets-c-only
+          path: |
+            /mnt/nb/release/amd64/binary
+            /mnt/nb/release/destdir-meta.tar
+          compression-level: 0
+          retention-days: 7
+      - name: the result of the build
+        if: always()
+        run: |
+          shim="$NB_ROOT/logs/shim.tsv"
+          touch "$shim"
+          {
+            echo "### c-only distribution, kernel and sets with rucc"
+            echo
+            if [ -f "$NB_ROOT/logs/phases.tsv" ]; then scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"; fi
+            echo
+            echo "rucc ran $(awk -F '\t' '$3 == "cc"' "$shim" | wc -l) calls of the C compiler slot." \
+              "The reference ran $(awk -F '\t' '$3 == "cc-ref"' "$shim" | wc -l) calls in the directories of RB_SHIM_REF."
+            if [ "$DISTRIBUTION" = failure ]; then
+              echo
+              scripts/netbsd/r-report.sh "$NB_ROOT/logs/distribution-c-only.log"
+            elif [ "$KERNEL" = failure ]; then
+              echo
+              scripts/netbsd/r-report.sh "$NB_ROOT/logs/kernel-c-only.log"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DISTRIBUTION: ${{ steps.distribution.outcome }}
+          KERNEL: ${{ steps.kernel.outcome }}
+      # The share of rucc is largest in this row (plan 10.5), so the census is the number to read.
+      - name: rb census of the c-only build
+        if: always() && steps.distribution.outcome != 'skipped'
+        continue-on-error: true
+        run: |
+          logs="$NB_ROOT/logs"
+          touch "$logs/shim.tsv"
+          python3 -I scripts/netbsd/shim-records.py "$logs/shim.tsv" R "$NB_ROOT/obj" "$NB_ROOT/obj" \
+            > "$RUNNER_TEMP/compile.jsonl"
+          status=0
+          "$RUNNER_TEMP/rb/rb" census "$RUNNER_TEMP/compile.jsonl" --objdir "$NB_ROOT/obj" \
+            --skip "$NB_ROOT/obj/tools" --objects "$logs/census-objects.tsv" > "$logs/census.txt" 2>&1 || status=$?
+          {
+            echo "### rb census of the c-only build"
+            echo
+            head -60 "$logs/census.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: compress the logs
+        if: always()
+        run: xz -T0 "$NB_ROOT"/logs/*.log "$NB_ROOT"/logs/*.tsv 2>/dev/null || true
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-logs-c-only
+          path: /mnt/nb/logs
+          retention-days: 14
+
+  # The c-only image (plan 10.5): the c-only sets, with the tests set, ATF and kyua borrowed from
+  # the sets of the rr job (scripts/netbsd/borrow.sh). The borrowed paths are listed in
+  # borrowed.txt of the artifact. The image boots with SeaBIOS, then with OVMF and the smoke suite.
+  c-only-image:
+    name: c-only image, boot and smoke
+    needs: [tools, rb, rr, c-only]
+    if: ${{ !cancelled() && inputs.build == 'rr' && inputs.c_only && needs.rr.outputs.sets == 'success' && needs.c-only.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: work directory on /mnt
+        run: |
+          sudo mkdir -p "$NB_ROOT/logs"
+          sudo chown -R "$(id -u):$(id -g)" "$NB_ROOT"
+      - uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            /mnt/nb/tools
+            /mnt/nb/obj/tools
+          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          fail-on-cache-miss: true
+      - name: fetch the pinned tree
+        run: scripts/netbsd/fetch.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: |
+          scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-amd64-sets-rr
+          path: /mnt/nb/rr
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-amd64-sets-c-only
+          path: /mnt/nb/release
+      # As in the image job: DESTDIR's metadata, and the object directory of etc, which the
+      # live-image target needs.
+      - name: borrow the tests set, ATF and kyua of the RR sets
+        id: borrow
+        run: |
+          mkdir -p "$NB_ROOT/destdir"
+          tar -C "$NB_ROOT/destdir" -xf "$NB_REL/destdir-meta.tar"
+          rm "$NB_REL/destdir-meta.tar"
+          "$NB_ROOT/tools/bin/nbmake-amd64" -C "$NB_ROOT/src/etc" obj
+          sets=$(scripts/netbsd/borrow.sh "$NB_ROOT/rr/amd64/binary/sets" "$NB_REL/amd64/binary/sets" \
+            "$NB_ROOT/logs/borrowed.txt")
+          echo "sets=$sets" >> "$GITHUB_OUTPUT"
+          {
+            echo "### c-only image"
+            echo
+            echo "The live image has the sets \`$sets\`. It borrows" \
+              "$(grep -c '^tests' "$NB_ROOT/logs/borrowed.txt") paths of the tests set and" \
+              "$(grep -c '^base' "$NB_ROOT/logs/borrowed.txt") of the base set of the RR build."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          NB_REL: /mnt/nb/release
+      - name: rb image
+        run: |
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          SETS="$SETS" scripts/netbsd/phase.sh image-c-only -- "$RUNNER_TEMP/rb/rb" image --build "$NB_ROOT/tools" \
+            --out "$NB_ROOT/netbsd-amd64-serial.img" --work "$NB_ROOT/image-work"
+          cp "$NB_ROOT"/image-work/logs/* "$NB_ROOT/logs/" 2>/dev/null || true
+          rm -rf "$NB_ROOT/image-work" "$NB_ROOT/rr"
+        env:
+          SETS: ${{ steps.borrow.outputs.sets }}
+      - name: rb boot
+        run: |
+          set -o pipefail
+          img="$NB_ROOT/netbsd-amd64-serial.img"
+          truncate -s 12G "$img"
+          status=0
+          "$RUNNER_TEMP/rb/rb" boot --image "$img" --out "$NB_ROOT/boot/seabios" --firmware seabios \
+            --suite boot | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          "$RUNNER_TEMP/rb/rb" boot --image "$img" --out "$NB_ROOT/boot/ovmf" --suite boot,smoke \
+            | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+          exit "$status"
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### boot and smoke of the c-only image: the console's RB- lines"
+            echo
+            echo '```'
+            grep -a '^RB-' "$NB_ROOT"/boot/*/console.log 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-c-only-image
+          path: |
+            /mnt/nb/logs
+            /mnt/nb/boot/*/console.log
+            /mnt/nb/boot/*/boot.json
+            /mnt/nb/boot/*/results
           retention-days: 14
 
   # The B3 gate: rb build makes the rucc kernel by itself, with its own shim TOOLDIR and checks,
