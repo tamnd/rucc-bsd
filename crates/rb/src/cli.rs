@@ -494,7 +494,8 @@ usage:
       DIR/logs/compile-<cc>.jsonl or FILE. For NetBSD each target is one build.sh run with the
       TOOLDIR of the shim, -U and -u; the TOOLDIR of build.sh tools is DIR/tools, and the target
       tools builds it. The targets are distribution, kernel=GENERIC, releasekernel=GENERIC and
-      sets by default. For FreeBSD the targets are world and kernel by default, run by make with
+      sets by default. kernel and releasekernel with no =CONF get the --kernconf NAME, GENERIC by
+      default. For FreeBSD the targets are world and kernel by default, run by make with
       CROSS_TOOLCHAIN set to the .mk file of rb toolchain and SRCCONF=conf/freebsd/CONF.conf,
       graded by default; another target, such as installworld, gets DESTDIR=DIR/destdir.
       --bringup, else RB_BRINGUP, turns on the bring-up classes of R: as hands .S files, and C

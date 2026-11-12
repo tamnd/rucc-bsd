@@ -181,6 +181,16 @@ pub fn netbsd_steps(layout: &Layout, b: &NetbsdBuild) -> Vec<Step> {
         .collect()
 }
 
+/// A NetBSD target as build.sh takes it. `kernel` and `releasekernel` with no configuration get
+/// `CONF`, so that `--targets kernel` builds the kernel of `--kernconf`, GENERIC by default. A
+/// FreeBSD target is kept.
+fn netbsd_target(target: &str, freebsd: bool, conf: &str) -> String {
+    match target {
+        "kernel" | "releasekernel" if !freebsd => format!("{target}={conf}"),
+        _ => target.to_string(),
+    }
+}
+
 /// A phase name from a target: `kernel=GENERIC` is `kernel`.
 fn phase_name(target: &str) -> String {
     target.split('=').next().unwrap_or(target).to_string()
@@ -347,7 +357,10 @@ pub fn run_step(layout: &Layout, step: &Step) -> Result<i32, String> {
 
 /// `rb build` on the command line.
 pub mod cli {
-    use super::{FreebsdBuild, Layout, NetbsdBuild, Step, freebsd_steps, netbsd_steps, run_step};
+    use super::{
+        FreebsdBuild, Layout, NetbsdBuild, Step, freebsd_steps, netbsd_steps, netbsd_target,
+        run_step,
+    };
     use crate::cli::Args;
     use crate::shims::{self, Ask, Cc, Rucc};
     use crate::toolchain::cli::Files;
@@ -408,7 +421,7 @@ pub mod cli {
                 })
                 .split(',')
                 .filter(|t| !t.is_empty())
-                .map(String::from)
+                .map(|t| netbsd_target(t, freebsd, args.get("kernconf").unwrap_or("GENERIC")))
                 .collect();
             let (bringup, bringup_units) = if cc == Cc::Rucc {
                 shims::bringup(args.get("bringup"), args.get("bringup-units"), &|k| {
@@ -653,6 +666,21 @@ pub mod cli {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_netbsd_kernel_target_gets_its_configuration() {
+        assert_eq!(netbsd_target("kernel", false, "GENERIC"), "kernel=GENERIC");
+        assert_eq!(
+            netbsd_target("releasekernel", false, "RB-TEST"),
+            "releasekernel=RB-TEST"
+        );
+        assert_eq!(
+            netbsd_target("kernel=XEN3_DOM0", false, "GENERIC"),
+            "kernel=XEN3_DOM0"
+        );
+        assert_eq!(netbsd_target("sets", false, "GENERIC"), "sets");
+        assert_eq!(netbsd_target("kernel", true, "GENERIC"), "kernel");
+    }
 
     #[test]
     fn netbsd_command_lines_are_those_of_common_sh() {
