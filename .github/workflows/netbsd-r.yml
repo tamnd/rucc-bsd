@@ -549,9 +549,10 @@ jobs:
           retention-days: 14
 
   # build=rr: the RR world, see the top of the file. RB_SHIM_REF names the directories whose calls
-  # still go to the reference. The first is Objective-C, which rucc does not compile, and each other
-  # is for an open rucc issue:
+  # still go to the reference. The first two are Objective-C, which rucc does not compile, and each
+  # other is for an open rucc issue:
   #   external/gpl3/gcc/lib/libobjc  the Makefile runs cc1obj and the sources include .m files;
+  #   tests/lib/libobjc              t_threads.m, the ATF test of libobjc, is Objective-C;
   #   tests/lib/libc/misc            t_ubsan.c asks for -fsanitize=undefined (tamnd/rucc#4391);
   #   sys/arch/i386/stand/bootxx     each bootxx program is over its size limit (tamnd/rucc#4097);
   #   sys/arch/i386/stand/dosboot    the link of dosboot.com fails with R_386_16 (tamnd/rucc#4498).
@@ -566,7 +567,7 @@ jobs:
       sets: ${{ steps.sets.outcome }}
     env:
       RB_RUCC_TARGET: ${{ inputs.target }}
-      RB_SHIM_REF: external/gpl3/gcc/lib/libobjc,tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
+      RB_SHIM_REF: external/gpl3/gcc/lib/libobjc,tests/lib/libobjc,tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
     steps:
       - uses: actions/checkout@v7.0.1
       - name: work directory on /mnt
@@ -868,7 +869,7 @@ jobs:
     timeout-minutes: 355
     env:
       RB_RUCC_TARGET: ${{ inputs.target }}
-      RB_SHIM_REF: external/gpl3/gcc/lib/libobjc,tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
+      RB_SHIM_REF: external/gpl3/gcc/lib/libobjc,tests/lib/libobjc,tests/lib/libc/misc,sys/arch/i386/stand/bootxx,sys/arch/i386/stand/dosboot
       NB_VARS: MKCXX=no CHECKFLIST_FLAGS=-m
     steps:
       - uses: actions/checkout@v7.0.1
