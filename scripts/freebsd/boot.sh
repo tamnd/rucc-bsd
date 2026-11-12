@@ -17,6 +17,9 @@
 # RB_BENCH_SCRIPT is the script that goes on the rb disk as bench.sh, guest/rb-rc/bench.sh by
 # default. The bench-profile workflow sets guest/rb-rc/profile.sh.
 #
+# RB_KYUA_FILTERS and RB_KYUA_REPEAT go into rb.conf for guest/kyua.sh: the tests to run, and how
+# many times to run them.
+#
 # Console markers and limits:
 #   RB-READY   rb-rc started; within RB_BOOT_LIMIT seconds (default 600)
 #   RB-DONE    the suites finished; within RB_RUN_LIMIT seconds of the start (default 14400)
@@ -37,6 +40,7 @@ out=$4
 : "${RB_VM_CPUS:=2}"
 : "${RB_VM_MEM:=8G}"
 : "${RB_KYUA_FILTERS:=}"
+: "${RB_KYUA_REPEAT:=1}"
 : "${RB_BENCH:=}"
 : "${RB_BENCH_SCALE:=1}"
 : "${RB_BENCH_ONLY:=}"
@@ -56,6 +60,7 @@ RB_SUITES="$suites"
 RB_POWEROFF=yes
 RB_SMOKE_DISK=vtbd7
 RB_KYUA_FILTERS="$RB_KYUA_FILTERS"
+RB_KYUA_REPEAT=$RB_KYUA_REPEAT
 RB_KYUA_LIMIT=$((RB_RUN_LIMIT - RB_BOOT_LIMIT - 300))
 rb_bench_scale=$RB_BENCH_SCALE
 rb_bench_only="$RB_BENCH_ONLY"

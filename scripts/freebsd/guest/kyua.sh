@@ -12,6 +12,11 @@
 # Before the run, the tests in kyua-exclude next to this script are taken out of the Kyuafiles in
 # /usr/tests. This changes the installed test list, not the source tree. kyua's lines go to the
 # console as well, so that after a panic the console shows which tests had finished.
+#
+# RB_KYUA_REPEAT, in rb.conf next to this script, runs the filters that many times, for a loop over
+# a few cases (freebsd-loop.yml). Round 1 is the run above. Round N writes rounds/N.log, and the
+# rounds stop when RB_KYUA_LIMIT runs out. The image's rc script does not export the variable, so
+# this script reads it from rb.conf.
 out=$1
 here=$(dirname "$0")
 mkdir -p "$out"
@@ -61,3 +66,17 @@ kyua report --results-file="$db" --verbose --results-filter passed,skipped,xfail
 	--output "$out/report-verbose.txt"
 kyua report-junit --results-file="$db" --output "$out/junit.xml"
 sed -n 's/^Test cases: //p' "$out/report.txt" | tr ' ' '_' > "$out/counts"
+
+repeat=$(sed -n 's/^RB_KYUA_REPEAT=//p' "$here/rb.conf" 2>/dev/null | tr -d '"')
+: "${repeat:=1}"
+n=2
+while [ "$n" -le "$repeat" ] && [ -n "$RB_KYUA_FILTERS" ]; do
+	left=$((RB_KYUA_LIMIT - ($(date +%s) - start)))
+	[ "$left" -gt 60 ] || break
+	mkdir -p "$out/rounds"
+	echo "RB-KYUA-ROUND $n" > /dev/console
+	# shellcheck disable=SC2086
+	timeout --foreground -s TERM -k 60 "$left" kyua test -k /usr/tests/Kyuafile \
+		--results-file="$out/rounds/$n.db" ${RB_KYUA_FILTERS} 2>&1 | tee "$out/rounds/$n.log" > /dev/console
+	n=$((n + 1))
+done
