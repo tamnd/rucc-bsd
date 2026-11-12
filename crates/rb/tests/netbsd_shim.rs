@@ -147,6 +147,42 @@ fn the_records_carry_the_rusage_to_rb_speed() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// The records of an R build carry the origin that rb census counts: rucc for C and for a `.S`
+/// file given to the cc slot, and the reference for a directory of `RB_SHIM_REF`.
+#[test]
+fn the_records_of_an_r_build_give_rb_census_the_origins() {
+    let d = dir("census");
+    let lines = [
+        "0\t/nb/obj/lib/libc\tcc\t-O2\t-c\tmalloc.c\t-o\tmalloc.pico",
+        "0\t/nb/obj/lib/libc\tcc\t-c\t/nb/src/lib/libc/arch/x86_64/sys/brk.S\t-o\tbrk.o",
+        "0\t/nb/obj/tests/lib/libc/misc\tcc-ref\t-c\tt_ubsan.c\t-o\tt_ubsan.o",
+        "0\t/nb/obj/lib/libc\tcpp\t-P\tnames.in",
+        "0\t/nb/obj/lib/libc\tcc\t--version",
+    ];
+    let log = d.join("shim.tsv");
+    std::fs::write(&log, lines.join("\n") + "\n").unwrap();
+
+    let (r, bad) = read_log(&records(&log, "R", "/nb/obj", "/nb/obj")).unwrap();
+    assert_eq!(bad, 0);
+    let origins: Vec<Option<&str>> = r.iter().map(|r| r.origin.as_deref()).collect();
+    assert_eq!(
+        origins,
+        [Some("rucc-c"), Some("rucc-asm"), Some("ref-c"), None, None]
+    );
+    let census = rb::census::from_records(&r);
+    let by = census.by_origin();
+    assert_eq!(by.get("rucc-c"), Some(&1), "{by:?}");
+    assert_eq!(by.get("rucc-asm"), Some(&1), "{by:?}");
+    assert_eq!(by.get("ref-c"), Some(&1), "{by:?}");
+    assert!(!census.is_reference());
+
+    let (g, _) = read_log(&records(&log, "G", "/nb/obj", "/nb/obj")).unwrap();
+    let census = rb::census::from_records(&g);
+    assert_eq!(census.by_origin().get("ref"), Some(&3));
+    assert!(census.is_reference());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
 /// A reference program that writes the object named by -o with another text than `FAKE_RUCC`.
 const FAKE_REF: &str = r#"#!/bin/sh
 out=
