@@ -1,0 +1,155 @@
+# DragonFly x86_64 built natively by the reference GCC (G), in a DragonFly VM (plan 14.6 and 16.12).
+#
+# The build job boots the official DragonFly 6.4.2 release image under QEMU with KVM on the runner,
+# with all the runner's vCPUs, 12 GB and a sparse 100 GB build disk on /mnt. The image is the live
+# system of the installer, so the job does not install it. scripts/dragonfly/console.py logs in on
+# the serial console and starts sshd. Every later step uses ssh. The reference compiler is the
+# base GCC of the builder's release (gcc80 on 6.4.2), so no package is installed. The job builds
+# the pinned, unmodified tree with
+#
+#   make -j4 buildworld
+#   make -j4 buildkernel KERNCONF=X86_64_GENERIC
+#
+# which are the command lines of build(7), with no make.conf. The build record is the artifact:
+# the logs, phases.tsv, toolchain.txt and source.txt.
+#
+# A manual run can build another pin of conf/dragonfly/pins.conf, or a commit of it, and can stop
+# after provision. The workflow runs only when it is started by hand, because one run holds a runner
+# for hours.
+
+name: dragonfly-g
+
+on:
+  workflow_dispatch:
+    inputs:
+      pin:
+        description: A pin of conf/dragonfly/pins.conf
+        required: false
+        default: 6.4.2
+      commit:
+        description: Build this full commit hash of the pin's repository instead of the pinned one
+        required: false
+        default: ""
+      stop:
+        description: Stop after provision, or run all stages
+        type: choice
+        options: [all, provision]
+        default: all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  RB_PIN: ${{ inputs.pin || '6.4.2' }}
+  RB_STOP: ${{ inputs.stop || 'all' }}
+  RB_CACHE: /mnt/rb-cache
+  RB_VM_DIR: /mnt/rb-builder
+  # The command environment of the scripts in the builder VM.
+  VM_ENV: RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
+
+jobs:
+  build:
+    name: build ${{ inputs.pin || '6.4.2' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: free disk
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p "$RB_CACHE" "$RB_VM_DIR"
+          sudo chown "$USER" "$RB_CACHE" "$RB_VM_DIR"
+          df -h / /mnt
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: scripts/ci/apt-install.sh qemu-system-x86 qemu-utils bzip2
+      - name: cache the builder image
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/dfly-*.img.bz2
+          key: dragonfly-builder-${{ hashFiles('conf/dragonfly/builder.conf') }}
+      - name: cache the source
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/dragonfly-src-*
+          key: dragonfly-src-${{ env.RB_PIN }}-${{ inputs.commit }}-${{ hashFiles('conf/dragonfly/pins.conf') }}
+      - name: boot the builder VM
+        run: |
+          scripts/dragonfly/builder.sh up
+          tar --exclude=./.git --exclude=./target -cf - . \
+            | scripts/dragonfly/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
+      - name: provision
+        run: scripts/dragonfly/builder.sh ssh 'sh /root/harness/scripts/dragonfly/provision.sh /root/out'
+      - name: fetch the source of ${{ env.RB_PIN }}
+        if: env.RB_STOP == 'all'
+        run: |
+          mkdir -p record
+          archive=$(RB_OUT=record RB_COMMIT="${{ inputs.commit }}" scripts/dragonfly/fetch.sh "$RB_PIN")
+          ls -l "$archive"
+          scripts/dragonfly/builder.sh ssh 'mkdir -p /build/src && tar -xf - -C /build/src' < "$archive"
+          scripts/dragonfly/builder.sh put record/source.txt /root/out/source.txt
+          scripts/dragonfly/builder.sh ssh 'du -sh /build/src; df -h /build'
+      - name: buildworld
+        if: env.RB_STOP == 'all'
+        run: scripts/dragonfly/builder.sh ssh "$VM_ENV sh /root/harness/scripts/dragonfly/build.sh world"
+      - name: buildkernel
+        if: env.RB_STOP == 'all'
+        run: scripts/dragonfly/builder.sh ssh "$VM_ENV sh /root/harness/scripts/dragonfly/build.sh kernel"
+      - name: copy the build record out
+        if: always()
+        run: |
+          mkdir -p record
+          echo "$GITHUB_RUN_ID" > record/run.txt
+          scripts/dragonfly/builder.sh ssh 'df -k /build / | tail -n +2 > /root/out/df.txt; tar -cf - -C /root/out .' | tar -xf - -C record || true
+          scripts/dragonfly/builder.sh down || true
+          cp "$RB_VM_DIR/console.log" record/builder-console.log || true
+          df -h /mnt > record/host-df.txt
+          ls -l record
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### DragonFly $RB_PIN, G"
+            echo
+            if [ -f record/source.txt ]; then
+              echo "Source: \`$(cut -f3,4 record/source.txt | tr '\t' ' ')\`"
+              echo
+            fi
+            if [ -f record/phases.tsv ]; then
+              echo '| phase | status | seconds | objects (KB) | disk used (KB) |'
+              echo '|---|---|---|---|---|'
+              sed -e 's/\t/ | /g' -e 's/^/| /' -e 's/$/ |/' record/phases.tsv
+              echo
+            fi
+            if [ -f record/toolchain.txt ]; then
+              echo '```'
+              sed -n '/^# host/,+1p;/^# CCVER/p;/--version/,+1p;/^# gcc -v/,+1p' record/toolchain.txt
+              echo '```'
+            fi
+            for f in record/*-error.txt; do
+              [ -f "$f" ] || continue
+              echo
+              echo "First error in $(basename "$f" -error.txt):"
+              echo
+              echo '```'
+              tail -40 "$f"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: upload the build record
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: dragonfly-build-${{ env.RB_PIN }}
+          path: record
+          if-no-files-found: ignore
