@@ -8,6 +8,7 @@
 # number of failed checks.
 
 out=$1/smoke
+libc=$(cd "$(dirname "$0")" && pwd)/libc
 mkdir -p "$out"
 passed=0
 failed=0
@@ -30,6 +31,38 @@ hello() {
 	cc -O2 -o rb-hello rb-hello.c && ./rb-hello && test "$(./rb-hello)" = "hello 42"
 }
 
+# An ifunc in a static program: crt0 must apply each R_X86_64_IRELATIVE relocation before main.
+ifunc_static() {
+	cd /tmp || return 1
+	cc -O2 -static -o rb-ifunc "$libc/ifunc.c" && readelf -r rb-ifunc | grep IRELATIV &&
+		./rb-ifunc && test "$(./rb-ifunc)" = "1 42 42"
+}
+
+# The four TLS models. Local exec and initial exec are linked dynamic and static. Global dynamic
+# and local dynamic live in a module that the program opens, so ld.elf_so serves each access.
+tls_models() {
+	cd /tmp || return 1
+	want="19557 24117 7 10 1 3 21599"
+	cc -O2 -c -DMODE=0 -o rb-tls-data.o "$libc/tls.c" || return 1
+	for link in "" -static; do
+		for mode in 1 2; do
+			data=
+			[ "$mode" = 2 ] && data=rb-tls-data.o
+			cc -O2 -pthread $link -DMODE="$mode" -o rb-tls "$libc/tls.c" $data || return 1
+			got=$(./rb-tls)
+			echo "mode $mode $link: $got"
+			[ "$got" = "$want" ] || return 1
+		done
+	done
+	for mode in 3 4; do
+		cc -O2 -fPIC -shared -DMODE=$((mode + 2)) -o rb-tls.so "$libc/tls.c" &&
+			cc -O2 -pthread -DMODE="$mode" -o rb-tls "$libc/tls.c" || return 1
+		got=$(./rb-tls)
+		echo "mode $mode: $got"
+		[ "$got" = "$want" ] || return 1
+	done
+}
+
 loopback() {
 	ifconfig lo0 && ping -n -c 3 127.0.0.1 && ping6 -n -c 3 ::1
 }
@@ -49,6 +82,8 @@ check sysctl sysctl kern.ostype kern.osrelease kern.version hw.machine hw.ncpu h
 check shells sh -c 'sh -c "echo sh" && ksh -c "echo ksh" && csh -c "echo csh"'
 check tools sh -c 'test "$(echo b a c a | tr " " "\n" | sort -u | wc -l | tr -d " ")" = 3 && test "$(awk "BEGIN { print 6 * 7 }")" = 42 && test "$(echo abc | sed s/b/x/)" = axc && ls -l /bin/ls /usr/bin/awk'
 check compiler hello
+check ifunc-static ifunc_static
+check tls-models tls_models
 check loopback loopback
 check dhcp dhcp
 check mount sh -c 'mount && df -h'
