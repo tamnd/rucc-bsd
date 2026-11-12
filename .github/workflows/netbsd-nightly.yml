@@ -9,7 +9,9 @@
 # netbsd-g, does not start netbsd-r, and fails.
 #
 # A run started by the GITHUB_TOKEN with workflow_dispatch is a normal run of netbsd-r, so its
-# actor is github-actions[bot]. That is how the count finds the nightly runs.
+# actor is github-actions[bot]. That is how the count finds the nightly runs. The probe runs of
+# bisect.yml have the same actor, but their title has bisect=RUN, so the count leaves them out.
+# bisect.yml reads the rucc commit and the G run of each night from the title of netbsd-r.
 
 name: netbsd-nightly
 

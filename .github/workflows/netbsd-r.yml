@@ -78,8 +78,15 @@
 # The ref leg of the kernel and the ref build of the world also run rb syntax: every C unit of
 # that build, which is G, through the front end of rucc (scripts/netbsd/syntax.sh). shim-ref.sh
 # keeps the standard error of G, so the report counts only the diagnostics G did not give.
+#
+# The bisect input only goes into the title. bisect.yml sets it to its own run, so that a probe
+# run of a bisection does not count as a nightly run.
 
 name: netbsd-r
+
+# The title names the build, the rucc commit and the G run, so that bisect.yml can find the
+# nightly runs and the runs it starts itself (bisect=RUN).
+run-name: netbsd-r ${{ inputs.build }} ${{ inputs.pin }} rucc=${{ inputs.rucc || 'pin' }} g_run=${{ inputs.g_run || 'none' }}${{ inputs.bisect && format(' bisect={0}', inputs.bisect) || '' }}
 
 # The paths leave out the files that only the image, the boot and the tests use.
 on:
@@ -123,6 +130,10 @@ on:
         description: Also build the c-only row (MKCXX=no) and boot it with the tests set, ATF and kyua of the RR sets, when build=rr
         type: boolean
         default: false
+      bisect:
+        description: The bisect.yml run that started this run as a probe, or empty. It only goes into the title
+        required: false
+        default: ""
 
 # A manual run is its own group, so that a push to the branch does not cancel it.
 concurrency:
