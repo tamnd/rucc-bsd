@@ -1,0 +1,132 @@
+# The statics that rb sections-diff --allow allows on the NetBSD kernel and module objects.
+#
+# GCC and rucc can put a static that the program never writes, or never uses, in different
+# sections, or keep it in one build only. Such a difference does not change what the kernel does.
+# Each entry names one static: source is the unit under the source root, symbol is the name
+# without the .N of a static local, and why says what the source does with it. Each reason was
+# checked against the source at NetBSD/src 3c50f59789893ab1f71051686347e79c7b2e8327.
+#
+# A data section that differs is allowed only when an allowed static of the unit is in it, and
+# its other object symbols are the same in G and R. The report lists it under "statics of the
+# allow list" with the names. A new difference gets an entry only when the source shows that
+# the static is never written or never used.
+
+[[static]]
+source = "sys/crypto/aes/aes_selftest.c"
+symbol = "ctr0"
+why = "Never written. GCC makes the 16-byte memcpy from it into stores of immediates and drops it, and rucc keeps it in .data."
+
+[[static]]
+source = "sys/dev/pci/cs4280.c"
+symbol = "cs4280_device"
+why = "Never written, only copied by *retp = cs4280_device. GCC puts it in .rodata, and rucc in .data."
+
+[[static]]
+source = "sys/dev/pci/cs4281.c"
+symbol = "cs4281_device"
+why = "Never written, only copied by *retp = cs4281_device. GCC puts it in .rodata, and rucc in .data."
+
+[[static]]
+source = "sys/dev/pci/eap.c"
+symbol = "eap_device"
+why = "Never written, only copied by *retp = eap_device. GCC puts it in .rodata, and rucc in .data."
+
+[[static]]
+source = "sys/dev/pci/esa.c"
+symbol = "esa_device"
+why = "Never written, only copied by *retp = esa_device. GCC puts it in .rodata, and rucc in .data."
+
+[[static]]
+source = "sys/dev/pci/fms.c"
+symbol = "fms_device"
+why = "Never written, only copied by *retp = fms_device. GCC puts it in .rodata, and rucc in .data."
+
+[[static]]
+source = "sys/dev/pci/neo.c"
+symbol = "neo_device"
+why = "Never written, only copied by *retp = neo_device. GCC puts it in .rodata, and rucc in .data."
+
+[[static]]
+source = "sys/dev/pci/sv.c"
+symbol = "sv_device"
+why = "Never written, only copied by *retp = sv_device. GCC puts it in .rodata, and rucc in .data."
+
+[[static]]
+source = "sys/dev/dtv/dtv_demux.c"
+symbol = "crc_table"
+why = "Never written, only read through a const pointer. GCC keeps it in .data, and rucc puts it in .rodata."
+
+[[static]]
+source = "sys/dev/pcmcia/if_ray.c"
+symbol = "ttp"
+why = "Only written (ttp = &tv1). Its reads are in RAY_DPRINTF, which is dead code because the static ray_debug = 0 is never written. GCC keeps it in .bss, and rucc drops it."
+
+[[static]]
+source = "sys/dev/pcmcia/if_ray.c"
+symbol = "tv1"
+why = "Never written in code that runs. GCC keeps it in .bss, and rucc puts it in .rodata."
+
+[[static]]
+source = "sys/dev/usb/if_urtw.c"
+symbol = "urtw_8225v2_gain_bg"
+why = "Never written. urtw_8225v2_setgain, the only reader, is called once with gain 4, so rucc folds the reads and drops it. GCC keeps it in .data."
+
+[[static]]
+source = "sys/dev/ic/igpio.c"
+symbol = "buf0"
+why = "A static local of igpio_padcfg0_print, which only DPRINTF calls. DPRINTF is dead code because the static igpio_debug = 0 is never written. GCC keeps it in .bss, and rucc drops it."
+
+[[static]]
+source = "sys/dev/ic/igpio.c"
+symbol = "buf1"
+why = "A static local of igpio_padcfg0_print, which only DPRINTF calls. DPRINTF is dead code because the static igpio_debug = 0 is never written. GCC keeps it in .bss, and rucc drops it."
+
+[[static]]
+source = "sys/dev/i2c/ihidev.c"
+symbol = "I2C_HID_POWER_ON"
+why = "Never written, only read through *(int *)arg in ihidev_hid_command. rucc inlines that function and folds the read, and GCC keeps it in .data."
+
+[[static]]
+source = "sys/dev/i2c/ihidev.c"
+symbol = "I2C_HID_POWER_OFF"
+why = "Never written, only read through *(int *)arg in ihidev_hid_command. rucc inlines that function and folds the read, and GCC keeps it in .data."
+
+[[static]]
+source = "sys/external/bsd/drm2/dist/drm/i915/intel_runtime_pm.c"
+symbol = "__warn_once_done"
+why = "The static flags of WARN_ONCE. The code uses the three at offsets 0, 4 and 8 in both builds, and GCC keeps a fourth copy at 0xc that no code uses."
+
+[[static]]
+source = "sys/dev/ipmi.c"
+symbol = "fixexp_a"
+why = "Never written, poly() only reads a[]. GCC keeps it in .data, and rucc puts it in .rodata."
+
+[[static]]
+source = "sys/dev/ipmi.c"
+symbol = "fixlog_a"
+why = "Never written, poly() only reads a[]. GCC keeps it in .data, and rucc puts it in .rodata."
+
+[[static]]
+source = "sys/external/bsd/drm2/dist/drm/nouveau/nvkm/engine/gr/nouveau_nvkm_engine_gr_gm200.c"
+symbol = "gm200_gr_tile_map_2_8"
+why = "Never written, only copied by a memcpy of constant size. GCC folds the memcpy and drops it, and rucc keeps it in .data."
+
+[[static]]
+source = "sys/external/bsd/drm2/dist/drm/nouveau/nvkm/engine/gr/nouveau_nvkm_engine_gr_gm200.c"
+symbol = "gm200_gr_tile_map_4_16"
+why = "Never written, only copied by a memcpy of constant size. GCC folds the memcpy and drops it, and rucc keeps it in .data."
+
+[[static]]
+source = "sys/external/bsd/drm2/dist/drm/nouveau/nvkm/engine/gr/nouveau_nvkm_engine_gr_gm200.c"
+symbol = "gm200_gr_tile_map_6_24"
+why = "Never written, only copied by a memcpy of constant size. GCC folds the memcpy and drops it, and rucc keeps it in .data."
+
+[[static]]
+source = "sys/net/rss_config.c"
+symbol = "rss_default_key"
+why = "Never written, only copied by a 40-byte memcpy. GCC folds the memcpy and drops it, and rucc keeps it in .data."
+
+[[static]]
+source = "sys/kern/sysv_msg.c"
+symbol = "msghdrs"
+why = "Only written: each read follows a store in the same function, and no other function reads it. GCC drops it, and rucc keeps it in .bss."

@@ -1161,7 +1161,8 @@ jobs:
 
   # rb flags-diff, sections-diff, symbols-diff, vec-audit and frames of the rucc leg against the
   # ref leg, which is G's compiler through the same shims. The objects of the ref leg are under
-  # /mnt/cmp/ref and those of the rucc leg under /mnt/cmp/rucc. None of them fails the run.
+  # /mnt/cmp/ref and those of the rucc leg under /mnt/cmp/rucc. sections-diff takes the statics
+  # of conf/netbsd/sections-allow.toml as allowed. None of them fails the run.
   compare:
     name: rb compares the rucc kernel with the ref kernel
     needs: [kernel, rb]
@@ -1198,10 +1199,13 @@ jobs:
           r=(--r /mnt/cmp/rucc/compile.jsonl --r-root /mnt/cmp/rucc)
           run() { "$rb" "$@" > "$out/$1.txt" 2>&1 || echo "rb $1 exited $?" >> "$out/$1.txt"; }
           run flags-diff "$RB_PIN" "${g[@]}" "${r[@]}" --paired-only
-          for tool in sections-diff symbols-diff; do
-            run "$tool" "${g[@]}" "${r[@]}"
-            "$rb" "$tool" "${g[@]}" "${r[@]}" --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
-          done
+          # The statics of conf/netbsd/sections-allow.toml are allowed in sections-diff only.
+          allow=(--allow conf/netbsd/sections-allow.toml)
+          run sections-diff "${g[@]}" "${r[@]}" "${allow[@]}"
+          "$rb" sections-diff "${g[@]}" "${r[@]}" "${allow[@]}" --limit 100000 \
+            > "$out/sections-diff-all.txt" 2>&1 || true
+          run symbols-diff "${g[@]}" "${r[@]}"
+          "$rb" symbols-diff "${g[@]}" "${r[@]}" --limit 100000 > "$out/symbols-diff-all.txt" 2>&1 || true
           run vec-audit "${g[@]}" "${r[@]}" --limit 100000
           run frames "${g[@]}" "${r[@]}" --limit 100000 --top 100
           {
