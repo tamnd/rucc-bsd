@@ -75,7 +75,9 @@ profiled()
 	total=$((total + 1))
 	echo "RB-CASE bench/$name"
 	echo "== $name" >> "$log"
-	dtrace -q -x aggsortrev -x bufsize=16m -x aggsize=16m -n "$script" -o "$tmp/$name.prof" 2>> "$log" &
+	# nolibs: the D libraries in /usr/lib/dtrace need the type information of the kernel, and a
+	# kernel without CTF refuses them. The script uses none of them.
+	dtrace -q -x nolibs -x aggsortrev -x bufsize=16m -x aggsize=16m -n "$script" -o "$tmp/$name.prof" 2>> "$log" &
 	dpid=$!
 	n=0
 	until grep -q RB-PROFILE-READY "$tmp/$name.prof" 2> /dev/null; do
