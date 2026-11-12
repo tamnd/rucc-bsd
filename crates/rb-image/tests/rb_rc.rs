@@ -216,6 +216,7 @@ fn scripts_parse() {
         ("tests", guest::TESTS),
         ("modules", guest::MODULES),
         ("bench", guest::BENCH),
+        ("foreign", guest::FOREIGN),
         ("smoke", guest::SMOKE),
     ] {
         let out = Command::new("sh")
@@ -239,6 +240,7 @@ fn shellcheck() {
         "guest/rb-rc/run.sh",
         "guest/rb-rc/tests.sh",
         "guest/rb-rc/bench.sh",
+        "guest/rb-rc/foreign.sh",
         "smoke/smoke.sh",
     ];
     let Ok(out) = Command::new("shellcheck")
@@ -394,6 +396,80 @@ fn modules_load_and_unload_one_at_a_time() {
     // The disk's modules took the place of the image's, which were moved aside.
     assert!(base.join("a/a.kmod").is_file());
     assert!(root.join("stand/modules.image/old/old.kmod").is_file());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn foreign_adds_each_package_and_runs_its_check() {
+    let root = std::env::temp_dir().join(format!("rb-image-foreign-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let pkgs = root.join("work/in/pkgs");
+    std::fs::create_dir_all(pkgs.join("All")).unwrap();
+    // The checks: one passes and writes in its own directory, one fails, one has a package that
+    // does not install, and one reads its input, which must not be the rest of the checks.
+    std::fs::write(
+        pkgs.join("checks"),
+        "good\techo hi > f && test \"$(cat f)\" = hi\n\
+         reader\tcat; true\n\
+         bad\techo first; echo last words; exit 3\n\
+         broken\ttrue\n",
+    )
+    .unwrap();
+    // A stub pkg_add: it fails for broken, and it says where it looks.
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let stub = bin.join("pkg_add");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\necho \"add $2 from $PKG_PATH\"\nif [ \"$2\" = broken ]; then echo 'pkg_add: no pkg found for broken'; exit 1; fi\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let script = root.join("foreign");
+    std::fs::write(&script, guest::FOREIGN).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("out"))
+        .env("PATH", path)
+        .env("RB_WORK", root.join("work"))
+        .env_remove("RB_SAVE")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let console = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        console,
+        "RB-CASE foreign/good\nRB-CASE foreign/reader\nRB-CASE foreign/bad\nRB-CASE foreign/broken\n"
+    );
+    let read = |name: &str| std::fs::read_to_string(root.join("out").join(name)).unwrap();
+    assert_eq!(
+        read("foreign.tsv"),
+        "good\tpass\t\nreader\tpass\t\nbad\tcheck\tlast words\nbroken\tadd\tpkg_add: no pkg found for broken\n"
+    );
+    assert_eq!(read("counts"), "2/4\n");
+    let log = read("good.log");
+    assert!(
+        log.starts_with(&format!(
+            "add good from {}\n+ echo hi",
+            pkgs.join("All").display()
+        )),
+        "{log}"
+    );
+    assert!(!root.join("work/foreign").exists());
+    // With no packages on the disk, the suite has nothing to run.
+    std::fs::remove_dir_all(&pkgs).unwrap();
+    let out = Command::new("sh")
+        .arg(&script)
+        .arg(root.join("none"))
+        .env("RB_WORK", root.join("work"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("none/counts")).unwrap(),
+        "0/0\n"
+    );
     std::fs::remove_dir_all(&root).unwrap();
 }
 

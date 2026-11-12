@@ -83,6 +83,7 @@ fn request(top: &Path, out: &Path) -> Request {
         login: false,
         modules: None,
         bench: None,
+        pkgs: None,
     }
 }
 

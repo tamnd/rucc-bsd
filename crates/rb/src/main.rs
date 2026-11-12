@@ -53,6 +53,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             print!("{report}");
             Ok(ExitCode::SUCCESS)
         }
+        "foreign" => foreign(args),
         "image" => {
             print!("{}", rb::image::run(args)?);
             Ok(ExitCode::SUCCESS)
@@ -134,6 +135,28 @@ fn graded(args: &Args) -> Result<ExitCode, String> {
 }
 
 /// `rb census`.
+/// `rb foreign`: fetch the packages of a file, or grade the results of R against G.
+fn foreign(args: &Args) -> Result<ExitCode, String> {
+    use std::path::Path;
+    if let Some(r) = args.get("r") {
+        let limit = match args.get("limit") {
+            Some(n) => n
+                .parse()
+                .map_err(|_| format!("--limit {n} is not a number"))?,
+            None => 20,
+        };
+        let (report, ok) = rb::foreign::grade(Path::new(r), args.get("g").map(Path::new), limit)?;
+        print!("{report}");
+        return Ok(exit(ok));
+    }
+    let (Some(conf), Some(out)) = (args.get("conf"), args.get("out")) else {
+        return Err("give --conf FILE and --out DIR, or --r DIR".into());
+    };
+    let conf = rb::foreign::Conf::load(Path::new(conf))?;
+    print!("{}", rb::foreign::fetch(&conf, Path::new(out))?);
+    Ok(ExitCode::SUCCESS)
+}
+
 fn census(args: &Args) -> Result<ExitCode, String> {
     let log = args
         .target
