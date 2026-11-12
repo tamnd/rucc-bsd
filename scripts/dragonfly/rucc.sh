@@ -4,6 +4,7 @@
 #
 #   rucc.sh OUTDIR CCVER
 #
+# With RB_RUCC_BIN set, rucc.sh installs that rucc and does not build one.
 # The source of rucc is in /build/rucc-src, copied in by the host. rucc has no dependencies from
 # crates.io, so cargo needs no network. Rust is the rust package of the DragonFly package
 # repository, as rustup has no host toolchain for DragonFly. /usr/local of the live system is on
@@ -24,21 +25,25 @@ bin=/build/rb/bin
 mkdir -p "$out" "$bin"
 start=$(date +%s)
 
-if ! mount | awk '$3 == "/usr/local"' | grep -q null; then
-	mkdir -p /build/local
-	cpdup -i0 -q /usr/local /build/local
-	mount_null /build/local /usr/local
+if [ -n "${RB_RUCC_BIN:-}" ]; then
+	# The self-build (RR) gets the rucc of the R build, so it needs no Rust.
+	install -m 755 "$RB_RUCC_BIN" "$bin/rucc"
+else
+	if ! mount | awk '$3 == "/usr/local"' | grep -q null; then
+		mkdir -p /build/local
+		cpdup -i0 -q /usr/local /build/local
+		mount_null /build/local /usr/local
+	fi
+	if ! command -v cargo > /dev/null 2>&1; then
+		env ASSUME_ALWAYS_YES=yes pkg install -y rust > "$out/pkg.log" 2>&1 || {
+			tail -30 "$out/pkg.log"
+			exit 1
+		}
+	fi
+	export CARGO_HOME=/build/cargo CARGO_TARGET_DIR=/build/rucc-target CARGO_BUILD_JOBS="$RB_JOBS"
+	(cd /build/rucc-src && cargo build -q --release --offline -p rucc)
+	install -m 755 "$CARGO_TARGET_DIR/release/rucc" "$bin/rucc"
 fi
-if ! command -v cargo > /dev/null 2>&1; then
-	env ASSUME_ALWAYS_YES=yes pkg install -y rust > "$out/pkg.log" 2>&1 || {
-		tail -30 "$out/pkg.log"
-		exit 1
-	}
-fi
-
-export CARGO_HOME=/build/cargo CARGO_TARGET_DIR=/build/rucc-target CARGO_BUILD_JOBS="$RB_JOBS"
-(cd /build/rucc-src && cargo build -q --release --offline -p rucc)
-install -m 755 "$CARGO_TARGET_DIR/release/rucc" "$bin/rucc"
 # compilers.conf names one program for cpp, so a script gives rucc -E.
 printf '#!/bin/sh\nexec %s -E "$@"\n' "$bin/rucc" > "$bin/rucc-cpp"
 chmod 755 "$bin/rucc-cpp"
@@ -59,8 +64,12 @@ EOF
 
 {
 	echo "# rust"
-	rustc --version
-	cargo --version
+	if [ -n "${RB_RUCC_BIN:-}" ]; then
+		echo "none, rucc is $RB_RUCC_BIN"
+	else
+		rustc --version
+		cargo --version
+	fi
 	echo
 	echo "# rucc"
 	"$bin/rucc" --version 2>&1 | head -3

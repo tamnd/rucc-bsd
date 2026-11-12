@@ -3,12 +3,14 @@
 #
 #   provision.sh OUTDIR
 #
-# It makes a file system on the second disk, da1, at /build. The reference compiler is the
+# It makes a file system on the build disk at /build. The build disk is RB_BUILD_DEV, da1 by
+# default. The reference compiler is the
 # base GCC of the builder's release, which needs no package. OUTDIR/toolchain.txt records the
 # release, the default CCVER, what cc, gcc and ld say they are, the SHA-256 of the programs behind
 # them, and /etc/compilers.conf if there is one.
 set -eu
 out=$1
+dev=${RB_BUILD_DEV:-da1}
 mkdir -p "$out"
 
 # UFS is the file system of the build disk. If newfs does not take the whole disk with no label,
@@ -16,11 +18,11 @@ mkdir -p "$out"
 fs=
 if ! mount | awk '$3 == "/build"' | grep -q .; then
 	mkdir -p /build
-	if newfs /dev/da1 > "$out/newfs.log" 2>&1 && mount -o noatime /dev/da1 /build; then
+	if newfs "/dev/$dev" > "$out/newfs.log" 2>&1 && mount -o noatime "/dev/$dev" /build; then
 		fs=ufs
 	else
-		newfs_hammer2 -L BUILD /dev/da1 >> "$out/newfs.log" 2>&1
-		mount_hammer2 /dev/da1@BUILD /build
+		newfs_hammer2 -L BUILD "/dev/$dev" >> "$out/newfs.log" 2>&1
+		mount_hammer2 "/dev/$dev@BUILD" /build
 		fs=hammer2
 	fi
 fi

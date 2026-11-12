@@ -65,6 +65,16 @@ rb_start()
 			rb_say "RB-SUITE smoke"
 			sh ${work}/smoke.sh ${out}/smoke
 			;;
+		builder)
+			# The self-build (RR) uses the image as its builder VM. The host logs in with
+			# the key of the rb disk, and rb.conf sets RB_POWEROFF to no.
+			mkdir -p -m 700 /root/.ssh
+			install -m 600 ${work}/authorized_keys /root/.ssh/authorized_keys
+			sed -i '' -e '/^PermitRootLogin/d' -e '/^UseDNS/d' /etc/ssh/sshd_config
+			printf 'PermitRootLogin prohibit-password\nUseDNS no\n' >> /etc/ssh/sshd_config
+			/etc/rc.d/sshd forcestart > ${out}/sshd.txt 2>&1
+			rb_say "RB-BUILDER sshd=$?"
+			;;
 		*)
 			echo "unknown suite ${s}" >> ${out}/errors.txt
 			;;
