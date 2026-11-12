@@ -1,0 +1,92 @@
+# Bisect a regression of the NetBSD nightly to a rucc commit (milestone B12, plan 16.13). The
+# script scripts/bisect/bisect.py does the work, and its header says how.
+#
+# Each day after the nightly, the find job compares the two newest nightly runs of netbsd-r. When
+# the newest one failed and the one before passed, it starts this workflow with the two rucc
+# commits. Each run of the step job is one round: it starts netbsd-r with up to WIDTH rucc commits
+# of the range at the same time (the probes), waits for them, and starts this workflow again with
+# the smaller range. The first round runs the good and the bad commit again, so that a flake or a
+# cause outside rucc (the pin, the G run, the harness) does not give a wrong commit. The last
+# round opens an issue that names the first bad commit, or comments on the issue REPORT.
+#
+# A probe is a normal netbsd-r run with bisect=RUN in its title. A search of 30 commits takes
+# three rounds of about two hours each with the default width of 3.
+
+name: bisect
+
+run-name: ${{ github.event_name == 'schedule' && 'bisect find' || format('bisect {0}..{1}', inputs.good, inputs.bad) }}
+
+on:
+  schedule:
+    - cron: "17 14 * * *"
+  workflow_dispatch:
+    inputs:
+      good:
+        description: A rucc commit with which netbsd-r passes
+        required: true
+      bad:
+        description: A later rucc commit with which netbsd-r fails
+        required: true
+      fields:
+        description: The other inputs of netbsd-r, as KEY=VALUE separated by spaces, such as "build=kernel g_run=123 atf=true"
+        required: false
+        default: build=kernel
+      confirmed:
+        description: The good and the bad commit were run again with these inputs, so the first round can skip that
+        type: boolean
+        default: false
+      width:
+        description: How many probe runs of netbsd-r a round starts at the same time
+        required: false
+        default: "3"
+      probes:
+        description: SHA:RUN,... the probe runs of a round that ran out of time, for the next round to wait for
+        required: false
+        default: ""
+      report:
+        description: An issue of this repository to comment on with the result, or empty to open a new issue
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'find' || inputs.bad }}
+  cancel-in-progress: false
+
+# actions: write lets the jobs start netbsd-r and this workflow. issues: write lets the last round
+# open or comment on the issue.
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+jobs:
+  find:
+    if: github.event_name == 'schedule'
+    name: find a new regression of the nightly
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: scripts/bisect/bisect.py find
+
+  step:
+    if: github.event_name == 'workflow_dispatch'
+    name: one round of the search
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      GOOD: ${{ inputs.good }}
+      BAD: ${{ inputs.bad }}
+      FIELDS: ${{ inputs.fields }}
+      CONFIRMED: ${{ inputs.confirmed }}
+      WIDTH: ${{ inputs.width }}
+      PROBES: ${{ inputs.probes }}
+      REPORT: ${{ inputs.report }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: scripts/bisect/bisect.py step
