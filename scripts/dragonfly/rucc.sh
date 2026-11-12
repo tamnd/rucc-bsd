@@ -37,11 +37,22 @@ else
 		cpdup -i0 -q /usr/local /build/local
 		mount_null /build/local /usr/local
 	fi
+	# Two packages of the repository have the name openssl: security/openssl (libssl.so.17) and
+	# security/openssl30 (libssl.so.12). rust and curl need the first, but the dependency of rust
+	# by name can install the second. So security/openssl is installed by its origin first.
 	if ! command -v cargo > /dev/null 2>&1; then
-		env ASSUME_ALWAYS_YES=yes pkg install -y rust > "$out/pkg.log" 2>&1 || {
+		{
+			env ASSUME_ALWAYS_YES=yes pkg install -y security/openssl &&
+			env ASSUME_ALWAYS_YES=yes pkg install -y lang/rust
+		} > "$out/pkg.log" 2>&1 || {
 			tail -30 "$out/pkg.log"
 			exit 1
 		}
+	fi
+	pkg query '%n %v %o' openssl curl rust >> "$out/pkg.log" 2>&1 || true
+	if ldd "$(command -v cargo)" | grep 'not found'; then
+		cat "$out/pkg.log"
+		exit 1
 	fi
 	export CARGO_HOME=/build/cargo CARGO_TARGET_DIR=/build/rucc-target CARGO_BUILD_JOBS="$RB_JOBS"
 	(cd /build/rucc-src && cargo build -q --release --offline -p rucc)
