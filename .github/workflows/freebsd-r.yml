@@ -1,5 +1,9 @@
-# R for FreeBSD 15.1 amd64 (milestones B5 and B6): the pinned tree compiled with rucc in the C
+# R for FreeBSD amd64 (milestones B5, B6 and B9): the pinned tree compiled with rucc in the C
 # compiler slot through rb-cc. The pin, the builder VM and the paths are those of freebsd-g.yml.
+# The pin is 15.1-release by default. Another pin, such as stable-14 with gcc: 14, takes the image of
+# the last good freebsd-g run of that pin, and its artifact names end in -PIN, so that bench.yml and
+# the other users of the 15.1 artifacts do not take them. The SRCCONF is graded.conf and the src.conf
+# lines of the pin in conf/freebsd/pins.conf, as in freebsd-g.
 # The input target picks the kernel (the GENERIC kernel and its modules, the default), the world, or
 # rr, the RR image.
 #
@@ -68,6 +72,16 @@ on:
         description: A branch or commit of tamnd/rucc
         required: false
         default: main
+      pin:
+        description: A pin of conf/freebsd/pins.conf, such as stable-14
+        required: false
+        default: 15.1-release
+      gcc:
+        description: "The reference GCC: 15, or 14, the fallback of personas.toml for stable/14"
+        required: false
+        type: choice
+        options: ["15", "14"]
+        default: "15"
       kernconf:
         description: "The kernel configuration: one of the tree, or RB-TEST of conf/freebsd/kernel (plan 12.2)"
         required: false
@@ -94,15 +108,20 @@ permissions:
   actions: read
 
 env:
-  RB_PIN: 15.1-release
+  RB_PIN: ${{ inputs.pin || '15.1-release' }}
+  RB_PIN_NAME: ${{ startsWith(inputs.pin, 'freebsd-') && inputs.pin || (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
+  RB_GCC: ${{ inputs.gcc || '15' }}
+  # The end of the artifact names: empty for 15.1-release, else -PIN.
+  RB_ART: ${{ (inputs.pin || '15.1-release') != '15.1-release' && format('-{0}', inputs.pin) || '' }}
   RB_TARGET: ${{ inputs.target || 'kernel' }}
   RB_BRINGUP_UNITS_IN: ${{ inputs.bringup_units || '' }}
   RB_CACHE: /mnt/rb-cache
   RB_VM_DIR: /mnt/rb-builder
   VM_ENV: >-
     RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
-    RB_SRCCONF=/root/harness/conf/freebsd/graded.conf RB_HARNESS=/root/harness
-    RB_KERNCONF=${{ inputs.kernconf || 'GENERIC' }} RB_PIN_NAME=freebsd-15.1
+    RB_SRCCONF=/root/out/src.conf RB_HARNESS=/root/harness
+    RB_KERNCONF=${{ inputs.kernconf || 'GENERIC' }} RB_PIN_NAME=${{ startsWith(inputs.pin, 'freebsd-') && inputs.pin || (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
+    RB_GCC=${{ inputs.gcc || '15' }}
     RB_COMPILE_JSONL=/build/out/compile.jsonl
 
 jobs:
@@ -153,18 +172,23 @@ jobs:
           tar --exclude=./.git --exclude=./target -cf - . \
             | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
       - name: provision
-        run: scripts/freebsd/builder.sh ssh 'sh /root/harness/scripts/freebsd/provision.sh /root/out'
+        run: scripts/freebsd/builder.sh ssh "RB_GCC=$RB_GCC sh /root/harness/scripts/freebsd/provision.sh /root/out"
       - name: fetch the source of ${{ env.RB_PIN }}
         run: |
           mkdir -p record
           read -r archive strip < <(RB_OUT=record scripts/freebsd/fetch.sh "$RB_PIN")
           scripts/freebsd/builder.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
           scripts/freebsd/builder.sh put record/source.txt /root/out/source.txt
+          # The SRCCONF: graded.conf and the src.conf lines of the pin, as in freebsd-g.
+          scripts/freebsd/builder.sh ssh "cat /root/harness/conf/freebsd/graded.conf - > /root/out/src.conf" < record/pin.conf
+          if [ -s record/pin.conf ]; then
+            echo "The pin $RB_PIN adds to the SRCCONF: $(paste -sd' ' record/pin.conf)" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: rb, rb-cc, rucc and the shims
         run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
       - name: make kernel-toolchain
         if: env.RB_TARGET == 'kernel'
-        run: scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=amd64-gcc15 sh /root/harness/scripts/freebsd/build.sh toolchain"
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=amd64-gcc$RB_GCC sh /root/harness/scripts/freebsd/build.sh toolchain"
       - name: make -k buildkernel with rucc
         # CONF_CFLAGS=-fstack-usage, here and in the ref build, makes both compilers write X.su
         # beside X.o for rb frames. kern.pre.mk adds CONF_CFLAGS to the kernel units and kmod.mk
@@ -199,7 +223,7 @@ jobs:
         run: |
           # shellcheck disable=SC2016
           scripts/freebsd/builder.sh ssh 'cd /root/harness && out=/root/out &&
-            /build/rb/bin/rb syntax freebsd-15.1 --log /build/out/compile-ref.jsonl --rucc /build/rb/bin/rucc \
+            /build/rb/bin/rb syntax '"$RB_PIN_NAME"' --log /build/out/compile-ref.jsonl --rucc /build/rb/bin/rucc \
               --jobs "$(sysctl -n hw.ncpu)" --limit 100 --out "$out/syntax.tsv" > "$out/syntax.txt" 2>&1
             echo "rb syntax exited $?" >> "$out/syntax.txt"; head -1 "$out/syntax.txt"'
       - name: compile every unit of the ref build with rucc
@@ -260,9 +284,9 @@ jobs:
             rb=/build/rb/bin/rb; ref=/build/out/compile-ref.jsonl; out=/root/out
             run() { "$rb" "$@" > "$out/$1.txt" 2>&1 || echo "rb $1 exited $?" >> "$out/$1.txt"; }
             RB_COMPILE_LOG=/build/out/compile-mk-diff.jsonl; export RB_COMPILE_LOG
-            run mk-diff freebsd-15.1 --dir /build/toolchain --src /build/src --work "$out/mk-diff" \
+            run mk-diff '"$RB_PIN_NAME"' --dir /build/toolchain --src /build/src --work "$out/mk-diff" \
               --kernel "/build/obj/build/src/amd64.amd64/sys/$KERNCONF"
-            run flags-diff freebsd-15.1 --g "$ref" --r /build/out/compile-rucc.jsonl --paired-only
+            run flags-diff '"$RB_PIN_NAME"' --g "$ref" --r /build/out/compile-rucc.jsonl --paired-only
             pair="--g $ref --r /build/out/compile-replay.jsonl --g-root /build/obj --r-root /build/replay/build/obj"
             for tool in warnings sections-diff symbols-diff; do
               run "$tool" $pair
@@ -504,7 +528,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: freebsd-r-${{ env.RB_TARGET }}
+          name: freebsd-r-${{ env.RB_TARGET }}${{ env.RB_ART }}
           path: |
             record
             compile
@@ -512,7 +536,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always() && hashFiles('libs/*.tar.xz') != ''
         with:
-          name: freebsd-rr-libs
+          name: freebsd-rr-libs${{ env.RB_ART }}
           path: libs
           compression-level: 0
           retention-days: 14
@@ -520,7 +544,7 @@ jobs:
         if: always() && hashFiles('image/freebsd.img.zst') != ''
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: freebsd-r-image
+          name: freebsd-r-image${{ env.RB_ART }}
           path: image/freebsd.img.zst
           compression-level: 0
           retention-days: 7
@@ -550,7 +574,7 @@ jobs:
       - name: unpack the image
         run: |
           sudo mkdir -p /mnt/rb && sudo chown "$USER" /mnt/rb
-          zstd -d -q artifacts/freebsd-r-image/freebsd.img.zst -o /mnt/rb/freebsd.img
+          zstd -d -q "artifacts/freebsd-r-image$RB_ART/freebsd.img.zst" -o /mnt/rb/freebsd.img
           ls -ls /mnt/rb/freebsd.img
       - name: boot by BIOS, boot suite
         run: scripts/freebsd/boot.sh /mnt/rb/freebsd.img bios boot boots/bios
@@ -564,10 +588,15 @@ jobs:
       - name: summary
         if: always()
         run: |
-          b=artifacts/freebsd-r-$RB_TARGET/record
+          b=artifacts/freebsd-r-$RB_TARGET$RB_ART/record
           cp "$b/r-image.txt" "$b/image.txt" 2>/dev/null || true
           if [ "$SIDE" = rr ]; then side="RR, the world and the kernel of rucc"; else side="R, the kernel of $SIDE and the world of G"; fi
-          python3 -I scripts/freebsd/published.py FreeBSD-stable-15-amd64-test published.json || true
+          case $RB_PIN in
+          main) job=FreeBSD-main-amd64-test ;;
+          stable-14) job=FreeBSD-stable-14-amd64-test ;;
+          *) job=FreeBSD-stable-15-amd64-test ;;
+          esac
+          python3 -I scripts/freebsd/published.py "$job" published.json || true
           python3 -I scripts/freebsd/summarize.py --build "$b" --boot bios=boots/bios --boot uefi=boots/uefi \
             --published published.json --conf graded --side "$side" --out summary
           cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
@@ -580,7 +609,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: freebsd-r-results
+          name: freebsd-r-results${{ env.RB_ART }}
           path: |
             boots
             summary
