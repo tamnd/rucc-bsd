@@ -25,7 +25,8 @@
 3	  SVM: NP,NRIP,VClean,AFlush,NAsids=16
 2	  Structured Extended Features2=0x#<AVX#VBMI,UMIP,AVX#VBMI2,GFNI,VAES,VPCLMULQDQ,AVX#VNNI,AVX#BITALG,AVX#VPOPCNTDQ,RDPID>
 1	  Structured Extended Features2=0x#<UMIP,VAES,VPCLMULQDQ,RDPID>
-3	  Structured Extended Features3=0x#<FSRM,ARCH_CAP>
+2	  Structured Extended Features3=0x#<FSRM,ARCH_CAP>
+1	  Structured Extended Features3=0x#<FSRM,AVX#VP2INTERSECT,ARCH_CAP>
 2	  Structured Extended Features4=0x#
 2	  Structured Extended Features=0x#<FSGSBASE,TSCADJ,BMI1,AVX2,SMEP,BMI2,ERMS,INVPCID,AVX#F,AVX#DQ,RDSEED,ADX,SMAP,AVX#IFMA,CLFLUSHOPT,CLWB,AVX#CD,SHA,AVX#BW,AVX#VL>
 1	  Structured Extended Features=0x#<FSGSBASE,TSCADJ,BMI1,AVX2,SMEP,BMI2,ERMS,INVPCID,RDSEED,ADX,SMAP,CLFLUSHOPT,CLWB,SHA>
@@ -45,37 +46,50 @@
 3	# [#] netmap_csb_validate       csb_init for kring tap# TX0: head 0, cur 0, hwcur 0, hwtail #
 3	# [#] nma_intr_enable           Cannot disable interrupts for tap#
 3	# [#] nma_intr_enable           Cannot enable interrupts for tap#
-3	#-11-10T07:49:#+00:00 rb auditd # - - Audit controls init successful
-3	#-11-10T07:49:#+00:00 rb auditd # - - Auditing disabled
-3	#-11-10T07:49:#+00:00 rb auditd # - - Auditing enabled
-3	#-11-10T07:49:#+00:00 rb auditd # - - Configured trail files distribution.
-3	#-11-10T07:49:#+00:00 rb auditd # - - New audit file is /var/audit/#.not_terminated
-3	#-11-10T07:49:#+00:00 rb auditd # - - Registered # event to class mappings.
-3	#-11-10T07:49:#+00:00 rb auditd # - - Registered non-attributable event mask.
-3	#-11-10T07:49:#+00:00 rb auditd # - - Set audit policy in kernel.
-3	#-11-10T07:49:#+00:00 rb auditd # - - Set audit trail min free percent in kernel.
-3	#-11-10T07:49:#+00:00 rb auditd # - - Set audit trail queue in kernel.
-3	#-11-10T07:49:#+00:00 rb auditd # - - Set audit trail size in kernel.
-3	#-11-10T07:49:#+00:00 rb auditd # - - audit_control(5) may be missing 'host:' field
-3	#-11-10T07:49:#+00:00 rb auditd # - - starting...
-1	#/# passed (1 broken, 24 failed, # skipped)
+1	#-11-12T07:58:#+00:00 rb auditd # - - Audit controls init successful
+1	#-11-12T07:58:#+00:00 rb auditd # - - Auditing disabled
+1	#-11-12T07:58:#+00:00 rb auditd # - - Auditing enabled
+1	#-11-12T07:58:#+00:00 rb auditd # - - Configured trail files distribution.
+1	#-11-12T07:58:#+00:00 rb auditd # - - New audit file is /var/audit/#.not_terminated
+1	#-11-12T07:58:#+00:00 rb auditd # - - Registered # event to class mappings.
+1	#-11-12T07:58:#+00:00 rb auditd # - - Registered non-attributable event mask.
+1	#-11-12T07:58:#+00:00 rb auditd # - - Set audit policy in kernel.
+1	#-11-12T07:58:#+00:00 rb auditd # - - Set audit trail min free percent in kernel.
+1	#-11-12T07:58:#+00:00 rb auditd # - - Set audit trail queue in kernel.
+1	#-11-12T07:58:#+00:00 rb auditd # - - Set audit trail size in kernel.
+1	#-11-12T07:58:#+00:00 rb auditd # - - audit_control(5) may be missing 'host:' field
+1	#-11-12T07:58:#+00:00 rb auditd # - - starting...
+2	#-11-12T07:59:#+00:00 rb auditd # - - Audit controls init successful
+2	#-11-12T07:59:#+00:00 rb auditd # - - Auditing disabled
+2	#-11-12T07:59:#+00:00 rb auditd # - - Auditing enabled
+2	#-11-12T07:59:#+00:00 rb auditd # - - Configured trail files distribution.
+2	#-11-12T07:59:#+00:00 rb auditd # - - New audit file is /var/audit/#.not_terminated
+2	#-11-12T07:59:#+00:00 rb auditd # - - Registered # event to class mappings.
+2	#-11-12T07:59:#+00:00 rb auditd # - - Registered non-attributable event mask.
+2	#-11-12T07:59:#+00:00 rb auditd # - - Set audit policy in kernel.
+2	#-11-12T07:59:#+00:00 rb auditd # - - Set audit trail min free percent in kernel.
+2	#-11-12T07:59:#+00:00 rb auditd # - - Set audit trail queue in kernel.
+2	#-11-12T07:59:#+00:00 rb auditd # - - Set audit trail size in kernel.
+2	#-11-12T07:59:#+00:00 rb auditd # - - audit_control(5) may be missing 'host:' field
+2	#-11-12T07:59:#+00:00 rb auditd # - - starting...
+2	#/# passed (1 broken, 25 failed, # skipped)
 1	#/# passed (1 broken, 26 failed, # skipped)
-1	#/# passed (2 broken, 27 failed, # skipped)
 3	---<<BOOT>>---
 3	/dev/gpt/rootfs: FILE SYSTEM CLEAN; SKIPPING CHECKS
-3	/dev/gpt/rootfs: clean, # free (3 frags, # blocks, #% fragmentation)
+3	/dev/gpt/rootfs: clean, # free (5 frags, # blocks, #% fragmentation)
 3	/etc/rc: WARNING: Unable to load kernel module if_geneve
 3	32-bit compatibility ldconfig path: /usr/lib32
 3	ACPI APIC Table: <BOCHS  BXPC    >
 3	Autoloading module: ichsmb
 1	CPU: AMD EPYC # 64-Core Processor                 (#-MHz K8-class CPU)
-2	CPU: AMD EPYC 9V74 80-Core Processor                 (#-MHz K8-class CPU)
+1	CPU: AMD EPYC 9V45 96-Core Processor                 (#-MHz K8-class CPU)
+1	CPU: AMD EPYC 9V74 80-Core Processor                 (#-MHz K8-class CPU)
 3	Clearing /tmp (X related).
 3	Copyright (c) #, #, #, #, #, #, #, #, #, #
 3	Copyright (c) #-# The FreeBSD Project.
 3	DHCPACK from #
 1	DHCPDISCOVER on vtnet0 to # port 67 interval 3
-1	DHCPDISCOVER on vtnet0 to # port 67 interval 4
+1	DHCPDISCOVER on vtnet0 to # port 67 interval 5
 1	DHCPDISCOVER on vtnet0 to # port 67 interval 6
 3	DHCPOFFER from #
 3	DHCPREQUEST on vtnet0 to # port 67
@@ -103,9 +117,9 @@
 3	Security policy loaded: TrustedBSD MAC/portacl (mac_portacl)
 3	Setting hostid: 0x#.
 3	Setting hostname: rb.
-1	Setting hostuuid: #ed64-c6b1-#-bdd7-9e#bd3e#.
-1	Setting hostuuid: 22e#-fc88-#-#a-ee#dac#.
-1	Setting hostuuid: 6e5be98f-6fc6-49f8-8cd0-#c#e12.
+1	Setting hostuuid: a#bbe5-e0ac-40c5-b#-8ccdfec41e60.
+1	Setting hostuuid: b57d#-03d9-43c9-#e-#b10c09bf.
+1	Setting hostuuid: ba29b#-#-#-afe8-#e#e78.
 3	Setting up harvesting: PURE_RDSEED,RANDOMDEV,[CALLOUT],[UMA],[FS_ATIME],SWI,INTERRUPT,NET_NG,[NET_ETHER],NET_TUN,MOUSE,KEYBOARD,ATTACH,CACHED
 3	Starting Network: enc0.
 3	Starting Network: lo0 vtnet0 enc0.
@@ -167,9 +181,9 @@
 3	ahcich7: <AHCI channel> at channel 1 on ahci1
 3	ahcich8: <AHCI channel> at channel 2 on ahci1
 3	ahcich9: <AHCI channel> at channel 3 on ahci1
-1	arp: 58:9c:fc:10:2d:59 attempts to modify permanent entry for # on epair0a
-1	arp: 58:9c:fc:10:87:bd attempts to modify permanent entry for # on epair0a
-1	arp: 58:9c:fc:10:f6:d2 attempts to modify permanent entry for # on epair0a
+1	arp: 58:9c:fc:10:05:e7 attempts to modify permanent entry for # on epair0a
+1	arp: 58:9c:fc:10:2b:e8 attempts to modify permanent entry for # on epair0a
+1	arp: 58:9c:fc:10:56:34 attempts to modify permanent entry for # on epair0a
 3	atkbd0: <AT Keyboard> irq 1 on atkbdc0
 3	atkbd0: [GIANT-LOCKED]
 3	atkbdc0: <Keyboard controller (i#)> port 0x#,0x# irq 1 on acpi0
@@ -182,46 +196,46 @@
 3	bound to # -- renewal in # seconds.
 3	cpu0: <ACPI CPU> on acpi0
 3	enc0: flags=0 metric 0 mtu #
-1	epair0a: Ethernet address: 58:9c:fc:10:a8:2f
-1	epair0a: Ethernet address: 58:9c:fc:10:b2:de
-1	epair0a: Ethernet address: 58:9c:fc:10:d0:9a
+1	epair0a: Ethernet address: 58:9c:fc:10:41:fb
+1	epair0a: Ethernet address: 58:9c:fc:10:b8:df
+1	epair0a: Ethernet address: 58:9c:fc:10:fa:66
 3	epair0a: link state changed to DOWN
 3	epair0a: link state changed to UP
 3	epair0a: promiscuous mode disabled
 3	epair0a: promiscuous mode enabled
-1	epair0b: Ethernet address: 58:9c:fc:10:2d:59
-1	epair0b: Ethernet address: 58:9c:fc:10:87:bd
-1	epair0b: Ethernet address: 58:9c:fc:10:f6:d2
+1	epair0b: Ethernet address: 58:9c:fc:10:05:e7
+1	epair0b: Ethernet address: 58:9c:fc:10:2b:e8
+1	epair0b: Ethernet address: 58:9c:fc:10:56:34
 3	epair0b: link state changed to DOWN
 3	epair0b: link state changed to UP
-1	epair1a: Ethernet address: 58:9c:fc:10:0c:1b
-1	epair1a: Ethernet address: 58:9c:fc:10:18:80
-1	epair1a: Ethernet address: 58:9c:fc:10:cf:34
+1	epair1a: Ethernet address: 58:9c:fc:10:11:43
+1	epair1a: Ethernet address: 58:9c:fc:10:8b:35
+1	epair1a: Ethernet address: 58:9c:fc:10:99:74
 3	epair1a: link state changed to DOWN
 3	epair1a: link state changed to UP
-1	epair1b: Ethernet address: 58:9c:fc:10:33:a7
-1	epair1b: Ethernet address: 58:9c:fc:10:3b:9e
-1	epair1b: Ethernet address: 58:9c:fc:10:bc:6f
+1	epair1b: Ethernet address: 58:9c:fc:10:20:d2
+1	epair1b: Ethernet address: 58:9c:fc:10:34:bd
+1	epair1b: Ethernet address: 58:9c:fc:10:ee:41
 3	epair1b: link state changed to DOWN
 3	epair1b: link state changed to UP
-1	epair2a: Ethernet address: 58:9c:fc:10:7a:de
-1	epair2a: Ethernet address: 58:9c:fc:10:8a:b8
-1	epair2a: Ethernet address: 58:9c:fc:10:e7:e9
+1	epair2a: Ethernet address: 58:9c:fc:10:b7:ae
+1	epair2a: Ethernet address: 58:9c:fc:10:f0:21
+1	epair2a: Ethernet address: 58:9c:fc:10:f9:1a
 3	epair2a: link state changed to DOWN
 3	epair2a: link state changed to UP
-1	epair2b: Ethernet address: 58:9c:fc:10:0f:25
-1	epair2b: Ethernet address: 58:9c:fc:10:3f:05
-1	epair2b: Ethernet address: 58:9c:fc:10:42:08
+1	epair2b: Ethernet address: 58:9c:fc:10:0d:52
+1	epair2b: Ethernet address: 58:9c:fc:10:34:7e
+1	epair2b: Ethernet address: 58:9c:fc:10:dd:8b
 3	epair2b: link state changed to DOWN
 3	epair2b: link state changed to UP
-1	epair3a: Ethernet address: 58:9c:fc:10:2f:ff
-1	epair3a: Ethernet address: 58:9c:fc:10:4a:fd
-1	epair3a: Ethernet address: 58:9c:fc:10:59:8f
+1	epair3a: Ethernet address: 58:9c:fc:10:2f:49
+1	epair3a: Ethernet address: 58:9c:fc:10:70:b4
+1	epair3a: Ethernet address: 58:9c:fc:10:e6:f1
 3	epair3a: link state changed to DOWN
 3	epair3a: link state changed to UP
-1	epair3b: Ethernet address: 58:9c:fc:10:20:9c
-1	epair3b: Ethernet address: 58:9c:fc:10:22:cb
-1	epair3b: Ethernet address: 58:9c:fc:10:3d:a6
+1	epair3b: Ethernet address: 58:9c:fc:10:2e:79
+1	epair3b: Ethernet address: 58:9c:fc:10:8f:b0
+1	epair3b: Ethernet address: 58:9c:fc:10:c5:b2
 3	epair3b: link state changed to DOWN
 3	epair3b: link state changed to UP
 3	failed in ng_con_part2()
@@ -251,18 +265,18 @@
 3	load_dn_sched dn_sched WF2Q+ loaded
 3	lpt0: <Printer> on ppbus0
 3	lpt0: Interrupt-driven port
-1	ngeth0: Ethernet address: 58:9c:fc:10:2c:41
-1	ngeth0: Ethernet address: 58:9c:fc:10:58:e5
-1	ngeth0: Ethernet address: 58:9c:fc:10:c0:fc
+1	ngeth0: Ethernet address: 58:9c:fc:10:2e:23
+1	ngeth0: Ethernet address: 58:9c:fc:10:98:8f
+1	ngeth0: Ethernet address: 58:9c:fc:10:9a:fb
 3	ngeth0: link state changed to DOWN
 3	ngeth0: link state changed to UP
 3	orm0: <ISA Option ROM> at iomem 0x#-0x# pnpid ORM# on isa0
 3	pci0: <ACPI PCI bus> on pcib0
 3	pcib0: <ACPI Host-PCI bridge> port 0x#-0x# on acpi0
 3	pcm0: <Dummy Audio Device>
-1	per4: Ethernet address: 00:be:49:b5:05:00
-1	per4: Ethernet address: 00:be:51:f0:05:00
-1	per4: Ethernet address: 00:be:8e:c7:05:00
+1	per4: Ethernet address: 00:be:a3:8e:05:00
+1	per4: Ethernet address: 00:be:c2:bc:05:00
+1	per4: Ethernet address: 00:be:ff:f6:05:00
 3	ppbus0: <Parallel port bus> on ppc0
 3	ppc0: <Parallel port> port 0x#-0x# irq 7 on acpi0
 3	ppc0: Generic chipset (NIBBLE-only) in COMPATIBLE mode
@@ -279,7 +293,6 @@
 3	smbios0: <System Management BIOS> at iomem 0x#-0x#
 3	smbios0: Entry point: v3 (64-bit), Version: #
 3	smbus0: <System Management Bus> on ichsmb0
-2	sys/net/routing/test_rtsock_l3:rtm_change_v4_flags_success  ->  passed  [#s]
 3	sys/net/routing/test_rtsock_l3:rtm_change_v4_gw_success  ->  passed  [#s]
 3	sys/net/routing/test_rtsock_l3:rtm_change_v4_mtu_success  ->  passed  [#s]
 3	sys/net/routing/test_rtsock_l3:rtm_change_v6_flags_success  ->  passed  [#s]
@@ -411,9 +424,9 @@
 3	sys/netmap/ctrl-api-test:main  ->  passed  [#s]
 3	sys/ses/destructive:setelmstat  ->  skipped: No ses devices found  [#s]
 3	sys/ses/destructive:setencstat  ->  skipped: No ses devices found  [#s]
-1	tap#: Ethernet address: 58:9c:fc:10:04:6a
-1	tap#: Ethernet address: 58:9c:fc:10:47:91
-1	tap#: Ethernet address: 58:9c:fc:10:66:13
+1	tap#: Ethernet address: 58:9c:fc:10:0f:54
+1	tap#: Ethernet address: 58:9c:fc:10:12:e7
+1	tap#: Ethernet address: 58:9c:fc:10:fe:3e
 3	uart0: <# or compatible> port 0x#-0x# irq 4 flags 0x# on acpi0
 3	uart0: console (#,n,8,1)
 3	usb_needs_explore_all: no devclass
