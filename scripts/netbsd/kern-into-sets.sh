@@ -14,7 +14,11 @@ set -euo pipefail
 binary=$1
 set=$2
 sets=$binary/sets
-name=kern-GENERIC.tar.${set##*.tar.}
+# The sets of amd64 are .tar.xz and those of i386 are .tgz.
+case $set in
+*.tgz) name=kern-GENERIC.tgz ;;
+*) name=kern-GENERIC.tar.${set##*.tar.} ;;
+esac
 
 if [ "$(realpath "$set")" != "$(realpath -m "$sets/$name")" ]; then
 	cp "$set" "$sets/$name"

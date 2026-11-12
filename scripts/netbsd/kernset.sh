@@ -12,7 +12,9 @@
 # commands of the kernset-GENERIC target of etc/Makefile in the tree, with the values that the tree's
 # make gives for the same variables. We do not call that target, because it depends on snap_pre,
 # which depends on distribution and would rebuild the world. As in etc/Makefile, pax gets
-# --timestamp MKREPRO_TIMESTAMP when that is set, for a build with -P.
+# --timestamp MKREPRO_TIMESTAMP when that is set, for a build with -P. NB_KERNOBJDIR names another
+# directory of kernel build directories, such as the compile directory of the rucc leg of
+# r-kernel.sh.
 
 . "$(dirname "$0")/common.sh"
 
@@ -31,7 +33,7 @@ esac
 
 # -v expands the value; -V prints it as written.
 v() { "$make" -C "$NB_SRC/etc" -v "$1" 2>/dev/null; }
-kernobjdir=$(v KERNOBJDIR)
+kernobjdir=${NB_KERNOBJDIR:-$(v KERNOBJDIR)}
 suffix=$(v TAR_SUFF)
 compress=$(v COMPRESS_PROGRAM)
 pax=$(v TOOL_PAX)
