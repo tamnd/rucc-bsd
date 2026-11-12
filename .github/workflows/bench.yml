@@ -23,6 +23,13 @@
 # runs.tsv, and rb speed --bench applies the gates. Both go to the step summary and the artifact
 # bench-<system>. The runners are shared VMs, not the quiet host of 13.3 (docs/bench-host.md), so
 # a benchmark with a G CV above 1% is reported and not gated. A failed gate does not fail the run.
+#
+# Limits, so that a hang costs minutes and not the whole job: one benchmark in the guest may take
+# 300 seconds (rb_bench_limit of guest/rb-rc/bench.sh), one boot BOOT_LIMIT seconds, and the
+# guest gets 120 seconds after RB-DONE to power off (scripts/freebsd/boot.sh). The FreeBSD loop
+# stops when the first R or G boot does not end with RB-DONE, and starts no pair of boots that
+# could pass BOOTS_BUDGET seconds. The boot step has a timeout below the job's, so rb bench still
+# runs on the boots that finished.
 
 name: bench
 
@@ -62,6 +69,8 @@ env:
   SCALE: ${{ inputs.scale || '1' }}
   ONLY: ${{ inputs.only || '' }}
   SYSTEMS: ${{ inputs.systems || 'both' }}
+  BOOT_LIMIT: 1800
+  BOOTS_BUDGET: 14400
   RB_VM_DIR: /mnt/rb-builder
   RB_CACHE: /mnt/rb-cache
   VM_ENV: >-
@@ -184,12 +193,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: boot R, then G, ${{ env.RUNS }} times each
+        timeout-minutes: 280
         run: |
           chmod +x "$RUNNER_TEMP"/rb-bench/rb-bench-*
+          mkdir -p /mnt/rb/boots
+          start=$(date +%s)
           for n in $(seq "$RUNS"); do
+            if [ $(($(date +%s) - start + 2 * BOOT_LIMIT)) -gt "$BOOTS_BUDGET" ]; then
+              echo "stop before run $n: the budget of ${BOOTS_BUDGET}s" | tee -a "$GITHUB_STEP_SUMMARY"
+              break
+            fi
             for side in r g; do
+              d=/mnt/rb/boots/$side-$n
+              ok=yes
               RB_BENCH="$RUNNER_TEMP/rb-bench/rb-bench-$side" RB_BENCH_SCALE="$SCALE" RB_BENCH_ONLY="${ONLY//,/ }" \
-                RB_RUN_LIMIT=3600 scripts/freebsd/boot.sh "/mnt/rb/$side.img" uefi bench "/mnt/rb/boots/$side-$n" || true
+                RB_RUN_LIMIT=$BOOT_LIMIT scripts/freebsd/boot.sh "/mnt/rb/$side.img" uefi bench "$d" > "$d.log" 2>&1 || ok=no
+              last=$(grep -a '^RB-CASE' "$d/console.log" 2>/dev/null | tail -1 | tr -d '\r' || true)
+              echo "$side-$n: $(tail -1 "$d.log"), last case: ${last:-none}" | tee -a "$GITHUB_STEP_SUMMARY"
+              if [ "$n" = 1 ] && [ "$ok" = no ]; then
+                echo "stop: the first boot of $side did not end with RB-DONE" | tee -a "$GITHUB_STEP_SUMMARY"
+                grep -a -v '^RB-PS\|^RB-MOUNT' "$d/console.log" | tail -40 || true
+                exit 0
+              fi
             done
           done
       - name: rb bench and rb speed
@@ -197,7 +222,8 @@ jobs:
         run: |
           rb=$RUNNER_TEMP/rb/rb
           chmod +x "$rb"
-          from() { seq "$RUNS" | sed "s|^|/mnt/rb/boots/$1-|" | paste -sd, -; }
+          # The boots that ran; the loop can stop early.
+          from() { find /mnt/rb/boots -mindepth 1 -maxdepth 1 -type d -name "$1-*" | sort -V | paste -sd, -; }
           mkdir -p out
           {
             "$rb" bench freebsd-15.1 --g-from "$(from g)" --r-from "$(from r)" \
@@ -210,8 +236,9 @@ jobs:
           cp "$RUNNER_TEMP/rb-bench/build.txt" out/ || true
           mkdir -p out/boots
           for d in /mnt/rb/boots/*; do
+            [ -d "$d" ] || continue
             mkdir -p "out/boots/${d##*/}"
-            cp "$d/boot.json" "$d/console.log" "out/boots/${d##*/}/" 2>/dev/null || true
+            cp "$d/boot.json" "$d/console.log" "$d.log" "out/boots/${d##*/}/" 2>/dev/null || true
             cp -r "$d/results/out/bench" "out/boots/${d##*/}/" 2>/dev/null || true
           done
       - uses: actions/upload-artifact@v7.0.1
@@ -323,7 +350,7 @@ jobs:
           {
             "$rb" bench "netbsd-$NB_PIN_NAME" --g-image /mnt/rb/g.img --r-image /mnt/rb/r.img \
               --g-bench "$RUNNER_TEMP/rb-bench/rb-bench-g" --r-bench "$RUNNER_TEMP/rb-bench/rb-bench-r" \
-              --runs "$RUNS" --bench-scale "$SCALE" "${only[@]}" --timeout 3600 \
+              --runs "$RUNS" --bench-scale "$SCALE" "${only[@]}" --timeout "$BOOT_LIMIT" \
               --work /mnt/rb/boots --dir out || true
             echo
             echo '```'

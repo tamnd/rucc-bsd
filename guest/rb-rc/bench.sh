@@ -22,6 +22,8 @@
 # gets "done/total". These settings come from rb.conf:
 #   rb_bench_scale  multiply the work by this number, 1 by default; the host tests use less
 #   rb_bench_only   run only these benchmarks, separated by spaces
+#   rb_bench_limit  the seconds one benchmark may take, 300 times the scale by default. A
+#                   benchmark that takes longer is killed, has no line, and bench.log says so.
 # The host tests set RB_BENCH to use another rb-bench.
 
 out=$1
@@ -67,6 +69,23 @@ wanted()
 	return 1
 }
 
+# The limit of one benchmark, with timeout(1) where the system has it.
+limit=${rb_bench_limit:-$(awk -v s="$scale" 'BEGIN { v = int(300 * s); if (v < 60) v = 60; print v }')}
+if command -v timeout > /dev/null 2>&1; then
+	limited="timeout -k 10 $limit"
+else
+	limited=
+fi
+
+# Note a benchmark that ran into the limit: timeout(1) exits with 124 then.
+over()
+{
+	if [ "$1" -eq 124 ] || [ "$1" -eq 137 ]; then
+		echo "== $2: killed after the limit of ${limit}s" >> "$log"
+		echo "RB-CASE-LIMIT bench/$2 ${limit}s"
+	fi
+}
+
 # One line of the results. The line is saved at once, so a hang keeps the earlier results.
 result()
 {
@@ -93,10 +112,13 @@ timed()
 	total=$((total + 1))
 	echo "RB-CASE bench/$name"
 	echo "== $name" >> "$log"
-	if line=$("$bench" -x "$group" "$name" "$@" 2>> "$log"); then
+	# shellcheck disable=SC2086
+	if line=$($limited "$bench" -x "$group" "$name" "$@" 2>> "$log"); then
 		printf '%s\n' "$line" >> "$tsv"
 		done_=$((done_ + 1))
 		$RB_SAVE
+	else
+		over $? "$name"
 	fi
 }
 
@@ -114,10 +136,13 @@ for name in $("$bench" -l 2>> "$log" | cut -f 2); do
 	total=$((total + 1))
 	echo "RB-CASE bench/$name"
 	echo "== $name" >> "$log"
-	if line=$("$bench" -s "$scale" "$name" 2>> "$log") && [ -n "$line" ]; then
+	# shellcheck disable=SC2086
+	if line=$($limited "$bench" -s "$scale" "$name" 2>> "$log") && [ -n "$line" ]; then
 		printf '%s\n' "$line" >> "$tsv"
 		done_=$((done_ + 1))
 		$RB_SAVE
+	else
+		over $? "$name"
 	fi
 done
 
@@ -210,7 +235,7 @@ if have openssl; then
 		*) args=$alg ;;
 		esac
 		# shellcheck disable=SC2086
-		value=$(openssl speed -mr -seconds "$seconds" $args 2>> "$log" |
+		value=$($limited openssl speed -mr -seconds "$seconds" $args 2>> "$log" |
 		    awk -F: '/^\+F:/ { v = $NF } /^\+F2:/ { v = $4 } END { if (v != "") print v }')
 		# OpenSSL 3 gives the RSA signs per second. An older one gives the seconds of one sign.
 		better=higher
