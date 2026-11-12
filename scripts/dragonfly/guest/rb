@@ -86,8 +86,10 @@ rb_start()
 	tar -cf "${rb_disk}" -C "${work}" . || rc=$?
 	rb_say "RB-DONE tar=${rc} smoke=$(cat ${out}/smoke/counts 2>/dev/null)"
 
+	# init of DragonFly does not act on the signal of shutdown while rc still runs, so the system
+	# would go on to the login prompt. halt -p syncs the disks and powers off at once.
 	if [ "${RB_POWEROFF}" = "yes" ]; then
-		shutdown -p now
+		halt -p
 	fi
 }
 

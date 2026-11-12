@@ -60,6 +60,7 @@ qemu=$!
 
 ready=""
 done_line=""
+done_at=0
 while kill -0 "$qemu" 2>/dev/null; do
 	sleep 5
 	now=$(($(date +%s) - start))
@@ -69,7 +70,14 @@ while kill -0 "$qemu" 2>/dev/null; do
 	fi
 	if [ -z "$done_line" ] && grep -aq '^RB-DONE' "$console" 2>/dev/null; then
 		done_line="$(grep -a -m1 '^RB-DONE' "$console" | tr -d '"\\\r')"
+		done_at=$now
 		echo "$done_line after ${now}s"
+	fi
+	# The guest powers off after RB-DONE. If it does not, stop QEMU, as the results are on the disk.
+	if [ -n "$done_line" ] && [ "$now" -gt "$((done_at + 120))" ]; then
+		echo "no power off in 120s after RB-DONE"
+		kill "$qemu"
+		break
 	fi
 	if [ -z "$ready" ] && [ "$now" -gt "$RB_BOOT_LIMIT" ]; then
 		echo "no RB-READY in ${RB_BOOT_LIMIT}s"

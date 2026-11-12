@@ -37,8 +37,17 @@ shells()
 
 # QEMU's user network runs with restrict=on, so its DHCP server gives no router and there is no
 # default route. The virtual host 10.0.2.2 answers ping in that mode, so the check pings it.
+# The link of em0 can come up after rc has started dhclient, so the check waits up to 60 seconds
+# for the address and starts dhclient again while there is none.
 network()
 {
+	local i
+	for i in 1 2 3 4 5 6; do
+		ifconfig em0 inet | grep -q 'inet 10\.0\.2\.' && break
+		ifconfig em0 | grep 'status:'
+		dhclient em0
+		sleep 10
+	done
 	ifconfig em0 &&
 	ifconfig em0 inet | grep -q 'inet 10\.0\.2\.' &&
 	netstat -rn -f inet &&
@@ -93,8 +102,9 @@ module()
 static_dynamic()
 {
 	local d=/var/rb/static-dynamic
-	file -b /rescue/gzip | grep 'statically linked' &&
-	file -b /usr/bin/gzip | grep 'dynamically linked' &&
+	file /rescue/gzip /usr/bin/gzip &&
+	ldd /usr/bin/gzip | grep -q 'libc\.so' &&
+	! ldd /rescue/gzip 2> /dev/null | grep -q 'libc\.so' &&
 	mkdir -p ${d} &&
 	jot 50000 > ${d}/in &&
 	/rescue/gzip -c -n ${d}/in > ${d}/static.gz &&
