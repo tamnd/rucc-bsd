@@ -47,6 +47,28 @@ on = "server3"
 on = "github-ubuntu-24.04"
 cpus = "all"
 
+# The DragonFly builder: the official 6.4.2 release image, which is the live system of the
+# installer. The build runs natively in it with its base GCC 8.3 (gcc80), so it installs no
+# toolchain. DragonFly publishes only MD5 sums. The sha256 is of the file whose MD5 matched the
+# line in checksum_url, read on 12 November 2026. scripts/dragonfly/builder.sh boots it.
+[builder."dragonfly-6.4.2"]
+system = "dragonfly"
+kind = "vm"
+release = "6.4.2-RELEASE"
+image = "dfly-x86_64-6.4.2_REL.img.bz2"
+url = "https://mirror-master.dragonflybsd.org/iso-images/dfly-x86_64-6.4.2_REL.img.bz2"
+checksum_url = "https://mirror-master.dragonflybsd.org/iso-images/md5.txt"
+sha256 = "f1c1fb4c2aff3537b4fd03dc47cc2173966cbabf7c37ec4af0f9ab7f3b9a91eb"
+qemu = "qemu-system-x86_64"
+machine = "q35"
+accel = "kvm"
+
+[[builder."dragonfly-6.4.2".host]]
+on = "github-ubuntu-24.04"
+cpus = "all"
+memory_gb = 12
+build_disk_gb = 100
+
 [machine.gpc]
 cores = 32
 arch = "x86_64"
