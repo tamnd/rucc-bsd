@@ -39,7 +39,7 @@ case $kind in
 txz)
 	txz="$RB_CACHE/freebsd-src-$pin-${hash:0:12}.txz"
 	if [ ! -f "$txz" ] || ! echo "$hash  $txz" | sha256sum -c --status -; then
-		curl -sfL --retry 3 -o "$txz.part" "$source"
+		curl -sfL --retry 3 --retry-all-errors -o "$txz.part" "$source"
 		mv "$txz.part" "$txz"
 	fi
 	echo "$hash  $txz" | sha256sum -c - >&2

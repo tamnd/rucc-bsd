@@ -20,7 +20,7 @@ if [ -n "${NB_PIN_SETS:-}" ]; then
 	mkdir -p "$NB_SRC" "$NB_ROOT/sets"
 	for set in $NB_PIN_SETS; do
 		name=${set%%=*}
-		curl -fsSL --retry 3 -o "$NB_ROOT/sets/$name" "$NB_PIN_SETS_URL/$name"
+		curl -fsSL --retry 3 --retry-all-errors -o "$NB_ROOT/sets/$name" "$NB_PIN_SETS_URL/$name"
 		echo "${set#*=}  $NB_ROOT/sets/$name" | sha512sum -c -
 		tar -xzf "$NB_ROOT/sets/$name" -C "$NB_SRC" --strip-components=2
 		rm -f "$NB_ROOT/sets/$name"
