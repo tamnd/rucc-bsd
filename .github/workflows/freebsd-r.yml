@@ -155,16 +155,32 @@ jobs:
         if: env.RB_TARGET == 'kernel'
         run: scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=amd64-gcc15 sh /root/harness/scripts/freebsd/build.sh toolchain"
       - name: make -k buildkernel with rucc
+        # CONF_CFLAGS=-fstack-usage, here and in the ref build, makes both compilers write X.su
+        # beside X.o for rb frames. kern.pre.mk adds CONF_CFLAGS to the kernel units and kmod.mk
+        # to the module units. It does not change the code.
         if: env.RB_TARGET == 'kernel'
         continue-on-error: true
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_MAKEFLAGS=-k \
+            RB_MAKEVARS=CONF_CFLAGS=-fstack-usage \
             RB_PHASE=kernel-rucc RB_COMPILE_LOG=/build/out/compile-rucc.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: make build${{ env.RB_TARGET }} with ref, the control
         if: env.RB_TARGET != 'rr'
         run: |
-          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk \
+          vars=
+          if [ "$RB_TARGET" = kernel ]; then vars=RB_MAKEVARS=CONF_CFLAGS=-fstack-usage; fi
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk $vars \
             RB_PHASE=$RB_TARGET-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh $RB_TARGET"
+      - name: keep the ref kernel and modules for rb ctf-diff
+        # The rucc build for the image starts with no kernel objects, so the files of the ref
+        # build are copied first: the kernel and each module, by the name installkernel gives it.
+        if: env.RB_TARGET == 'kernel'
+        continue-on-error: true
+        run: |
+          scripts/freebsd/builder.sh ssh "sh /root/harness/scripts/freebsd/kmods.sh \
+            /build/obj/build/src/amd64.amd64/sys/$KERNCONF /build/ctf/g"
+        env:
+          KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
       - name: rb syntax over the ref build
         if: env.RB_TARGET != 'rr'
         timeout-minutes: 90
@@ -242,7 +258,9 @@ jobs:
             done
             for tool in sections-diff symbols-diff; do
               "$rb" "$tool" $pair --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
-            done'
+            done
+            run vec-audit $pair --limit 100000
+            run frames $pair --limit 100000 --top 100'
         env:
           KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
       - name: the boot code with rucc
@@ -275,6 +293,31 @@ jobs:
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=kernel-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
+      - name: rb ctf-diff and rb kmod-relocs of the rucc kernel and modules
+        # The CTF of the rucc kernel and modules against the ref build of the same tree (plan
+        # 09.6), and the relocation types of each rucc module against those the kernel linker
+        # applies. The losses of rb ctf-diff are the ctfconvert and ctfmerge messages of the
+        # rucc build log that the ref build log does not have.
+        if: env.RB_SIDE == 'rucc'
+        continue-on-error: true
+        run: |
+          # shellcheck disable=SC2016
+          scripts/freebsd/builder.sh ssh "sh /root/harness/scripts/freebsd/kmods.sh \
+            /build/obj/build/src/amd64.amd64/sys/$KERNCONF /build/ctf/r && "'
+            rb=/build/rb/bin/rb; out=/root/out
+            "$rb" ctf-diff --g /build/ctf/g --r /build/ctf/r --g-log "$out/kernel-ref.log" \
+              --r-log "$out/kernel-r.log" --out /build/ctf/out > "$out/ctf-diff.txt" 2>&1 ||
+              echo "rb ctf-diff exited $?" >> "$out/ctf-diff.txt"
+            # The lists of named types of each file are large, so only the differences and the
+            # losses go to the record.
+            mkdir -p "$out/ctf-diff"
+            (cd /build/ctf/out && find . -type f -size +0 \( -name "*.diff" -o -name ctf-losses.txt \) |
+              tar -cf - -T -) | tar -xf - -C "$out/ctf-diff"
+            "$rb" kmod-relocs /build/ctf/r --limit 1000 > "$out/kmod-relocs.txt" 2>&1 ||
+              echo "rb kmod-relocs exited $?" >> "$out/kmod-relocs.txt"
+            head -3 "$out/ctf-diff.txt" "$out/kmod-relocs.txt"'
+        env:
+          KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
       - name: make buildworld with rucc, for the RR image
         if: env.RB_TARGET == 'rr'
         run: |
@@ -410,7 +453,8 @@ jobs:
               echo
               python3 -I scripts/freebsd/r-report.py "$f" --tsv "record/failed-units-$run.tsv"
             done
-            for tool in syntax mk-diff flags-diff warnings sections-diff symbols-diff; do
+            for tool in syntax mk-diff flags-diff warnings sections-diff symbols-diff vec-audit frames \
+              ctf-diff kmod-relocs; do
               [ -f "record/$tool.txt" ] || continue
               echo
               echo "#### rb $tool"

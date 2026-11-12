@@ -23,6 +23,7 @@ pub mod fetch;
 pub mod flagsdiff;
 pub mod frames;
 pub mod image;
+pub mod kmodrelocs;
 pub mod mixed;
 pub mod mkdiff;
 pub mod objdiff;

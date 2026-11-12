@@ -90,7 +90,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
             print!("{text}");
             Ok(exit(ok))
         }
-        "ctf-diff" | "frames" | "mixed" | "speed" | "vec-audit" => graded(args),
+        "ctf-diff" | "frames" | "kmod-relocs" | "mixed" | "speed" | "vec-audit" => graded(args),
         "cross-modules" | "test" => test(args),
         "warnings" => {
             let (text, ok) = rb::warnings::cli::run(args)?;
@@ -119,11 +119,12 @@ fn runs(args: &Args) -> Result<ExitCode, String> {
     Ok(exit(complete))
 }
 
-/// `rb ctf-diff`, `rb frames`, `rb mixed`, `rb speed` and `rb vec-audit`.
+/// `rb ctf-diff`, `rb frames`, `rb kmod-relocs`, `rb mixed`, `rb speed` and `rb vec-audit`.
 fn graded(args: &Args) -> Result<ExitCode, String> {
     let (text, ok) = match args.command.as_str() {
         "ctf-diff" => rb::ctfdiff::cli::run_cli(args)?,
         "frames" => rb::frames::cli::run(args)?,
+        "kmod-relocs" => rb::kmodrelocs::cli::run(args)?,
         "mixed" => rb::mixed::cli::run(args)?,
         "speed" => rb::speed::cli::run(args)?,
         _ => rb::vecaudit::cli::run(args)?,
