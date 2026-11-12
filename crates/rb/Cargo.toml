@@ -14,7 +14,7 @@ harness-shim.workspace = true
 harness-stats.workspace = true
 iced-x86.workspace = true
 miniz_oxide.workspace = true
-object.workspace = true
+object = { workspace = true, features = ["archive"] }
 rb-image = { path = "../rb-image" }
 rb-pins = { path = "../rb-pins" }
 rb-shim = { path = "../rb-shim" }
@@ -23,7 +23,7 @@ serde_json.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
-object = { workspace = true, features = ["write"] }
+object = { workspace = true, features = ["build", "write"] }
 
 [lints]
 workspace = true

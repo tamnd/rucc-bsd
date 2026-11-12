@@ -4,6 +4,7 @@
 //! The commands arrive one milestone at a time, in the order of plan 16. Each one lives in its
 //! own module, and the binary only parses the command line and calls it.
 
+pub mod abidiff;
 pub mod attribution;
 pub mod baseline;
 pub mod bench;

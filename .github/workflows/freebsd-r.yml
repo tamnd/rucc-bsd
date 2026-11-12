@@ -45,7 +45,8 @@
 # So the world and the kernel of the image are both R. The boot job boots that image by BIOS and by
 # UEFI with the smoke suite and kyua. The input boot none boots nothing. The job also takes the
 # shared libraries and libc.a of the R staging tree and of the image of the last good freebsd-g run
-# (scripts/freebsd/libs.sh), for rb abi-diff (plan 09.4), into the artifact freebsd-rr-libs.
+# (scripts/freebsd/libs.sh) into the artifact freebsd-rr-libs, and runs rb abi-diff (plan 09.4) on
+# them. The report is abi-diff.txt in the record.
 #
 # scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
 # and the step summary shows the groups. rucc is built from the head of tamnd/rucc main, or from the
@@ -359,6 +360,15 @@ jobs:
           scripts/freebsd/builder.sh get /build/image/libs-g.tar.xz libs/libs-g.tar.xz
           cp record/g-image.txt libs/ || true
           ls -l libs
+      - name: rb abi-diff of the libraries of G and R
+        if: env.RB_TARGET == 'rr' && hashFiles('libs/libs-r.tar.xz') != ''
+        continue-on-error: true
+        run: |
+          scripts/freebsd/builder.sh ssh 'mkdir -p /build/abi/g /build/abi/r &&
+            tar -xf /build/image/libs-g.tar.xz -C /build/abi/g && tar -xf /build/image/libs-r.tar.xz -C /build/abi/r &&
+            { /build/rb/bin/rb abi-diff --g /build/abi/g --r /build/abi/r --limit 40 > /root/out/abi-diff.txt;
+              echo "rb abi-diff exited $?" >> /root/out/abi-diff.txt; }; cat /root/out/abi-diff.txt' | tee abi-diff.txt
+          { echo; echo '```'; head -60 abi-diff.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: copy the record out
         if: always()
         run: |
