@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A test image, such as the RR image, booted as a host that the job drives by ssh (plan 16.11, B10).
 #
-#   rr-vm.sh up IMAGE   boot IMAGE by BIOS on a qcow2 overlay, wait for ssh
+#   rr-vm.sh up IMAGE   boot IMAGE on a qcow2 overlay, wait for ssh
 #   rr-vm.sh ssh CMD    run CMD as root in the VM
 #   rr-vm.sh put SRC DST, rr-vm.sh get SRC DST   copy a file in or out
 #   rr-vm.sh down       let rb-rc finish and power off, and unpack its results to RB_VM_DIR/results
@@ -12,7 +12,8 @@
 # builder VM does (builder.sh). The disks are the overlay (vtbd0), the rb disk (vtbd1, where rb-rc
 # looks for it), and a sparse disk of RB_BUILD_DISK for /build (vtbd2). The network is QEMU's user
 # network with a route out, so that pkg can fetch, and port RB_SSH_PORT of the host goes to port 22.
-# The VM gets RB_VM_CPUS vCPUs and RB_VM_MEM of memory.
+# The VM gets RB_VM_CPUS vCPUs and RB_VM_MEM of memory. It boots by UEFI with OVMF, or by BIOS
+# with RB_FIRMWARE=bios.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -22,6 +23,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 : "${RB_BUILD_DISK:=100G}"
 : "${RB_SSH_PORT:=2223}"
 : "${RB_BOOT_LIMIT:=900}"
+: "${RB_FIRMWARE:=uefi}"
+: "${OVMF_CODE:=/usr/share/OVMF/OVMF_CODE_4M.fd}"
+: "${OVMF_VARS:=/usr/share/OVMF/OVMF_VARS_4M.fd}"
 
 key="$RB_VM_DIR/id_ed25519"
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
@@ -50,7 +54,13 @@ EOF
 	rm -f "$RB_VM_DIR/build.raw"
 	truncate -s "$RB_BUILD_DISK" "$RB_VM_DIR/build.raw"
 
-	qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" -no-reboot \
+	local fw=()
+	if [ "$RB_FIRMWARE" = uefi ]; then
+		cp "$OVMF_VARS" "$RB_VM_DIR/vars.fd"
+		fw=(-drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE"
+			-drive "if=pflash,format=raw,file=$RB_VM_DIR/vars.fd")
+	fi
+	qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" -no-reboot "${fw[@]}" \
 		-drive if=none,id=root,file="$RB_VM_DIR/disk.qcow2",format=qcow2,cache=unsafe \
 		-device virtio-blk-pci,drive=root,bootindex=0 \
 		-drive if=none,id=rb,file="$RB_VM_DIR/rb.tar",format=raw -device virtio-blk-pci,drive=rb \
@@ -58,9 +68,16 @@ EOF
 		-device virtio-blk-pci,drive=build \
 		-netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$RB_SSH_PORT"-:22 -device virtio-net-pci,netdev=n0 \
 		-display none -serial file:"$RB_VM_DIR/console.log" \
-		-pidfile "$RB_VM_DIR/qemu.pid" -daemonize
+		-pidfile "$RB_VM_DIR/qemu.pid" -daemonize 2> "$RB_VM_DIR/qemu.log"
 
 	for i in $(seq 1 $((RB_BOOT_LIMIT / 10))); do
+		if ! kill -0 "$(cat "$RB_VM_DIR/qemu.pid")" 2>/dev/null; then
+			echo "QEMU exited after $((i * 10))s" >&2
+			break
+		fi
+		if [ "$i" = 6 ]; then
+			echo "console after 60s: $(wc -c < "$RB_VM_DIR/console.log") bytes"
+		fi
 		if grep -q '^RB-HOLD' "$RB_VM_DIR/console.log" 2>/dev/null &&
 			vm_ssh -o ConnectTimeout=5 true 2>/dev/null; then
 			echo "ssh after $((i * 10))s: $(grep -a -m1 '^RB-READY' "$RB_VM_DIR/console.log" | tr -d '\r')"
@@ -73,7 +90,10 @@ EOF
 		sleep 10
 	done
 	echo "the VM of $image did not answer on ssh in ${RB_BOOT_LIMIT}s" >&2
+	echo "console.log: $(wc -c < "$RB_VM_DIR/console.log" 2>/dev/null) bytes; qemu.log:" >&2
+	cat "$RB_VM_DIR/qemu.log" >&2 || true
 	tail -50 "$RB_VM_DIR/console.log" >&2 || true
+	vm_ssh -v -o ConnectTimeout=5 true 2>&1 | tail -20 >&2 || true
 	return 1
 }
 
