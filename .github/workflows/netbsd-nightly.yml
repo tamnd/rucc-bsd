@@ -1,0 +1,66 @@
+# The nightly of the NetBSD trunk amd64 row (milestone B3, plan 02). Each night this workflow starts
+# netbsd-r on the head commit of rucc main, with the ATF shards and the kernel modules, and with
+# the newest good netbsd-g run of main that has the same pin (conf/netbsd/trunk.pin). The row
+# counts a night when that netbsd-r run is green.
+#
+# netbsd-r takes the sets and rb of the G run, and netbsd-g keeps them for 7 days. So when the
+# newest good G run is older than 4 days, this workflow also starts netbsd-g, and a later night
+# uses the new run. When there is no good G run of the pin from the last 6 days, it starts
+# netbsd-g, does not start netbsd-r, and fails.
+#
+# A run started by the GITHUB_TOKEN with workflow_dispatch is a normal run of netbsd-r, so its
+# actor is github-actions[bot]. That is how the count finds the nightly runs.
+
+name: netbsd-nightly
+
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# actions: write lets the job start netbsd-r and netbsd-g.
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    name: start netbsd-r
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: find the G run and start netbsd-r
+        run: |
+          set -eu
+          pin=$(gh api "repos/$GH_REPO/contents/conf/netbsd/trunk.pin?ref=main" -q .sha)
+          now=$(date -u +%s)
+          g=""
+          hours=""
+          for row in $(gh run list -w netbsd-g.yml -b main -s success -L 20 \
+              --json databaseId,headSha,createdAt -q '.[] | "\(.databaseId),\(.headSha),\(.createdAt)"'); do
+            IFS=, read -r id sha at <<< "$row"
+            h=$(( (now - $(date -u -d "$at" +%s)) / 3600 ))
+            [ "$h" -lt 144 ] || continue
+            [ "$(gh api "repos/$GH_REPO/contents/conf/netbsd/trunk.pin?ref=$sha" -q .sha)" = "$pin" ] || continue
+            g=$id
+            hours=$h
+            break
+          done
+          if [ -z "$g" ] || [ "$hours" -ge 96 ]; then
+            gh workflow run netbsd-g.yml -r main
+            echo "Started netbsd-g, because the newest good G run of the pin is ${hours:-more than 144} hours old." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -z "$g" ]; then
+            echo "No good netbsd-g run of the pin from the last 6 days, so netbsd-r did not start." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          rucc=$(gh api repos/tamnd/rucc/commits/main -q .sha)
+          gh workflow run netbsd-r.yml -r main -f build=kernel -f rucc="$rucc" -f g_run="$g" -f atf=true -f modules=true
+          echo "Started netbsd-r on rucc $rucc with netbsd-g run $g ($hours hours old)." >> "$GITHUB_STEP_SUMMARY"
