@@ -138,13 +138,15 @@ jobs:
               if cadence in ("weekly", "r") and system == "freebsd":
                   fb = rows[row]["freebsd"]
                   # gcc cannot build the arm64 modules: they are -fPIC, and there the "i"
-                  # operand of the asm goto of sys/sdt.h is an impossible constraint. So both
-                  # builds of the aarch64 kernel leave the modules out.
+                  # operand of the asm goto of sys/sdt.h is an impossible constraint. gcc cannot
+                  # link the i386 modules: they are -fPIC, so a function with a stack protector
+                  # calls the hidden __stack_chk_fail_local, which the kernel does not define. So
+                  # both builds of the aarch64 and the i386 kernel leave the modules out.
                   pin, pin_name = fb_pins[fb.get("series", ["15"])[0]]
                   fr.append({"name": name, "row": row, "target": fb["target"],
                              "target_arch": fb["target_arch"],
                              "triple": f"{rows[row]['rucc_arch']}-unknown-freebsd15.1",
-                             "vars": "NO_MODULES=yes" if row == "aarch64" else "",
+                             "vars": "NO_MODULES=yes" if row in ("aarch64", "i386") else "",
                              "kernel": kernel or "GENERIC", "pin": pin, "pin_name": pin_name,
                              "image": name in images})
               if cadence == "r":
