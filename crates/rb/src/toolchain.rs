@@ -26,19 +26,29 @@ pub const RUCC_MK: &str = "rucc.mk";
 
 /// A FreeBSD `CROSS_TOOLCHAIN` file for the shims in `bin`. `bin` may be a make expression, such
 /// as `${RB_SHIMS}` in the files under `conf/freebsd`.
+///
+/// On aarch64 the file also turns off GCC's outline atomics for C and C++, on both sides. GCC
+/// calls `__aarch64_ldadd8_acq_rel` and its family by default, FreeBSD's `libgcc_s` does not export
+/// them, and `libcompiler_rt.a` has them hidden. So a library linked without `libgcc.a`, such as
+/// `libc++.so`, keeps the call undefined, and the link of `zfsd_unittest` fails. FreeBSD's kernel
+/// turns them off the same way (`sys/conf/kern.mk:150`), and rucc has none.
 #[must_use]
 pub fn freebsd_mk(bin: &str, target: &str, cross_prefix: &str, side: Side) -> String {
     let cc = match side {
         Side::R => "rb-cc-rucc",
         Side::G => "rb-cc-ref",
     };
-    format!(
+    let mut text = format!(
         "XCC={bin}/{target}-{cc}\n\
          XCXX={bin}/{target}-rb-c++\n\
          XCPP={bin}/{target}-rb-cpp\n\
          CROSS_BINUTILS_PREFIX={cross_prefix}\n\
          X_COMPILER_TYPE=gcc\n"
-    )
+    );
+    if target.starts_with("aarch64-") {
+        text.push_str("XCFLAGS=-mno-outline-atomics\n");
+    }
+    text
 }
 
 /// The `CROSS_BINUTILS_PREFIX` of a reference toolchain or of what it needs.
@@ -811,6 +821,20 @@ mod tests {
         assert_eq!(changed.len(), 1);
         assert!(changed[0].0.starts_with("XCC="));
         assert!(r.contains("XCC=/rb/bin/x86_64-unknown-freebsd15.1-rb-cc-rucc\n"));
+    }
+
+    #[test]
+    fn aarch64_turns_off_outline_atomics_on_both_sides() {
+        for side in [Side::G, Side::R] {
+            let a64 = freebsd_mk("/rb/bin", "aarch64-unknown-freebsd15.1", "/p/", side);
+            assert!(a64.ends_with("XCFLAGS=-mno-outline-atomics\n"), "{a64}");
+            let rv = freebsd_mk("/rb/bin", "riscv64-unknown-freebsd15.1", "/p/", side);
+            assert!(!rv.contains("XCFLAGS"), "{rv}");
+        }
+        let g = freebsd_mk("/rb/bin", "aarch64-unknown-freebsd15.1", "/p/", Side::G);
+        let r = freebsd_mk("/rb/bin", "aarch64-unknown-freebsd15.1", "/p/", Side::R);
+        let changed = g.lines().zip(r.lines()).filter(|(a, b)| a != b).count();
+        assert_eq!((changed, g.lines().count()), (1, r.lines().count()));
     }
 
     #[test]
