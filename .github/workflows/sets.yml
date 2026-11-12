@@ -1,0 +1,91 @@
+# The daily run of rb sets (plan 04.5, milestone B9): expand sets.toml into pins.toml from what
+# FreeBSD and NetBSD publish today.
+#
+# rb sets compares the pins it expands with pins.toml. When they are the same, the run ends with
+# the table in the step summary. When they differ, rb sets --write writes pins.toml with the same
+# --as-of time, and the run commits it to main. pins.toml is written only by rb sets (its header
+# says so), so the commit needs no review, and a new release tag, a head that moved to a newer
+# G-good baseline or a branch the project dropped is in pins.toml on the day it happens (04.5).
+# The table and the notes of rb sets, such as a persona review, go in the commit message and the
+# step summary. A push by the workflow token starts no other workflow; later runs read the new
+# pins.toml.
+#
+# The cron runs at 22:37 UTC. The run takes about 15 minutes, so it ends well before the nightly of
+# tcg.yml at 01:23 UTC and the two never overlap.
+
+name: sets
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 22 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sets:
+    name: rb sets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: cargo build
+        run: cargo build --release --locked -p rb --bin rb
+      - name: rb sets
+        id: sets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "now=$now" >> "$GITHUB_OUTPUT"
+          status=0
+          target/release/rb sets --as-of "$now" > "$RUNNER_TEMP/sets.txt" || status=$?
+          cat "$RUNNER_TEMP/sets.txt"
+          {
+            echo "## rb sets as of $now"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/sets.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # rb sets exits 1 when pins.toml is out of date, and 2 when it could not expand the sets.
+          case $status in
+          0) echo "changed=false" >> "$GITHUB_OUTPUT" ;;
+          1) echo "changed=true" >> "$GITHUB_OUTPUT" ;;
+          *) exit "$status" ;;
+          esac
+      - name: rb sets --write and commit
+        if: steps.sets.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NOW: ${{ steps.sets.outputs.now }}
+        run: |
+          target/release/rb sets --as-of "$NOW" --write > "$RUNNER_TEMP/write.txt"
+          git diff --stat -- pins.toml
+          {
+            echo "Update the pins as of ${NOW%%T*}"
+            echo
+            echo "rb sets of the daily run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "found pins that differ from pins.toml (plan 04.5):"
+            echo
+            cat "$RUNNER_TEMP/write.txt"
+          } > "$RUNNER_TEMP/message.txt"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pins.toml
+          git commit -q -F "$RUNNER_TEMP/message.txt"
+          # main can move while rb sets runs. pins.toml is written only here, so a rebase is clean.
+          for try in 1 2 3; do
+            git pull -q --rebase origin main && git push -q origin HEAD:main && break
+            if [ "$try" = 3 ]; then exit 1; fi
+            sleep 10
+          done
+          echo "committed pins.toml to main: $(git rev-parse --short HEAD)" >> "$GITHUB_STEP_SUMMARY"
