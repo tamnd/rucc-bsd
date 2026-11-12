@@ -672,6 +672,13 @@ jobs:
           fi
           # The CTF of the rucc kernel against the CTF of G's kernel of the same configuration,
           # with rb ctf-diff (plan 09.6). The full lists go to the logs artifact.
+          # Allowed, so not counted:
+          # - struct response: two units declare a struct response in a function. ctfmerge keeps
+          #   the first it reads, and rucc writes them in another order than gcc (rucc#4385).
+          # - store_num: lib/kern/libkern.o is made with ld -r, so its .SUNW_ctf is the CTF of its
+          #   first member only, and ctfmerge gives that CTF's one function type to the first
+          #   function symbol of libkern.o. G's kernel has the wrong type int (int) for
+          #   store_num. With rucc, store_eol of snprintb.c is not inlined and comes first.
           chmod +x "$RUNNER_TEMP/rb/rb"
           {
             echo "### CTF: the rucc $KERNEL kernel against G's"
@@ -679,7 +686,8 @@ jobs:
             if [ -f "$binary/sets/kern-$KERNEL.tar.xz" ]; then
               tar -xJOf "$binary/sets/kern-$KERNEL.tar.xz" ./netbsd > "$RUNNER_TEMP/g-netbsd"
               "$RUNNER_TEMP/rb/rb" ctf-diff --g "$RUNNER_TEMP/g-netbsd" \
-                --r "$RUNNER_TEMP/r-kernel/$KERNEL_FILE" --out "$NB_ROOT/logs/ctf" || true
+                --r "$RUNNER_TEMP/r-kernel/$KERNEL_FILE" --out "$NB_ROOT/logs/ctf" \
+                --allow-types response --allow-symbols store_num || true
               rm "$RUNNER_TEMP/g-netbsd"
             else
               echo "G run $G_RUN has no kern-$KERNEL set."
