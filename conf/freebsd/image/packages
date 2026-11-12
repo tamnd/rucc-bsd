@@ -3,6 +3,7 @@
 # The installed versions are recorded in each run's packages.txt.
 coreutils	# bin/date
 fusefs-ext2	# sys/fs/fusefs/ctl
+gcc	# cpp for cddl/usr.sbin/dtrace: dtrace runs cpp from PATH, and WITHOUT_CLANG leaves no cpp in the world. image.sh links cpp
 gdb	# local/kyua/utils/stacktrace_test
 gtar	# sys/fs/tarfs
 jq	# sys/net/if_bridge_test and cddl/usr.sbin/dtrace

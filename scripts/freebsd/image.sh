@@ -130,6 +130,18 @@ if ! chroot "$d" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y $
 	done
 fi
 chroot "$d" pkg query '%n %v %R' | sort > "$RB_OUT/packages.txt"
+# dtrace runs cpp(1) from PATH (dt_open.c). WITHOUT_CLANG leaves no cpp in the world, so every
+# DTrace test that uses the preprocessor failed with "Preprocessor not found". The gcc package
+# has cppNN, and the link gives it the name that dtrace runs.
+if [ ! -e "$d/usr/bin/cpp" ] && [ ! -e "$d/usr/local/bin/cpp" ]; then
+	cpp=$(find "$d/usr/local/bin" -maxdepth 1 -name 'cpp[0-9]*' -exec basename {} \; 2>/dev/null | sort -V | tail -1)
+	if [ -n "$cpp" ]; then
+		ln -s "$cpp" "$d/usr/local/bin/cpp"
+		echo "cpp is /usr/local/bin/$cpp" >> "$RB_OUT/packages.log"
+	else
+		echo "no cpp: the DTrace tests that use the preprocessor fail" >> "$RB_OUT/packages-missing.txt"
+	fi
+fi
 # The local repository for the smoke suite (plan 12.2).
 # shellcheck disable=SC2086
 chroot "$d" env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg fetch -y -o /var/db/rb-repo $smoke_pkgs \
