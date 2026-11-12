@@ -17,7 +17,9 @@
 #
 # Each check keeps its output in OUT/<name>.log and prints "RB-CHECK <result> <name>" on the
 # console. The result is pass, fail or skip. A check is skipped only when the image has nothing
-# for it, for example no package repository. OUT/results has one "<result> <name>" line per
+# for it, for example no package repository, or when the system cannot do it, as the module
+# check on NetBSD riscv64. A skipped check that gives a reason in the first line of its log
+# prints "RB-SKIP <name> <reason>" on the console too. OUT/results has one "<result> <name>" line per
 # check. OUT/counts has one line "passed/total", and skipped checks are not in the total.
 #
 # These settings come from rb.conf:
@@ -48,6 +50,9 @@ check()
 	esac
 	echo "$result $name" >> "$out/results"
 	echo "RB-CHECK $result $name"
+	if [ $result = skip ] && [ -s "$out/$name.log" ]; then
+		echo "RB-SKIP $name $(head -n 1 "$out/$name.log")"
+	fi
 }
 
 shells()
@@ -173,6 +178,14 @@ module()
 		! kldstat -q -n "$m"
 		;;
 	NetBSD)
+		# NetBSD riscv64 loads a module more than 2 GiB from the kernel, so the module's first
+		# call into the kernel faults and the kernel panics. This is so for G and R alike.
+		case $(uname -m) in
+		riscv*)
+			echo "NetBSD riscv64 loads modules more than 2 GiB from the kernel, out of reach of a call (tamnd/rucc-bsd#179)"
+			return 2
+			;;
+		esac
 		m=${rb_smoke_module:-udf}
 		modload "$m" || return 1
 		modstat "$m" | grep "^$m " || return 1
