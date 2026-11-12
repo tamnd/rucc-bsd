@@ -21,13 +21,30 @@ The rows that decide this folder:
 
 ## 04.2 Why OpenBSD and DragonFly wait
 
-**OpenBSD.** On amd64 and arm64 there is no reference GCC build to compare with. The kernel and libc are built with options that exist only in OpenBSD's clang:
-- `-fret-protector`, which is retguard;
-- `-fret-clean` and `-ffixup-gadgets`;
-- `-msave-args`;
-- `-mretpoline` on by default.
+**OpenBSD.** This is the answer to open question 3. It was written at B11 from the OpenBSD tree at commit `f27c44dee25d` of 11 November 2026, clang-local(1) in that tree, and the `lang/gcc/16` port of the ports tree of the same day.
 
-The build is native only. A rucc OpenBSD would need rucc to implement those options as OpenBSD's clang defines them, and to be graded against OpenBSD's clang rather than any GCC. That is a different project with a different oracle. The GCC 4.2.1 architectures are graded nowhere because nobody runs them under emulation at scale. Open question 3 says what would change this.
+**Decision.** OpenBSD stays outside the claim on every architecture. This plan adds no OpenBSD builder, and no later plan starts now. The reason is the oracle, not the builder: OpenBSD has no GCC build of its base on any architecture in use, so there is nothing for rucc to be graded against except OpenBSD's own clang.
+
+**Evidence.**
+- **The base compiler is clang on every architecture in use.** `share/mk/bsd.own.mk` sets `COMPILER_VERSION=clang` for aarch64, amd64, arm, i386, mips64, mips64el, powerpc, powerpc64, riscv64 and sparc64. It sets `gcc4`, which is GCC 4.2.1, only for alpha, hppa, m88k and sh. The linker is lld on the clang architectures except mips64 and mips64el. OpenBSD 8.0 has clang 22.1.6 (01).
+- **Most of the hardening is a default of the compiler, not an option on the command line.** clang-local(1) says that retguard is on by default on amd64, arm64, mips64, powerpc and powerpc64, that the gadget fix-up pass is on by default on i386 and amd64, and that `-mretpoline` is on by default on amd64. It also says that `-fwrapv` is on, that strict aliasing is off below `-Ofast`, and that the `malloc` family is not a builtin. So a build passes `-fno-ret-protector` or `-mno-retpoline` to turn a default off, and passes only a few options to turn something on. Earlier text in this folder said that the kernel and libc "are built with" `-fret-protector` and `-ffixup-gadgets`. That was not exact: they get them from the compiler.
+- **What the tree passes.** Step 1 of the question asked for a count of units from the command lines of a native build. Because of the defaults, that count would show only the options a Makefile adds. These are the Makefiles and `.mk` files that add them, outside `gnu/llvm` and `gnu/usr.bin/clang`:
+
+| Option | Files | Where |
+|---|---|---|
+| `-fret-clean` | 5 | on amd64, the kernel, libc, libcrypto, ld.so and ssh. `distrib/special` turns it off |
+| `-msave-args` | 1 | the amd64 kernel, with `DDB` |
+| `-mretpoline-external-thunk`, `-fcf-protection=branch` | 1 | the amd64 kernel |
+| `-fno-ret-protector` | 7 | the kernel Makefiles of amd64, arm64, loongson, macppc, octeon, powerpc64 and riscv64, for the units that must not have retguard |
+| `-no-integrated-as` | 12 | the kernel `genassym` step and the i386 and amd64 boot code |
+
+- **The source depends on the defaults too.** `sys/arch/amd64/include/asm.h` writes the retguard check into assembly only when the compiler predefines `_RET_PROTECTOR`, and puts the cookies in `.openbsd.randomdata.retguard`. The kernel linker script `sys/arch/amd64/conf/ld.script` collects that section. A compiler that does not predefine `_RET_PROTECTOR` builds a kernel and a libc that have no retguard in their assembly. The build does not fail. The result is a system that OpenBSD does not ship.
+- **The other compiler path is not built on clang architectures.** Twenty Makefiles outside `sys` and `regress` test `COMPILER_VERSION`, and nine kernel and boot Makefiles do. libc links `-lcompiler_rt` under clang and `-lgcc` otherwise. libcrypto, libssl, libtls and openssl add `-Werror` only under clang. libcxx, libcxxabi, libcompiler_rt and two sanitizer runtimes are not built under another value. `sys/sys/cdefs.h` gives `__attribute__((__bounded__))` to any GCC 3.3 or later that is not clang, and the `lang/gcc/16` port (GCC 16.2.0, with 166 patches) does not implement that attribute. A compiler that says it is GCC, as rucc does, takes this path.
+- **There is no GCC reference.** The `lang/gcc/16` port builds on amd64 as `egcc`, but OpenBSD does not build its base with it. It has no retguard, no gadget fix-up, no `-fret-clean` and no `-msave-args`. A G build with `egcc` would need a `COMPILER_VERSION` that the tree does not set for amd64, and the amd64 kernel Makefile passes `-fret-clean` and `-mretpoline-external-thunk` without a test of the compiler, so the kernel would need a changed Makefile. That is a patch by another name (14.1), and its result would grade a configuration that nobody uses. Step 2 of the question, a kernel and libc build with `lang/gcc`, was not run for this reason.
+- **A builder would be cheap.** OpenBSD supports only a native `make build`, as root, in `/usr/src` and `/usr/obj` (01). A builder would be an OpenBSD 8.0 amd64 VM, installed from `install80.img` by autoinstall(8) with a response file, under KVM on a runner. That is the shape of the DragonFly builder of B11, and about a week of work.
+- **rucc would need a clang persona.** From clang-local(1) and the tree: retguard as OpenBSD's clang does it, with a cookie per function in `.openbsd.randomdata.retguard`, the check before each return and the `_RET_PROTECTOR` macro; the gadget fix-up pass; `-fret-clean`; `-msave-args`; retpolines with the external thunk mode; the other defaults above; and clang's identity and warning names, because the tree tests `COMPILER_VERSION`, not the compiler. The oracle would be OpenBSD's clang. The claim would be "as compatible as OpenBSD's own compiler", which is a different claim from the one this plan makes.
+
+**What would change the decision.** OpenBSD supports a GCC build of its base on a clang architecture, or rucc gets a clang persona for another reason. Neither is in this plan. The GCC 4.2.1 architectures stay out because nobody runs them under emulation at scale.
 
 **DragonFly.** It is the cheapest system after NetBSD, with GCC 12.5, GNU ld, x86-64 only and a native plug-in for a custom compiler. It waits only because it has no test suite to grade against, so its claim is weaker (02.7), and because it needs no rucc work that FreeBSD and NetBSD do not already force. B11 adds it at about a week of harness work.
 
