@@ -2,6 +2,7 @@
 # into the project's live image by rb image, booted under QEMU with KVM by rb boot, and tested with
 # the system's own ATF suite. Nothing here runs rucc. The build scripts are in scripts/netbsd and
 # the pin in conf/netbsd. rb is built from this commit, and rb-rc in the image runs the suites.
+# The pin input picks the pin file conf/netbsd/PIN.pin, trunk by default.
 #
 # The jobs and what they hand on:
 #   rb       cargo builds rb. The binary is an artifact for the image, boot, atf and report jobs.
@@ -33,6 +34,11 @@ name: netbsd-g
 on:
   workflow_dispatch:
     inputs:
+      pin:
+        description: The pin, conf/netbsd/PIN.pin, and so the pin netbsd-PIN of pins.toml
+        type: choice
+        options: [trunk, "11.1"]
+        default: trunk
       atf:
         description: Run the ATF shards after the smoke boot
         type: boolean
@@ -48,6 +54,12 @@ permissions:
 
 env:
   NB_ROOT: /mnt/nb
+  # The pin of the run. scripts/netbsd/common.sh reads NB_PIN_FILE, and rb takes RB_PIN. The tools
+  # cache and the control artifact are keyed by the pin file. The sets, images and results of a
+  # pin other than trunk carry NB_PIN_TAG in their names, so a run of another pin cannot give them.
+  NB_PIN_FILE: ${{ inputs.pin || 'trunk' }}.pin
+  RB_PIN: netbsd-${{ inputs.pin || 'trunk' }}
+  NB_PIN_TAG: ${{ (inputs.pin || 'trunk') != 'trunk' && format('-{0}', inputs.pin) || '' }}
 
 jobs:
   rb:
@@ -82,7 +94,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           lookup-only: true
       - name: host packages
         if: steps.tools.outputs.cache-hit != 'true'
@@ -106,7 +118,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           HIT: ${{ steps.tools.outputs.cache-hit }}
-          TOOLS_KEY: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          TOOLS_KEY: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
@@ -132,7 +144,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: host packages
         run: |
@@ -161,7 +173,7 @@ jobs:
           ls -l "$NB_ROOT"/release/amd64/binary/sets "$NB_ROOT"/release/amd64/binary/kernel
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: netbsd-amd64-sets
+          name: netbsd-amd64-sets${{ env.NB_PIN_TAG }}
           path: |
             /mnt/nb/release/amd64/binary
             /mnt/nb/release/destdir-meta.tar
@@ -216,7 +228,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: fetch the pinned tree
         run: scripts/netbsd/fetch.sh
@@ -224,7 +236,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-amd64-sets
+          name: netbsd-amd64-sets${{ env.NB_PIN_TAG }}
           path: /mnt/nb/release
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -255,7 +267,7 @@ jobs:
           sha256sum "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: netbsd-amd64-serial-image${{ matrix.suffix }}
+          name: netbsd-amd64-serial-image${{ matrix.suffix }}${{ env.NB_PIN_TAG }}
           path: /mnt/nb/netbsd-amd64-serial.img.gz
           compression-level: 0
           retention-days: 7
@@ -308,7 +320,7 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-amd64-serial-image${{ matrix.suffix }}
+          name: netbsd-amd64-serial-image${{ matrix.suffix }}${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -377,7 +389,7 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-amd64-serial-image
+          name: netbsd-amd64-serial-image${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -449,7 +461,7 @@ jobs:
       - name: phases
         run: |
           {
-            echo "### NetBSD trunk amd64, G: build phases"
+            echo "### NetBSD $RB_PIN amd64, G: build phases"
             echo
             echo "Times are wall clock on one ubuntu-24.04 runner (4 vCPUs). Sizes are in MiB after each phase; Free is what was left on /mnt."
             echo
@@ -458,7 +470,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: ATF counts against the published run
         run: |
-          . conf/netbsd/trunk.pin
+          # shellcheck source=conf/netbsd/trunk.pin
+          . "conf/netbsd/$NB_PIN_FILE"
           mkdir -p out
           shopt -s nullglob
           tps=(atf/*/results/tests/atf/*.tps)
@@ -476,6 +489,20 @@ jobs:
             --set "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --set "date=$(date -u +%Y-%m-%d)" --set "dirs=$dirs" "${tps[@]}"
           awk -F '\t' '$3 == "failed" { print $1 "\t" $2 }' "out/$name.cases.tsv" > "out/$name.failed"
+          if [ "$NB_PIN_FILE" != trunk.pin ]; then
+            {
+              echo "### ATF: G of $RB_PIN"
+              echo
+              echo "Directories run: $dirs"
+              echo
+              echo "The published bare-metal run is of trunk, so there is nothing to compare with."
+              echo
+              echo '```'
+              awk -F '\t' '{ n[$3]++ } END { for (r in n) print r, n[r] }' "out/$name.cases.tsv" | sort
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           {
             echo "### ATF: G against the published bare-metal run"
             echo
@@ -514,7 +541,7 @@ jobs:
           fi
           from=$(printf '%s+' "${shards[@]%/}")
           status=0
-          "$RUNNER_TEMP/rb/rb" baseline netbsd-trunk --row amd64 --conf graded \
+          "$RUNNER_TEMP/rb/rb" baseline "$RB_PIN" --row amd64 --conf graded \
             --from "${from%+}" --dir out/baselines > baseline.md || status=$?
           {
             cat baseline.md
@@ -524,7 +551,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: netbsd-results
+          name: netbsd-results${{ env.NB_PIN_TAG }}
           path: out
           if-no-files-found: ignore
           retention-days: 90
