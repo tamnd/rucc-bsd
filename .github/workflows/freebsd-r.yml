@@ -1,6 +1,7 @@
 # R for FreeBSD 15.1 amd64 (milestones B5 and B6): the pinned tree compiled with rucc in the C
 # compiler slot through rb-cc. The pin, the builder VM and the paths are those of freebsd-g.yml.
-# The input target picks the kernel (the GENERIC kernel and its modules, the default) or the world.
+# The input target picks the kernel (the GENERIC kernel and its modules, the default), the world, or
+# rr, the RR image.
 #
 # The builder VM builds rb, rb-cc and rucc with rustup's Rust, and rb toolchain writes the shims,
 # ref.mk and rucc.mk in /build/toolchain (scripts/freebsd/rb-tools.sh). For the kernel, make
@@ -39,6 +40,13 @@
 # kernel into the image, which tests the steps, and none boots nothing. The record has that kernel
 # as kernel.xz, with its symbol table, so that the address of a panic gives a function.
 #
+# For rr, the job makes no ref build and no replay. It builds the world and the kernel with rucc.mk
+# (no -k), and makes the image from them with scripts/freebsd/image.sh, as freebsd-g does with G.
+# So the world and the kernel of the image are both R. The boot job boots that image by BIOS and by
+# UEFI with the smoke suite and kyua. The input boot none boots nothing. The job also takes the
+# shared libraries and libc.a of the R staging tree and of the image of the last good freebsd-g run
+# (scripts/freebsd/libs.sh), for rb abi-diff (plan 09.4), into the artifact freebsd-rr-libs.
+#
 # scripts/freebsd/r-report.py groups the failed units of a compile.jsonl by the first error line,
 # and the step summary shows the groups. rucc is built from the head of tamnd/rucc main, or from the
 # branch or commit a manual run names. It is not the pinned release, so the run is ungraded, and the
@@ -58,7 +66,7 @@ on:
         required: false
         default: GENERIC
       target:
-        description: kernel or world
+        description: "kernel, world, or rr: the world and the kernel with rucc, in one image"
         required: false
         default: kernel
       boot:
@@ -87,11 +95,11 @@ env:
 
 jobs:
   build:
-    name: ${{ inputs.target == 'world' && 'world' || inputs.kernconf || 'GENERIC' }} with rucc
+    name: ${{ inputs.target == 'world' && 'world' || inputs.target == 'rr' && 'RR world and kernel' || inputs.kernconf || 'GENERIC' }} with rucc
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     outputs:
-      side: ${{ steps.boot.outputs.side }}
+      side: ${{ steps.boot.outputs.side || steps.rr.outputs.side }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
@@ -152,10 +160,12 @@ jobs:
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_MAKEFLAGS=-k \
             RB_PHASE=kernel-rucc RB_COMPILE_LOG=/build/out/compile-rucc.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: make build${{ env.RB_TARGET }} with ref, the control
+        if: env.RB_TARGET != 'rr'
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/ref.mk \
             RB_PHASE=$RB_TARGET-ref RB_COMPILE_LOG=/build/out/compile-ref.jsonl sh /root/harness/scripts/freebsd/build.sh $RB_TARGET"
       - name: rb syntax over the ref build
+        if: env.RB_TARGET != 'rr'
         timeout-minutes: 90
         continue-on-error: true
         run: |
@@ -166,6 +176,7 @@ jobs:
             echo "rb syntax exited $?" >> "$out/syntax.txt"; head -1 "$out/syntax.txt"'
       - name: compile every unit of the ref build with rucc
         # A unit stops after 300 s. The step stops after its limit, and the steps after it still run.
+        if: env.RB_TARGET != 'rr'
         timeout-minutes: ${{ (inputs.target || 'kernel') == 'world' && 200 || 120 }}
         continue-on-error: true
         run: |
@@ -182,7 +193,7 @@ jobs:
           echo "replay: $(($(date +%s) - start))s" | tee -a record/replay.txt
       - name: the result of the replay
         id: replay
-        if: always()
+        if: always() && env.RB_TARGET != 'rr'
         run: |
           # Clean means: every unit of the replay has a record, and none failed or was stopped.
           scripts/freebsd/builder.sh get /build/out/compile-replay.jsonl compile/compile-replay.jsonl || true
@@ -263,8 +274,18 @@ jobs:
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
             RB_PHASE=kernel-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
+      - name: make buildworld with rucc, for the RR image
+        if: env.RB_TARGET == 'rr'
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+            RB_PHASE=world-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh world"
+      - name: make buildkernel with rucc, for the RR image
+        if: env.RB_TARGET == 'rr'
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+            RB_PHASE=kernel-r RB_COMPILE_LOG=/build/out/compile-r.jsonl sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: the image of the last good freebsd-g run
-        if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref'
+        if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref' || env.RB_TARGET == 'rr'
         run: |
           # freebsd-g also runs for other pins, and a run of another pin has no image of this one.
           # So take the newest good run on main that has an image of this pin.
@@ -281,7 +302,11 @@ jobs:
             echo "No good freebsd-g run on main has the artifact $name." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "The image has the world of freebsd-g run $id and the kernel of $RB_SIDE." | tee record/g-image.txt >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RB_TARGET" = rr ]; then
+            echo "The G libraries for rb abi-diff are those of freebsd-g run $id." | tee record/g-image.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The image has the world of freebsd-g run $id and the kernel of $RB_SIDE." | tee record/g-image.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
           gh run download "$id" -R "$GITHUB_REPOSITORY" -n "$name" -D g-image
           scripts/freebsd/builder.sh ssh 'mkdir -p /build/image'
           scripts/freebsd/builder.sh put g-image/freebsd.img.zst /build/image/g.img.zst
@@ -304,6 +329,36 @@ jobs:
           ls -l record/kernel.xz || true
         env:
           KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
+      - name: the RR image
+        id: rr
+        if: env.RB_TARGET == 'rr'
+        run: |
+          scripts/freebsd/builder.sh ssh "$VM_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_DESTDIR=/build/destdir \
+            RB_IMAGE=/build/image/freebsd.img sh /root/harness/scripts/freebsd/image.sh"
+          mkdir -p image record
+          scripts/freebsd/builder.sh get /build/image/freebsd.img.zst image/freebsd.img.zst
+          ls -l image
+          scripts/freebsd/builder.sh ssh "xz -T0 -c /build/obj/build/src/amd64.amd64/sys/$KERNCONF/kernel" \
+            > record/kernel.xz || rm -f record/kernel.xz
+          side=rr
+          if [ "$MODE" = none ]; then side=none; fi
+          echo "side=$side" >> "$GITHUB_OUTPUT"
+          echo "RB_SIDE=$side" >> "$GITHUB_ENV"
+          echo "The image has the world and the kernel of rucc. boot: $MODE." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          KERNCONF: ${{ inputs.kernconf || 'GENERIC' }}
+          MODE: ${{ inputs.boot || 'auto' }}
+      - name: the shared libraries of R and G
+        if: env.RB_TARGET == 'rr'
+        continue-on-error: true
+        run: |
+          scripts/freebsd/builder.sh ssh 'sh /root/harness/scripts/freebsd/libs.sh /build/destdir /build/image/libs-r.tar.xz &&
+            sh /root/harness/scripts/freebsd/libs.sh --image /build/image/g.img.zst /build/image/libs-g.tar.xz'
+          mkdir -p libs
+          scripts/freebsd/builder.sh get /build/image/libs-r.tar.xz libs/libs-r.tar.xz
+          scripts/freebsd/builder.sh get /build/image/libs-g.tar.xz libs/libs-g.tar.xz
+          cp record/g-image.txt libs/ || true
+          ls -l libs
       - name: copy the record out
         if: always()
         run: |
@@ -372,8 +427,15 @@ jobs:
             record
             compile
           retention-days: 14
+      - uses: actions/upload-artifact@v7.0.1
+        if: always() && hashFiles('libs/*.tar.xz') != ''
+        with:
+          name: freebsd-rr-libs
+          path: libs
+          compression-level: 0
+          retention-days: 14
       - name: upload the image
-        if: env.RB_SIDE == 'rucc' || env.RB_SIDE == 'ref'
+        if: always() && hashFiles('image/freebsd.img.zst') != ''
         uses: actions/upload-artifact@v7.0.1
         with:
           name: freebsd-r-image
@@ -382,9 +444,9 @@ jobs:
           retention-days: 7
 
   boot:
-    name: boot the kernel of ${{ needs.build.outputs.side }}
+    name: boot ${{ needs.build.outputs.side == 'rr' && 'the RR image' || format('the kernel of {0}', needs.build.outputs.side) }}
     needs: build
-    if: always() && (needs.build.outputs.side == 'rucc' || needs.build.outputs.side == 'ref')
+    if: always() && (needs.build.outputs.side == 'rucc' || needs.build.outputs.side == 'ref' || needs.build.outputs.side == 'rr')
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:
@@ -420,11 +482,12 @@ jobs:
       - name: summary
         if: always()
         run: |
-          b=artifacts/freebsd-r-kernel/record
+          b=artifacts/freebsd-r-$RB_TARGET/record
           cp "$b/r-image.txt" "$b/image.txt" 2>/dev/null || true
+          if [ "$SIDE" = rr ]; then side="RR, the world and the kernel of rucc"; else side="R, the kernel of $SIDE and the world of G"; fi
           python3 -I scripts/freebsd/published.py FreeBSD-stable-15-amd64-test published.json || true
           python3 -I scripts/freebsd/summarize.py --build "$b" --boot bios=boots/bios --boot uefi=boots/uefi \
-            --published published.json --conf graded --side "R, the kernel of $SIDE and the world of G" --out summary
+            --published published.json --conf graded --side "$side" --out summary
           cat summary/summary.md >> "$GITHUB_STEP_SUMMARY"
           for b in bios uefi; do
             { echo; echo "Console of the $b boot, last 30 lines:"; echo; echo '```'; tail -30 "boots/$b/console.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
