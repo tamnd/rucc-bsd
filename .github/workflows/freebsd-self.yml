@@ -383,10 +383,12 @@ jobs:
         # The src Makefile sets PATH to /sbin:/bin:/usr/sbin:/usr/bin, and the RR image has no cc,
         # c++ or cpp there. The host CC is the rucc of the package. It finds ld in /usr/local/bin
         # by -B. The image has no C++ compiler and no cpp, so the host CXX and CPP are of gcc15,
-        # which provision.sh installed.
+        # which provision.sh installed. dtrace -C runs cpp from PATH, so DTRACE gives it that cpp by
+        # -x cpppath. dtrace -h writes the same header with any cpp.
         run: |
+          cpp=/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15
           host="CC='/usr/local/bin/rucc -B/usr/local/bin/' CXX=/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
-          host="$host CPP=/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15"
+          host="$host CPP=$cpp DTRACE='dtrace -x cpppath=$cpp'"
           scripts/freebsd/rr-vm.sh ssh "env $host sh -c '\$CC -v 2>&1 | head -1; \$CXX --version | head -1; \$CPP --version | head -1'"
           echo "RB_HOST_ENV=$host" >> "$GITHUB_ENV"
       - name: make buildworld in RR
