@@ -57,5 +57,11 @@ ccver=$(make -f /usr/share/mk/sys.mk -V CCVER 2>/dev/null || true)
 	echo
 	echo "# /etc/compilers.conf"
 	cat /etc/compilers.conf 2>/dev/null || echo "none"
+	echo
+	echo "# df"
+	df -h / /usr/local /var /tmp /build
+	echo
+	echo "# pkg"
+	pkg -v 2>&1 || echo "no pkg"
 } > "$out/toolchain.txt" 2>&1
 cat "$out/toolchain.txt"
