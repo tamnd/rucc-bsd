@@ -221,7 +221,12 @@ impl Maker {
             format!("MACHINE={}", place.target),
             format!("MACHINE_ARCH={}", place.target_arch),
         ];
-        for (from, to) in [("XCC", "CC"), ("XCXX", "CXX"), ("XCPP", "CPP")] {
+        for (from, to) in [
+            ("XCC", "CC"),
+            ("XCXX", "CXX"),
+            ("XCPP", "CPP"),
+            ("XLD", "LD"),
+        ] {
             if let Some(v) = value(from) {
                 below.push(format!("{to}={v}"));
             }

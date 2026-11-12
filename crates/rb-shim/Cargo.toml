@@ -1,6 +1,6 @@
 [package]
 name = "rb-shim"
-description = "rb-cc, rb-c++, rb-cpp and rb-as: record every compiler call of a BSD build"
+description = "rb-cc, rb-c++, rb-cpp and rb-as: record every compiler call of a BSD build, and the ld of FreeBSD"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,6 +18,9 @@ path = "src/main.rs"
 harness-shim.workspace = true
 serde.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+object = { workspace = true, features = ["write"] }
 
 [lints]
 workspace = true

@@ -37,6 +37,9 @@ fn shim(argv: &[String], called: &str, name: &str) -> Result<ExitCode, String> {
     })?;
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let rest = &argv[1..];
+    if resolved.slot == Slot::Ld {
+        return link(&config, rest, &cwd, dir.as_deref(), name);
+    }
     let decision = route::decide(resolved, &config, rest, &cwd, &|p| p.is_file())?;
     if same_file(&decision.compiler, dir.as_deref(), name) {
         return Err(format!(
@@ -129,6 +132,33 @@ fn shim(argv: &[String], called: &str, name: &str) -> Result<ExitCode, String> {
         );
     }
     Ok(run::exit_code(&record))
+}
+
+/// The `ld` slot: run the reference linker with the bounds of every linker set asked for, and
+/// pass its output and its exit status through.
+fn link(
+    config: &ShimConfig,
+    rest: &[String],
+    cwd: &Path,
+    dir: Option<&Path>,
+    name: &str,
+) -> Result<ExitCode, String> {
+    let ld = route::need(&config.ref_ld, "ref-ld", "RB_REF_LD")?;
+    if same_file(&ld, dir, name) {
+        return Err(format!(
+            "{} is the shim itself; name the real linker in rb-shim.toml",
+            ld.display()
+        ));
+    }
+    let args = rb_shim::link::args(rest, cwd, &rb_shim::link::section_names);
+    let status = std::process::Command::new(&ld)
+        .args(&args)
+        .current_dir(cwd)
+        .status()
+        .map_err(|e| format!("could not run {}: {e}", ld.display()))?;
+    Ok(status.code().map_or(ExitCode::from(1), |c| {
+        ExitCode::from(u8::try_from(c).unwrap_or(1))
+    }))
 }
 
 /// The `as` class for a C unit that rucc could not compile to an object: rucc writes the unit as

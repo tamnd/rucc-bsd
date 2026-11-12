@@ -1,11 +1,9 @@
 # Tests left out of the kyua run. boot.sh puts this file on the rb disk, so a change here needs no new image.
 # A line is a directory under /usr/tests, or a directory and a test program as DIR:PROGRAM.
 # R and G leave out the same tests. A test program left out here is never graded.
-cddl/usr.sbin/dtrace	# ci runs it in the dtrace_test job, and so does the plan's dtrace suite (12.2)
-sys/cddl/zfs	# ci runs it in the test_zfs job. It takes hours
-lib/libcasper/services/cap_dns:dns_test	# needs DNS on the internet. The test VM has no route out
+sys/cddl/zfs	# ci runs it in its own test_zfs job, with five 8 GB disks, a 32 GB scratch disk and 90 minutes. The test VM has five 128 MB disks, and kyua has 13500 s for all the other tests
+lib/libcasper/services/cap_dns:dns_test	# needs DNS on the internet. The test VM has no route out (restrict=on)
 lib/libcasper/services/cap_net:net_test	# the same
-# The tests above are the ones freebsd-ci's FreeBSD-*-amd64-test jobs leave out. The tests below
-# panic a kernel we test. Each line says which kernel and which run. The panic is a result of that
-# kernel, and the summary must say that these tests are left out.
-sys/geom/class/multipath	# kldload sdt panics the G kernel of 15.1-release in sdt_load_probes_cb (run 42486079715)
+# The tests above are the ones freebsd-ci's FreeBSD-*-amd64-test jobs leave out. The plan's DTrace
+# suite (cddl/usr.sbin/dtrace, 12.2) and sys/geom/class/multipath run: kldload sdt panicked the G
+# kernel (rucc-bsd#37) until rb-cc's ld slot gave it the bounds of its linker sets.

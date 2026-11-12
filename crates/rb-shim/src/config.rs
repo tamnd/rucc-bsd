@@ -83,9 +83,12 @@ pub struct ShimConfig {
     /// The reference assembler, for a direct `${AS}` call. Overridden by `RB_REF_AS`.
     #[serde(default)]
     pub ref_as: PathBuf,
+    /// The reference linker, for FreeBSD's `XLD` (see [`crate::link`]). Overridden by `RB_REF_LD`.
+    #[serde(default)]
+    pub ref_ld: PathBuf,
     /// Names the shim is called by that do not end in one of the `rb-` names, each mapped to its
-    /// slot: `cc`, `c++`, `cpp` or `as`. NetBSD's `TOOLDIR` calls it `x86_64--netbsd-gcc` and
-    /// `x86_64--netbsd-cpp`.
+    /// slot: `cc`, `c++`, `cpp`, `as` or `ld`. NetBSD's `TOOLDIR` calls it `x86_64--netbsd-gcc`
+    /// and `x86_64--netbsd-cpp`. FreeBSD's `XLD` calls it `ld`.
     #[serde(default)]
     pub names: BTreeMap<String, String>,
     /// Directories whose files are probe outputs. A build's object directory must not be under
@@ -144,6 +147,7 @@ impl ShimConfig {
             ("RB_REF_CXX", &mut config.ref_cxx),
             ("RB_REF_CPP", &mut config.ref_cpp),
             ("RB_REF_AS", &mut config.ref_as),
+            ("RB_REF_LD", &mut config.ref_ld),
         ] {
             if let Some(v) = set(key) {
                 *slot = PathBuf::from(v);

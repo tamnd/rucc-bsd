@@ -14,12 +14,13 @@
 //! | `c++` | the reference `g++` | the reference `g++` | `ref-cxx` |
 //! | `cpp` | rucc in `-E` mode where configured, else the reference `cpp` | the reference `cpp` | none |
 //! | `as` | the reference `as` | the reference `as` | `other` |
+//! | `ld` | the reference `ld`, through [`crate::link`] | the same | none, and no record |
 
 use crate::config::{ShimConfig, Side};
 use harness_shim::args::{self, Invocation, Mode};
 use std::path::{Path, PathBuf};
 
-/// The four compiler slots of a BSD build.
+/// The four compiler slots of a BSD build, and FreeBSD's linker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     /// The C compiler: FreeBSD's `XCC`, NetBSD's `TOOL_CC`.
@@ -30,6 +31,8 @@ pub enum Slot {
     Cpp,
     /// A direct assembler call.
     As,
+    /// FreeBSD's `XLD`: the reference linker, which [`crate::link`] runs.
+    Ld,
 }
 
 impl Slot {
@@ -41,6 +44,7 @@ impl Slot {
             Self::Cxx => "c++",
             Self::Cpp => "cpp",
             Self::As => "as",
+            Self::Ld => "ld",
         }
     }
 
@@ -52,6 +56,7 @@ impl Slot {
             "c++" => Some(Self::Cxx),
             "cpp" => Some(Self::Cpp),
             "as" => Some(Self::As),
+            "ld" => Some(Self::Ld),
             _ => None,
         }
     }
@@ -140,7 +145,8 @@ pub struct Decision {
 ///
 /// # Errors
 ///
-/// When the slot needs a side and none is known, or when the compiler it needs is not configured.
+/// When the slot needs a side and none is known, when the compiler it needs is not configured,
+/// or for the `ld` slot, which compiles nothing and goes through [`crate::link`].
 pub fn decide(
     called: Called,
     config: &ShimConfig,
@@ -178,6 +184,7 @@ pub fn decide(
                 rucc: false,
             })
         }
+        Slot::Ld => Err("the ld slot compiles nothing: run it with link::args".to_string()),
     }
 }
 
@@ -431,7 +438,11 @@ pub fn as_steps(rest: &[String], invocation: &Invocation) -> Option<AsSteps> {
 }
 
 /// The compiler for a slot, or the error that says how to name one.
-fn need(path: &Path, key: &str, var: &str) -> Result<PathBuf, String> {
+///
+/// # Errors
+///
+/// When the path is empty.
+pub fn need(path: &Path, key: &str, var: &str) -> Result<PathBuf, String> {
     if path.as_os_str().is_empty() {
         Err(format!(
             "no {key} to run: set {key} in rb-shim.toml or {var}"

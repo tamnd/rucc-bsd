@@ -5,10 +5,12 @@ coreutils	# bin/date
 fusefs-ext2	# sys/fs/fusefs/ctl
 gdb	# local/kyua/utils/stacktrace_test
 gtar	# sys/fs/tarfs
-jq	# sys/net/if_bridge_test
+jq	# sys/net/if_bridge_test and cddl/usr.sbin/dtrace
 ksh93	# sys/cddl/zfs
+libxml2	# cddl/usr.sbin/dtrace needs xmllint, as freebsd-ci's dtrace_testvm image installs it
 nist-kat	# sys/opencrypto/runtests
 nmap	# sys/netinet/fibs_test
+pdksh	# cddl/usr.sbin/dtrace needs ksh, as freebsd-ci's dtrace_testvm image installs it
 perl5	# many tests
 pjdfstest	# sys/fs/pjdfstest
 porch	# sys/kern/tty

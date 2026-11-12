@@ -1,4 +1,5 @@
-//! The compiler shims of `rucc-bsd`: `rb-cc`, `rb-c++`, `rb-cpp` and `rb-as` (plan 14.4).
+//! The compiler shims of `rucc-bsd`: `rb-cc`, `rb-c++`, `rb-cpp` and `rb-as` (plan 14.4), and the
+//! `ld` slot of FreeBSD ([`link`]).
 //!
 //! One binary with many names. A BSD build calls it through its toolchain description, which is
 //! FreeBSD's `CROSS_TOOLCHAIN` file or NetBSD's `TOOLDIR`, and never through an edit to the tree.
@@ -11,4 +12,5 @@
 //! the reference, which marks the call delegated and the run ungraded.
 
 pub mod config;
+pub mod link;
 pub mod route;
