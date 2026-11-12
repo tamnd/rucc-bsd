@@ -30,6 +30,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 : "${RB_BUILD_DISK:=100G}"
 : "${RB_SSH_PORT:=2222}"
 : "${RB_ACCEL:=kvm}"
+# The kernel of 6.4.2 stops with a general protection fault on a wrmsr early in the boot when it
+# runs with -cpu host on an AMD EPYC runner. A fixed Intel model gives the same CPU on all runners.
+: "${RB_VM_CPU:=Nehalem}"
 
 key="$RB_VM_DIR/id_ed25519"
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
@@ -53,7 +56,7 @@ up_image() {
 	tar -cf "$RB_VM_DIR/rb.tar" -C "$RB_VM_DIR/rb-in" .
 	truncate -s 64M "$RB_VM_DIR/rb.tar"
 	truncate -s "$RB_BUILD_DISK" "$RB_VM_DIR/build.raw"
-	qemu-system-x86_64 -machine q35,accel="$RB_ACCEL",graphics=off -cpu host -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" \
+	qemu-system-x86_64 -machine q35,accel="$RB_ACCEL",graphics=off -cpu "$RB_VM_CPU" -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" \
 		-drive if=none,id=root,file="$RB_BUILDER_RAW",format=raw,cache=unsafe -device ide-hd,drive=root,bus=ide.0 \
 		-drive if=none,id=rb,file="$RB_VM_DIR/rb.tar",format=raw -device ide-hd,drive=rb,bus=ide.1 \
 		-drive if=none,id=build,file="$RB_VM_DIR/build.raw",format=raw,cache=unsafe -device ide-hd,drive=build,bus=ide.2 \
@@ -94,7 +97,7 @@ up() {
 	rm -f "$key" "$key.pub" "$RB_VM_DIR/serial.sock" "$RB_VM_DIR/console.log"
 	ssh-keygen -q -t ed25519 -N '' -f "$key"
 
-	local cpu=(-cpu host)
+	local cpu=(-cpu "$RB_VM_CPU")
 	[ "$RB_ACCEL" = kvm ] || cpu=()
 	# graphics=off makes SeaBIOS copy the screen to the serial port and read the keyboard from it,
 	# which console.py needs until the kernel has the serial console.

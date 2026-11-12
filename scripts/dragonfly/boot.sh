@@ -49,7 +49,7 @@ truncate -s 128M "$out/disk-smoke"
 start=$(date +%s)
 # graphics=off makes SeaBIOS copy the screen to the serial port, so a boot that stops in boot2
 # shows why. The loader and the kernel use the serial console of loader.conf.
-qemu-system-x86_64 -machine q35,accel=kvm,graphics=off -cpu host -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" \
+qemu-system-x86_64 -machine q35,accel=kvm,graphics=off -cpu "${RB_VM_CPU:-Nehalem}" -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" \
 	-no-reboot -display none -monitor none -serial file:"$console" \
 	-drive if=none,id=root,file="$out/disk.qcow2",format=qcow2 -device ide-hd,drive=root,bus=ide.0 \
 	-drive if=none,id=rb,file="$out/rb.tar",format=raw -device ide-hd,drive=rb,bus=ide.1 \
