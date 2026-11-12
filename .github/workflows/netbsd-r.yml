@@ -53,12 +53,13 @@
 #
 # A manual run with build=rr builds the RR world: "build.sh distribution", the GENERIC kernel and
 # the sets, all through the rucc TOOLDIR of overlay.sh. The shims hand the directories of
-# RB_SHIM_REF to the reference, each for an open rucc issue named in the rr job. The rr job then
-# makes the RR image from these sets with rb image, and the rr-boot job boots it with SeaBIOS and
-# with OVMF, with the smoke suite. With g_run, rb abi-diff compares the libraries of the R sets
-# with those of the G sets of that run (scripts/netbsd/libs.sh), the compat -m32 libraries of
-# usr/lib/i386 among them. The rucc and target inputs apply as for the kernel, and atf, modules
-# and mixed do not apply.
+# RB_SHIM_REF to the reference, each for an open rucc issue named in the rr job. rb census reads
+# the shim log (scripts/netbsd/shim-records.py) and says which compiler made each object. The rr
+# job then makes the RR image from these sets with rb image, and the rr-boot job boots it with
+# SeaBIOS and with OVMF, with the smoke suite. With g_run, rb abi-diff compares the libraries of
+# the R sets with those of the G sets of that run (scripts/netbsd/libs.sh), the compat -m32
+# libraries of usr/lib/i386 among them. The rucc and target inputs apply as for the kernel, and
+# atf, modules and mixed do not apply.
 #
 # The ref leg of the kernel and the ref build of the world also run rb syntax: every C unit of
 # that build, which is G, through the front end of rucc (scripts/netbsd/syntax.sh). shim-ref.sh
@@ -654,6 +655,26 @@ jobs:
         env:
           DISTRIBUTION: ${{ steps.distribution.outcome }}
           KERNEL: ${{ steps.kernel.outcome }}
+      # rb census over the records of the shim log: which compiler made each object of the RR build.
+      # An object of the object tree that no record wrote is "other": the C++ slot, which is not
+      # shimmed, the host tools of the build, ld -r and objcopy.
+      - name: rb census of the RR build
+        if: always() && steps.distribution.outcome != 'skipped'
+        continue-on-error: true
+        run: |
+          logs="$NB_ROOT/logs"
+          touch "$logs/shim.tsv"
+          python3 -I scripts/netbsd/shim-records.py "$logs/shim.tsv" R "$NB_ROOT/obj" "$NB_ROOT/obj" \
+            > "$RUNNER_TEMP/compile.jsonl"
+          status=0
+          "$RUNNER_TEMP/rb/rb" census "$RUNNER_TEMP/compile.jsonl" --objdir "$NB_ROOT/obj" \
+            --skip "$NB_ROOT/obj/tools" --objects "$logs/census-objects.tsv" > "$logs/census.txt" 2>&1 || status=$?
+          {
+            echo "### rb census of the RR build"
+            echo
+            head -60 "$logs/census.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
       - name: rb image
         id: image
         if: steps.sets.outcome == 'success'

@@ -13,6 +13,11 @@ arguments, the directory, the exit status, the slot, the side, the source as the
 object as the output. The shims keep no start time, no environment and no hashes, so those are
 empty.
 
+A record also has the origin that rb census reads. In G each compiler call is "ref". In R a call
+of the cc slot is "rucc-asm" when its source is a .S or .s file and "rucc-c" otherwise, and a
+call of the cc-ref slot, a directory of RB_SHIM_REF, is "ref-c". A cpp call, a link and a probe
+compile no source and have no origin.
+
 LOG.rusage, when it exists, has a line "WALL USER SYSTEM MAXRSS<TAB>LOG LINE" for each call that
 the shims timed with GNU time. A record of such a call has its wall-seconds, user-seconds,
 system-seconds and peak-rss-kb, which rb speed reads for the compile CPU and RSS gates.
@@ -65,6 +70,19 @@ def rusage(log):
     return times
 
 
+def origin(side, slot, inputs):
+    """The origin of rb census for a call of SLOT on SIDE with the sources INPUTS, or None."""
+    if slot not in ("cc", "cc-ref") or not inputs:
+        return None
+    if side == "G":
+        return "ref"
+    if slot == "cc-ref":
+        return "ref-c"
+    if inputs[0].endswith((".S", ".s")):
+        return "rucc-asm"
+    return "rucc-c"
+
+
 def record(line, side, old, new, said="", timed=None):
     fields = line.rstrip("\n").split("\t")
     if len(fields) < 3:
@@ -96,6 +114,9 @@ def record(line, side, old, new, said="", timed=None):
         "slot": slot,
         "side": side,
     }
+    made_by = origin(side, slot, inputs)
+    if made_by:
+        out["origin"] = made_by
     if timed:
         wall, user, system, rss = timed
         out["wall-seconds"] = wall
