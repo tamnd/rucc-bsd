@@ -1,6 +1,7 @@
 # R for the NetBSD trunk amd64 kernel (milestone B3): the GENERIC kernel of the pinned tree built
 # by build.sh with rucc in the C compiler slot of TOOLDIR. The pin, the tools and the paths are
-# those of netbsd-g.yml.
+# those of netbsd-g.yml. The pin input picks conf/netbsd/PIN.pin, trunk by default. A g_run must
+# be a netbsd-g run of the same pin.
 #
 # scripts/netbsd/overlay.sh copies the G TOOLDIR and replaces bin/x86_64--netbsd-gcc and
 # bin/x86_64--netbsd-cpp with the shims in conf/netbsd/toolchain. Every other tool, the C++ slot
@@ -77,6 +78,11 @@ name: netbsd-r
 on:
   workflow_dispatch:
     inputs:
+      pin:
+        description: The pin, conf/netbsd/PIN.pin, and so the pin netbsd-PIN of pins.toml
+        type: choice
+        options: [trunk, "11.1"]
+        default: trunk
       build:
         description: What to build, the GENERIC kernel, the world replay, or the RR world, kernel and image
         type: choice
@@ -123,6 +129,12 @@ permissions:
 
 env:
   NB_ROOT: /mnt/nb
+  # The pin of the run. scripts/netbsd/common.sh reads NB_PIN_FILE, and rb takes RB_PIN. The tools
+  # cache and the control artifact are keyed by the pin file. The sets, images and results of a
+  # pin other than trunk carry NB_PIN_TAG in their names, so a run of another pin cannot give them.
+  NB_PIN_FILE: ${{ inputs.pin || 'trunk' }}.pin
+  RB_PIN: netbsd-${{ inputs.pin || 'trunk' }}
+  NB_PIN_TAG: ${{ (inputs.pin || 'trunk') != 'trunk' && format('-{0}', inputs.pin) || '' }}
   RUCC_VERSION: v0.30.15
   RUCC_SHA256: 32e1cab992940f0563cb9e49bfc3c3ed23192e519ee277fdcf9edfefb8503ddb
 
@@ -143,7 +155,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           lookup-only: true
       - name: host packages
         if: steps.tools.outputs.cache-hit != 'true'
@@ -183,7 +195,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: host packages
         run: |
@@ -299,7 +311,7 @@ jobs:
           kernel="$NB_ROOT/obj/sys/arch/amd64/compile/GENERIC"
           args=()
           if [ -f "$kernel/Makefile" ]; then args=(--kernel "$kernel"); fi
-          "$rb" mk-diff netbsd-trunk --g "$NB_ROOT/tools" --r "$NB_ROOT/tools-r" --src "$NB_ROOT/src" \
+          "$rb" mk-diff "$RB_PIN" --g "$NB_ROOT/tools" --r "$NB_ROOT/tools-r" --src "$NB_ROOT/src" \
             "${args[@]}" --work "$out/mk-diff" > "$out/mk-diff.txt" 2>&1 \
             || echo "rb mk-diff exited $?" >> "$out/mk-diff.txt"
           { echo "### rb mk-diff"; echo; echo '```'; head -3 "$out/mk-diff.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -427,7 +439,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: host packages
         run: |
@@ -472,7 +484,7 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
-          NAME: netbsd-r-control-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'conf/netbsd/toolchain/shim-ref.sh', 'scripts/netbsd/common.sh', 'scripts/netbsd/fetch.sh', 'scripts/netbsd/overlay.sh', 'scripts/netbsd/control.sh', 'scripts/netbsd/stand.sh') }}
+          NAME: netbsd-r-control-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'conf/netbsd/toolchain/shim-ref.sh', 'scripts/netbsd/common.sh', 'scripts/netbsd/fetch.sh', 'scripts/netbsd/overlay.sh', 'scripts/netbsd/control.sh', 'scripts/netbsd/stand.sh') }}
       - uses: actions/download-artifact@v8.0.1
         if: steps.control.outputs.run != ''
         with:
@@ -582,7 +594,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: host packages
         run: |
@@ -637,7 +649,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: steps.sets.outcome == 'success'
         with:
-          name: netbsd-r-amd64-sets-rr
+          name: netbsd-r-amd64-sets-rr${{ env.NB_PIN_TAG }}
           path: |
             /mnt/nb/release/amd64/binary
             /mnt/nb/release/destdir-meta.tar
@@ -699,7 +711,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: steps.image.outcome == 'success'
         with:
-          name: netbsd-r-amd64-serial-image-rr
+          name: netbsd-r-amd64-serial-image-rr${{ env.NB_PIN_TAG }}
           path: /mnt/nb/netbsd-amd64-serial.img.gz
           compression-level: 0
           retention-days: 7
@@ -708,7 +720,7 @@ jobs:
       - uses: actions/download-artifact@v8.0.1
         if: steps.sets.outcome == 'success' && inputs.g_run != ''
         with:
-          name: netbsd-amd64-sets
+          name: netbsd-amd64-sets${{ env.NB_PIN_TAG }}
           path: /mnt/nb/g-sets
           run-id: ${{ inputs.g_run }}
           github-token: ${{ github.token }}
@@ -767,7 +779,7 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-serial-image-rr
+          name: netbsd-r-amd64-serial-image-rr${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -826,12 +838,12 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-serial-image-rr
+          name: netbsd-r-amd64-serial-image-rr${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}/r
       - uses: actions/download-artifact@v8.0.1
         if: inputs.g_run != ''
         with:
-          name: netbsd-amd64-serial-image
+          name: netbsd-amd64-serial-image${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}/g
           run-id: ${{ inputs.g_run }}
           github-token: ${{ github.token }}
@@ -897,7 +909,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: host packages
         run: |
@@ -952,7 +964,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: steps.sets.outcome == 'success'
         with:
-          name: netbsd-r-amd64-sets-c-only
+          name: netbsd-r-amd64-sets-c-only${{ env.NB_PIN_TAG }}
           path: |
             /mnt/nb/release/amd64/binary
             /mnt/nb/release/destdir-meta.tar
@@ -1029,7 +1041,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: fetch the pinned tree
         run: scripts/netbsd/fetch.sh
@@ -1050,11 +1062,11 @@ jobs:
           path: ${{ runner.temp }}/rb
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-sets-rr
+          name: netbsd-r-amd64-sets-rr${{ env.NB_PIN_TAG }}
           path: /mnt/nb/rr
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-sets-c-only
+          name: netbsd-r-amd64-sets-c-only${{ env.NB_PIN_TAG }}
           path: /mnt/nb/release
       # As in the image job: DESTDIR's metadata, and the object directory of etc, which the
       # live-image target needs.
@@ -1121,7 +1133,7 @@ jobs:
   # The B3 gate: rb build makes the rucc kernel by itself, with its own shim TOOLDIR and checks,
   # and with no RB_BRINGUP. The kernel job above makes the kernel that the other jobs use.
   rb-build:
-    name: rb build netbsd-trunk --targets kernel
+    name: rb build netbsd-${{ inputs.pin || 'trunk' }} --targets kernel
     needs: [tools]
     if: inputs.build == 'kernel'
     runs-on: ubuntu-24.04
@@ -1137,7 +1149,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: host packages
         run: |
@@ -1180,10 +1192,10 @@ jobs:
             note="The rucc is $REF from source, not the pinned release, so the build is ungraded."
           fi
           status=0
-          target/release/rb build netbsd-trunk --row amd64 --conf graded --cc rucc "${ungraded[@]}" \
+          target/release/rb build "$RB_PIN" --row amd64 --conf graded --cc rucc "${ungraded[@]}" \
             --root "$NB_ROOT" --targets kernel > "$RUNNER_TEMP/rb-build.md" 2>&1 || status=$?
           {
-            echo "### rb build netbsd-trunk --row amd64 --conf graded --cc rucc ${ungraded[*]} --targets kernel"
+            echo "### rb build $RB_PIN --row amd64 --conf graded --cc rucc ${ungraded[*]} --targets kernel"
             echo
             echo "Exit status: $status. RB_BRINGUP is not set. $note"
             echo
@@ -1258,7 +1270,7 @@ jobs:
           g=(--g /mnt/cmp/ref/compile.jsonl --g-root /mnt/cmp/ref)
           r=(--r /mnt/cmp/rucc/compile.jsonl --r-root /mnt/cmp/rucc)
           run() { "$rb" "$@" > "$out/$1.txt" 2>&1 || echo "rb $1 exited $?" >> "$out/$1.txt"; }
-          run flags-diff netbsd-trunk "${g[@]}" "${r[@]}" --paired-only
+          run flags-diff "$RB_PIN" "${g[@]}" "${r[@]}" --paired-only
           for tool in sections-diff symbols-diff; do
             run "$tool" "${g[@]}" "${r[@]}"
             "$rb" "$tool" "${g[@]}" "${r[@]}" --limit 100000 > "$out/$tool-all.txt" 2>&1 || true
@@ -1310,7 +1322,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: fetch the pinned tree
         run: scripts/netbsd/fetch.sh
@@ -1318,7 +1330,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-amd64-sets
+          name: netbsd-amd64-sets${{ env.NB_PIN_TAG }}
           path: /mnt/nb/release
           run-id: ${{ inputs.g_run }}
           github-token: ${{ github.token }}
@@ -1393,7 +1405,7 @@ jobs:
           sha256sum "$NB_ROOT/netbsd-amd64-serial.img.gz" | tee "$NB_ROOT/logs/images.sha256"
       - uses: actions/upload-artifact@v7.0.1
         with:
-          name: netbsd-r-amd64-serial-image${{ matrix.suffix }}
+          name: netbsd-r-amd64-serial-image${{ matrix.suffix }}${{ env.NB_PIN_TAG }}
           path: /mnt/nb/netbsd-amd64-serial.img.gz
           compression-level: 0
           retention-days: 7
@@ -1437,7 +1449,7 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-serial-image${{ matrix.suffix }}
+          name: netbsd-r-amd64-serial-image${{ matrix.suffix }}${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -1518,7 +1530,7 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-serial-image
+          name: netbsd-r-amd64-serial-image${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -1619,7 +1631,7 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-serial-image${{ matrix.image }}
+          name: netbsd-r-amd64-serial-image${{ matrix.image }}${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         if: endsWith(matrix.cell, 'R')
@@ -1727,7 +1739,7 @@ jobs:
           path: |
             /mnt/nb/tools
             /mnt/nb/obj/tools
-          key: netbsd-tools-amd64-${{ hashFiles('conf/netbsd/trunk.pin', 'scripts/netbsd/common.sh') }}
+          key: netbsd-tools-amd64-${{ hashFiles(format('conf/netbsd/{0}', env.NB_PIN_FILE), 'scripts/netbsd/common.sh') }}
           fail-on-cache-miss: true
       - name: host packages, QEMU and OVMF
         run: |
@@ -1764,7 +1776,7 @@ jobs:
           path: ${{ runner.temp }}/r-kernel
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-amd64-sets
+          name: netbsd-amd64-sets${{ env.NB_PIN_TAG }}
           path: /mnt/nb/release
           run-id: ${{ inputs.g_run }}
           github-token: ${{ github.token }}
@@ -1817,7 +1829,8 @@ jobs:
           path: atf
       - name: ATF counts against G
         run: |
-          . conf/netbsd/trunk.pin
+          # shellcheck source=conf/netbsd/trunk.pin
+          . "conf/netbsd/$NB_PIN_FILE"
           mkdir -p out
           shopt -s nullglob
           tps=(atf/*/results/tests/atf/*.tps)
@@ -1890,7 +1903,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: netbsd-r-results
+          name: netbsd-r-results${{ env.NB_PIN_TAG }}
           path: out
           if-no-files-found: ignore
           retention-days: 90

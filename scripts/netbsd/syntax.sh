@@ -19,7 +19,7 @@ python3 -I "$NB_HERE/shim-records.py" "$NB_LOGS/shim.tsv" G "$NB_OBJ" "$NB_OBJ" 
 	"$NB_LOGS/shim.tsv.err" > "$log"
 cd "$NB_REPO" || exit
 status=0
-"$rb" syntax netbsd-trunk --log "$log" --rucc "$(command -v rucc)" --sysroot "$NB_DEST" \
+"$rb" syntax "${RB_PIN:-netbsd-trunk}" --log "$log" --rucc "$(command -v rucc)" --sysroot "$NB_DEST" \
 	--jobs "$NB_JOBS" --limit 100 --out "$NB_LOGS/syntax-$name.tsv" \
 	> "$NB_LOGS/syntax-$name.txt" 2>&1 || status=$?
 if [ "$status" -gt 1 ]; then
