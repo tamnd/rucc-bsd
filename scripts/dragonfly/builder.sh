@@ -15,6 +15,8 @@
 # The image has no serial console and no sshd. console.py stops the loader on the serial port,
 # boots with the serial console, logs in as root, and runs the steps that start sshd with a key
 # made here. Every later call uses ssh. State lives in RB_VM_DIR. Downloads are kept in RB_CACHE.
+#
+# With RB_BUILDER_RAW set to a raw test image of image.sh, up boots that image instead (up_image).
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -28,6 +30,9 @@ here="$(cd "$(dirname "$0")" && pwd)"
 : "${RB_BUILD_DISK:=100G}"
 : "${RB_SSH_PORT:=2222}"
 : "${RB_ACCEL:=kvm}"
+# The kernel of 6.4.2 stops with a general protection fault on a wrmsr early in the boot when it
+# runs with -cpu host on an AMD EPYC runner. A fixed Intel model gives the same CPU on all runners.
+: "${RB_VM_CPU:=Nehalem}"
 
 key="$RB_VM_DIR/id_ed25519"
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
@@ -37,7 +42,44 @@ vm_ssh() {
 	ssh "${ssh_opts[@]}" -i "$key" -o BatchMode=yes root@127.0.0.1 "$@"
 }
 
+# The self-build (RR) boots a test image of image.sh instead of the release image. The rb rc script
+# of the image runs the builder suite of the rb disk, which installs the key and starts sshd. The rb
+# disk is da1 and the build disk is da2.
+up_image() {
+	mkdir -p "$RB_VM_DIR"
+	rm -f "$key" "$key.pub" "$RB_VM_DIR/console.log"
+	ssh-keygen -q -t ed25519 -N '' -f "$key"
+	rm -rf "$RB_VM_DIR/rb-in"
+	mkdir -p "$RB_VM_DIR/rb-in"
+	printf 'RB_SUITES="builder"\nRB_POWEROFF=no\n' > "$RB_VM_DIR/rb-in/rb.conf"
+	cp "$key.pub" "$RB_VM_DIR/rb-in/authorized_keys"
+	tar -cf "$RB_VM_DIR/rb.tar" -C "$RB_VM_DIR/rb-in" .
+	truncate -s 64M "$RB_VM_DIR/rb.tar"
+	truncate -s "$RB_BUILD_DISK" "$RB_VM_DIR/build.raw"
+	qemu-system-x86_64 -machine q35,accel="$RB_ACCEL",graphics=off -cpu "$RB_VM_CPU" -smp "$RB_VM_CPUS" -m "$RB_VM_MEM" \
+		-drive if=none,id=root,file="$RB_BUILDER_RAW",format=raw,cache=unsafe -device ide-hd,drive=root,bus=ide.0 \
+		-drive if=none,id=rb,file="$RB_VM_DIR/rb.tar",format=raw -device ide-hd,drive=rb,bus=ide.1 \
+		-drive if=none,id=build,file="$RB_VM_DIR/build.raw",format=raw,cache=unsafe -device ide-hd,drive=build,bus=ide.2 \
+		-netdev user,id=n0,hostfwd=tcp:127.0.0.1:"$RB_SSH_PORT"-:22 -device e1000,netdev=n0 \
+		-serial file:"$RB_VM_DIR/console.log" -display none -monitor none \
+		-pidfile "$RB_VM_DIR/qemu.pid" -daemonize
+	for _ in $(seq 1 120); do
+		if grep -aq '^RB-BUILDER' "$RB_VM_DIR/console.log" 2>/dev/null &&
+			vm_ssh -o ConnectTimeout=5 'uname -a; sysctl -n hw.ncpu hw.physmem' 2>/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	echo "the image did not answer on ssh" >&2
+	tail -c 3000 "$RB_VM_DIR/console.log" >&2 || true
+	return 1
+}
+
 up() {
+	if [ -n "${RB_BUILDER_RAW:-}" ]; then
+		up_image
+		return
+	fi
 	mkdir -p "$RB_CACHE" "$RB_VM_DIR"
 	local bz2="$RB_CACHE/$RB_BUILDER_NAME"
 	local url
@@ -55,7 +97,7 @@ up() {
 	rm -f "$key" "$key.pub" "$RB_VM_DIR/serial.sock" "$RB_VM_DIR/console.log"
 	ssh-keygen -q -t ed25519 -N '' -f "$key"
 
-	local cpu=(-cpu host)
+	local cpu=(-cpu "$RB_VM_CPU")
 	[ "$RB_ACCEL" = kvm ] || cpu=()
 	# graphics=off makes SeaBIOS copy the screen to the serial port and read the keyboard from it,
 	# which console.py needs until the kernel has the serial console.

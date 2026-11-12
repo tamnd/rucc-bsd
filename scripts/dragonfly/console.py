@@ -113,12 +113,19 @@ def main():
     if not con.expect(r"login: ?$|login: ", login_limit):
         fail("no login prompt")
     con.send("root\r")
-    if not con.expect(r"[#%$] ?$|[#%$] ", 60):
+    # The prompt of the csh of root is "root@HOST:~ # ", and HOST is empty in the live system.
+    if not con.expect(r"@[^\r\n]*[#%] ", 60):
         fail("no shell prompt after login")
-    con.send("exec /bin/sh\r")
-    time.sleep(2)
-    con.send("PS1='rb# '\r")
-    if not con.expect(r"rb# ", 30):
+    # Characters typed while the shell starts can be lost, so the change to /bin/sh is tried again
+    # until its prompt comes. exec /bin/sh in /bin/sh does no harm.
+    for _ in range(5):
+        time.sleep(3)
+        con.send("exec /bin/sh\r")
+        time.sleep(3)
+        con.send("PS1='rb# '\r")
+        if con.expect(r"rb# ", 20):
+            break
+    else:
         fail("no prompt from /bin/sh")
 
     with open(steps) as f:

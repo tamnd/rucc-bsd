@@ -10,8 +10,10 @@
 #   make -j4 buildworld
 #   make -j4 buildkernel KERNCONF=X86_64_GENERIC
 #
-# which are the command lines of build(7), with no make.conf. The build record is the artifact:
-# the logs, phases.tsv, toolchain.txt and source.txt.
+# which are the command lines of build(7), with no make.conf. scripts/dragonfly/image.sh then makes
+# a test image of the build, and scripts/dragonfly/boot.sh boots it and runs the smoke suite. The
+# build record is the artifact: the logs, phases.tsv, toolchain.txt, source.txt, and boot/ for the
+# console log and the results of the boot.
 #
 # A manual run can build another pin of conf/dragonfly/pins.conf, or a commit of it, and can stop
 # after provision. The workflow runs only when it is started by hand, because one run holds a runner
@@ -48,7 +50,8 @@ env:
   RB_STOP: ${{ inputs.stop || 'all' }}
   RB_CACHE: /mnt/rb-cache
   RB_VM_DIR: /mnt/rb-builder
-  # The command environment of the scripts in the builder VM.
+  # The command environment of the scripts in the builder VM. The shell of root there is csh, so
+  # the commands start with env.
   VM_ENV: RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
 
 jobs:
@@ -101,10 +104,17 @@ jobs:
           scripts/dragonfly/builder.sh ssh 'du -sh /build/src; df -h /build'
       - name: buildworld
         if: env.RB_STOP == 'all'
-        run: scripts/dragonfly/builder.sh ssh "$VM_ENV sh /root/harness/scripts/dragonfly/build.sh world"
+        run: scripts/dragonfly/builder.sh ssh "env $VM_ENV sh /root/harness/scripts/dragonfly/build.sh world"
       - name: buildkernel
         if: env.RB_STOP == 'all'
-        run: scripts/dragonfly/builder.sh ssh "$VM_ENV sh /root/harness/scripts/dragonfly/build.sh kernel"
+        run: scripts/dragonfly/builder.sh ssh "env $VM_ENV sh /root/harness/scripts/dragonfly/build.sh kernel"
+      - name: the test image
+        if: env.RB_STOP == 'all'
+        run: |
+          scripts/dragonfly/builder.sh ssh "env $VM_ENV RB_HARNESS=/root/harness RB_DESTDIR=/build/dest RB_IMAGE=/build/img/rb.img sh /root/harness/scripts/dragonfly/image.sh"
+          # The image is sparse in the VM. dd keeps the blocks of zeros out of the copy on the host.
+          scripts/dragonfly/builder.sh ssh 'cat /build/img/rb.img' | dd of="$RB_VM_DIR/rb.img" bs=1M iflag=fullblock conv=sparse status=none
+          ls -ls "$RB_VM_DIR/rb.img"
       - name: copy the build record out
         if: always()
         run: |
@@ -115,6 +125,15 @@ jobs:
           cp "$RB_VM_DIR/console.log" record/builder-console.log || true
           df -h /mnt > record/host-df.txt
           ls -l record
+      - name: boot the test image and run the smoke suite
+        if: always() && env.RB_STOP == 'all'
+        run: |
+          if [ ! -f "$RB_VM_DIR/rb.img" ]; then
+            echo "no image"
+            exit 1
+          fi
+          rm -f "$RB_VM_DIR/root.raw" "$RB_VM_DIR/build.raw"
+          scripts/dragonfly/boot.sh "$RB_VM_DIR/rb.img" "boot smoke" record/boot
       - name: summary
         if: always()
         run: |
@@ -135,6 +154,15 @@ jobs:
               echo '```'
               sed -n '/^# host/,+1p;/^# CCVER/p;/--version/,+1p;/^# gcc -v/,+1p' record/toolchain.txt
               echo '```'
+            fi
+            if [ -f record/boot/boot.json ]; then
+              echo "Boot of the test image: \`$(cat record/boot/boot.json)\`"
+              echo
+              if [ -f record/boot/results/out/smoke/results ]; then
+                echo '```'
+                cat record/boot/results/out/smoke/results
+                echo '```'
+              fi
             fi
             for f in record/*-error.txt; do
               [ -f "$f" ] || continue

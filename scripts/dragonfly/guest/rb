@@ -1,0 +1,96 @@
+#!/bin/sh
+#
+# rb-rc for DragonFly (plan 12.4), as the rb of scripts/freebsd/guest. It runs last at boot. It reads
+# the rb disk, a tar archive with no file system that holds rb.conf, runs the suites that rb.conf
+# names, writes the results back to the same disk as a tar archive, and powers off. The console
+# markers say only that the run started and finished.
+#
+# PROVIDE: rb
+# REQUIRE: LOGIN FILESYSTEMS
+# KEYWORD: nojail
+
+# rc.subr reads name, rcvar and the _cmd variables.
+# shellcheck disable=SC2034
+
+. /etc/rc.subr
+
+name="rb"
+rcvar=$(set_rcvar)
+start_cmd="rb_start"
+stop_cmd=":"
+
+load_rc_config $name
+: "${rb_enable:=NO}"
+: "${rb_disk:=/dev/da1}"
+
+PATH="${PATH}:/usr/local/sbin:/usr/local/bin"
+export PATH
+
+rb_say()
+{
+	echo "$*" > /dev/console
+}
+
+rb_start()
+{
+	local work out s rc
+
+	rb_say "RB-READY $(uname -a)"
+	work=/var/rb
+	out=${work}/out
+	rm -rf ${work}
+	mkdir -p ${out}
+
+	if ! tar -xf "${rb_disk}" -C "${work}" 2>/dev/null || [ ! -f ${work}/rb.conf ]; then
+		rb_say "RB-NODISK ${rb_disk}"
+		return 0
+	fi
+	RB_SUITES="boot"
+	RB_POWEROFF="yes"
+	# shellcheck disable=SC1091
+	. "${work}/rb.conf"
+	export RB_SMOKE_DISK
+
+	uname -a > ${out}/uname.txt
+	cp /var/run/dmesg.boot ${out}/dmesg.boot 2>/dev/null || dmesg > ${out}/dmesg.boot
+	kldstat > ${out}/kldstat.txt
+	sysctl kern.version kern.osreldate kern.osrevision hw.ncpu hw.physmem > ${out}/sysctl.txt 2>&1 || true
+
+	for s in ${RB_SUITES}; do
+		case ${s} in
+		boot)
+			echo "pass" > ${out}/boot.txt
+			;;
+		smoke)
+			rb_say "RB-SUITE smoke"
+			sh ${work}/smoke.sh ${out}/smoke
+			;;
+		builder)
+			# The self-build (RR) uses the image as its builder VM. The host logs in with
+			# the key of the rb disk, and rb.conf sets RB_POWEROFF to no.
+			mkdir -p -m 700 /root/.ssh
+			install -m 600 ${work}/authorized_keys /root/.ssh/authorized_keys
+			sed -i '' -e '/^PermitRootLogin/d' -e '/^UseDNS/d' /etc/ssh/sshd_config
+			printf 'PermitRootLogin prohibit-password\nUseDNS no\n' >> /etc/ssh/sshd_config
+			/etc/rc.d/sshd forcestart > ${out}/sshd.txt 2>&1
+			rb_say "RB-BUILDER sshd=$?"
+			;;
+		*)
+			echo "unknown suite ${s}" >> ${out}/errors.txt
+			;;
+		esac
+	done
+
+	dmesg > ${out}/dmesg.end 2>/dev/null
+	rc=0
+	tar -cf "${rb_disk}" -C "${work}" . || rc=$?
+	rb_say "RB-DONE tar=${rc} smoke=$(cat ${out}/smoke/counts 2>/dev/null)"
+
+	# init of DragonFly does not act on the signal of shutdown while rc still runs, so the system
+	# would go on to the login prompt. halt -p syncs the disks and powers off at once.
+	if [ "${RB_POWEROFF}" = "yes" ]; then
+		halt -p
+	fi
+}
+
+run_rc_command "$1"
