@@ -9,17 +9,22 @@
 # with make test. Before the build, pkg install takes each dependency that the port names from the
 # package repository of the image, so rucc builds the port and not what it depends on. A dependency
 # with no package is built from the ports tree, with the same CC. CC_REF, such as gcc15, builds the
-# ports with that compiler in place of cc, as the control.
+# ports with that compiler in place of cc, as the control. rucc compiles C only, and the image has
+# no C++ compiler, so CXX is CXX_REF, g++15 of the gcc15 package, on both sides. Some configure
+# scripts look for a C++ compiler even when they build C only.
 #
 # OUTDIR/ports.tsv gets one line per port: "origin version build test seconds", where build and
 # test are pass or fail, and test is none when the port has no test suite. OUTDIR/ORIGIN.log has
-# the output, with / in the origin as -. OUTDIR/counts gets "BUILT/TESTED/TOTAL".
+# the output, with / in the origin as -. OUTDIR/counts gets "BUILT/TESTED/TOTAL". OUTDIR/ORIGIN-tests.tar.xz keeps the logs of the test
+# suite (test-suite.log, *.log beside *.trs, LastTest.log of CTest, testlog.txt of meson), because
+# make clean removes the work directory.
 set -u
 out=$1
 list=$2
 : "${PORTSDIR:=/build/ports}"
 : "${RB_JOBS:=$(sysctl -n hw.ncpu)}"
 : "${CC_REF:=cc}"
+: "${CXX_REF:=g++15}"
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 export PATH PORTSDIR
 mkdir -p "$out" /build/ports-wrk /build/distfiles /build/ports-pkg
@@ -28,7 +33,8 @@ out=$(cd "$out" && pwd)
 # The flags of a batch build. CPP is the preprocessor of the same compiler.
 set -- BATCH=yes DISABLE_VULNERABILITIES=yes NO_IGNORE=yes \
 	WRKDIRPREFIX=/build/ports-wrk DISTDIR=/build/distfiles PACKAGES=/build/ports-pkg \
-	MAKE_JOBS_NUMBER="$RB_JOBS" CC="$CC_REF" CPP="$CC_REF -E" PORTSDIR="$PORTSDIR"
+	MAKE_JOBS_NUMBER="$RB_JOBS" CC="$CC_REF" CPP="$CC_REF -E" \
+	CXX="$CXX_REF" CXXCPP="$CXX_REF -E" PORTSDIR="$PORTSDIR"
 # A for loop and not a while read loop, so that no make or pkg in the loop reads the list. An
 # origin has no space in it.
 # shellcheck disable=SC2013
@@ -40,7 +46,7 @@ for origin in $(sed -e 's/#.*//' "$list"); do
 	build=fail
 	test=none
 	{
-		echo "# $origin $version, CC=$CC_REF"
+		echo "# $origin $version, CC=$CC_REF, CXX=$CXX_REF"
 		"$CC_REF" --version 2>&1 | head -1
 		echo
 		echo "# pkg install of the dependencies"
@@ -64,6 +70,13 @@ for origin in $(sed -e 's/#.*//' "$list"); do
 	fi
 	printf '%s\t%s\t%s\t%s\t%s\n' "$origin" "$version" "$build" "$test" "$(($(date +%s) - start))" >> "$out/ports.tsv"
 	echo "$origin $version: build $build, test $test"
+	wrk=$(make -C "$dir" "$@" -V WRKDIR)
+	if [ -d "$wrk" ]; then
+		(cd "$wrk" && find . \( -name test-suite.log -o -name '*.trs' -o -name LastTest.log -o -name testlog.txt \
+			-o -name 'tests.log' \) -print | sed 's/\.trs$/.log/' | sort -u | while read -r f; do
+			[ -f "$f" ] && echo "$f"
+		done | tar -cJf "$out/$(echo "$origin" | tr / -)-tests.tar.xz" -T - 2>/dev/null) || true
+	fi
 	make -C "$dir" "$@" clean > /dev/null 2>&1 || true
 done
 total=$(wc -l < "$out/ports.tsv" | tr -d ' ')

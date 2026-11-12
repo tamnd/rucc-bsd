@@ -26,7 +26,8 @@
 # With ports, the ports job boots the same RR image with the package, takes the ports tree of the
 # quarterly branch of the day, and builds each port of conf/freebsd/ports.list with cc, the rucc of
 # the package, then runs the test suite of the port (scripts/freebsd/guest/ports.sh). The
-# dependencies come as packages. The results are reported per port and not graded.
+# dependencies come as packages. A second leg builds the same list with gcc15, as the control. The
+# results are reported per port and not graded.
 
 name: freebsd-self
 
@@ -366,7 +367,7 @@ jobs:
           name=$(cd pkg && ls rucc-*.pkg)
           scripts/freebsd/rr-vm.sh put "pkg/$name" "/build/$name"
           scripts/freebsd/rr-vm.sh put pkg/rb-bin.tar.xz /build/rb-bin.tar.xz
-          scripts/freebsd/rr-vm.sh ssh "pkg info -e binutils || env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y binutils;
+          scripts/freebsd/rr-vm.sh ssh "env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y binutils gcc15 &&
             pkg add /build/$name && pkg info rucc"
       - name: the source, the SRCCONF of R, and the shims
         run: |
@@ -502,13 +503,20 @@ jobs:
           retention-days: 30
 
   ports:
-    name: the ports row, built by rucc in RR
+    name: the ports row in RR, CC=${{ matrix.cc }}
     needs: [select, package]
     if: inputs.ports
     runs-on: ubuntu-24.04
     timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        # cc is the rucc of the package. gcc15 is the control: a port that fails with both fails
+        # for a reason that is not rucc.
+        cc: [cc, gcc15]
     env:
       RB_VM_DIR: /mnt/rb-rr
+      CC_REF: ${{ matrix.cc }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
@@ -559,7 +567,7 @@ jobs:
         run: |
           scripts/freebsd/rr-vm.sh put scripts/freebsd/guest/ports.sh /root/ports.sh
           scripts/freebsd/rr-vm.sh put conf/freebsd/ports.list /root/ports.list
-          scripts/freebsd/rr-vm.sh ssh 'sh /root/ports.sh /root/ports-out /root/ports.list'
+          scripts/freebsd/rr-vm.sh ssh "CC_REF=$CC_REF sh /root/ports.sh /root/ports-out /root/ports.list"
       - name: copy the results out
         if: always()
         run: |
@@ -572,9 +580,9 @@ jobs:
         run: |
           r=ports/ports-out
           {
-            echo "### The ports row, built by rucc in RR"
+            echo "### The ports row in RR, CC=$CC_REF"
             echo
-            echo "The RR image of freebsd-r run $R_RUN, with the rucc package of tamnd/rucc $COMMIT. Ports tree: $(cat ports/ports-tree.txt 2>/dev/null)."
+            echo "The RR image of freebsd-r run $R_RUN, with the rucc package of tamnd/rucc $COMMIT. CC=$CC_REF, CXX=g++15. Ports tree: $(cat ports/ports-tree.txt 2>/dev/null)."
             echo
             echo "Built, tests passed, total: $(cat "$r/counts" 2>/dev/null || echo none)"
             echo
@@ -588,6 +596,6 @@ jobs:
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: freebsd-self-ports
+          name: freebsd-self-ports-${{ matrix.cc }}
           path: ports
           retention-days: 30
