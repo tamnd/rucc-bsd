@@ -1581,17 +1581,25 @@ jobs:
           }
           status=0
           boot || status=$?
-          # The x86_xstate ptrace cases can panic the G and the R kernel in fpu_lwp_area (#65).
-          # It is a race in NetBSD and not a rucc difference. A boot that panics in this way is
-          # made once more. The first boot goes to panic-65 in the shard's directory.
-          if [ "$status" -ne 0 ] && python3 scripts/netbsd/fpu-panic.py "$out/boot.json"; then
-            echo "The boot panicked as in #65. It is made once more." | tee -a "$GITHUB_STEP_SUMMARY"
-            mv "$out" "$out.panic-65"
+          # Two races in NetBSD can panic the G and the R kernel: the x86_xstate ptrace cases in
+          # fpu_lwp_area (#65) and the aio cases in aio_job_mark_complete (#170). They are not
+          # rucc differences. A boot that panics in one of these ways is made again, at most two
+          # more times. Each boot that panicked goes to panic-N in the shard's directory.
+          tries=0
+          kept=()
+          while [ "$status" -ne 0 ] && [ "$tries" -lt 2 ] &&
+            issue=$(python3 scripts/netbsd/known-panic.py "$out"); do
+            tries=$((tries + 1))
+            echo "The boot panicked as in #$issue. It is made again." | tee -a "$GITHUB_STEP_SUMMARY"
+            mv "$out" "$out.panic-$tries"
+            kept+=("$tries")
             status=0
             boot || status=$?
+          done
+          for n in "${kept[@]}"; do
             mkdir -p "$out"
-            mv "$out.panic-65" "$out/panic-65"
-          fi
+            mv "$out.panic-$n" "$out/panic-$n"
+          done
           exit "$status"
         env:
           TESTS: ${{ matrix.tests }}
