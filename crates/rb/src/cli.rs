@@ -671,7 +671,7 @@ usage:
       Put rb-cc under the names a build calls its compilers by in DIR, with the rb-shim.toml that
       says what each name runs. rucc gets the --target and -fgnuc-version= of the pin's persona.
       rucc is PATH, else RB_RUCC, else the [rucc] command of toolchains.toml on PATH; rb prints
-      its SHA-256, its --version and whether it is the pinned release. For FreeBSD the names are
+      its SHA-256, its --version and whether it is the pinned rucc. For FreeBSD the names are
       <triple>-rb-cc-rucc, -rb-cc-ref, -rb-c++, -rb-cpp and -rb-as, and the reference is the
       package of toolchains.toml. For NetBSD the names are the C compiler and the preprocessor of
       TOOLDIR, the reference is in the TOOLDIR of build.sh tools given by --tools, --cc gives the
@@ -740,8 +740,10 @@ usage:
       the shims they name must run the reference of toolchains.toml and give rucc the persona's
       arguments. For NetBSD, G and R are TOOLDIRs, and one of them is enough: each file must be
       the same as in the TOOLDIR of build.sh tools, except the two shim names and rb-shim.toml.
-      rucc must be the release of [rucc.binary_sha256], and no bring-up class may be on, or
-      --ungraded must be given. Exits 1 when a check fails.
+      rucc must be the pinned rucc, and no bring-up class may be on, or --ungraded must be
+      given. For a release pin, the SHA-256 of rucc must be in [rucc.binary_sha256]. For a commit
+      pin, the file rucc.source beside rucc must name the pinned repo and commit and the SHA-256
+      of rucc. Exits 1 when a check fails.
   rb vec-audit --g LOG --r LOG [--g-root DIR --r-root DIR] [--jobs N] [--limit N]
       Decode each object of R whose compile command leaves out the FPU, such as with -mno-sse or
       -msoft-float, and list each vector or x87 instruction in it: one that names an xmm, ymm,

@@ -68,8 +68,72 @@ pub struct Rucc {
     pub sha256: String,
     /// The first line of its `--version`.
     pub version: String,
-    /// The host triple of the pinned release whose binary this is, or `None` when it is not one.
+    /// How it is the pinned rucc: the release binary for a host, or a build of the pinned
+    /// commit. `None` when it is not the pinned rucc.
     pub pinned: Option<String>,
+}
+
+/// The file beside a rucc built from source that says what it was built from:
+/// `rucc.source` for `rucc`. It has `repo`, `commit` and the `sha256` of the binary.
+#[must_use]
+pub fn source_file(binary: &Path) -> PathBuf {
+    let mut name = binary.file_name().unwrap_or_default().to_os_string();
+    name.push(".source");
+    binary.with_file_name(name)
+}
+
+/// What [`source_file`] holds.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Source {
+    repo: String,
+    commit: String,
+    sha256: String,
+}
+
+/// How the binary at `path`, whose digest is `sha256`, is the pinned rucc. A release pin needs
+/// the digest in `[rucc.binary_sha256]`. A commit pin needs a [`source_file`] that names the
+/// pinned repository and commit and this digest.
+///
+/// # Errors
+///
+/// Why the binary is not the pinned rucc.
+pub fn pinned_as(path: &Path, sha256: &str, pin: &RuccPin) -> Result<String, String> {
+    let Some(commit) = &pin.commit else {
+        return pin
+            .host_of(sha256)
+            .map(|host| format!("the pinned {} for {host}", pin.version))
+            .ok_or_else(|| {
+                format!(
+                    "{} has sha256 {sha256}, which is not in [rucc.binary_sha256]",
+                    path.display()
+                )
+            });
+    };
+    let file = source_file(path);
+    let text = std::fs::read_to_string(&file).map_err(|e| {
+        format!(
+            "{} has no {} to say it was built from the pinned commit {commit}: {e}",
+            path.display(),
+            file.display()
+        )
+    })?;
+    let source: Source = toml::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?;
+    let mut wrong = Vec::new();
+    if source.repo != pin.repo {
+        wrong.push(format!("repo {}, the pin is {}", source.repo, pin.repo));
+    }
+    if &source.commit != commit {
+        wrong.push(format!("commit {}, the pin is {commit}", source.commit));
+    }
+    if source.sha256 != sha256 {
+        wrong.push(format!("sha256 {}, the binary has {sha256}", source.sha256));
+    }
+    if wrong.is_empty() {
+        Ok(format!("built from the pinned {} {commit}", pin.repo))
+    } else {
+        Err(format!("{} gives {}", file.display(), wrong.join(", ")))
+    }
 }
 
 impl Rucc {
@@ -125,7 +189,7 @@ impl Rucc {
                 String::from_utf8_lossy(&out.stderr).trim()
             ));
         }
-        let pinned = pin.and_then(|p| p.host_of(&sha256)).map(String::from);
+        let pinned = pin.and_then(|p| pinned_as(path, &sha256, p).ok());
         Ok(Self {
             path: path.to_path_buf(),
             sha256,
@@ -138,8 +202,8 @@ impl Rucc {
     #[must_use]
     pub fn line(&self, pin: Option<&RuccPin>) -> String {
         let release = match (&self.pinned, pin) {
-            (Some(host), Some(p)) => format!("the pinned {} for {host}", p.version),
-            (None, Some(p)) => format!("not the pinned {}", p.version),
+            (Some(how), Some(_)) => how.clone(),
+            (None, Some(p)) => format!("not the pinned {}", p.name()),
             _ => "no pin to compare with".to_string(),
         };
         format!(
