@@ -12,6 +12,13 @@
 # runs rb census and rb demands over it. Each job writes a manifest of the sets and the kernels, and
 # the compare job compares the two manifests. With rebuild off there is one build job and no compare.
 #
+# With host=r, the second build is the R-host build of milestone B12: build.sh tools builds the
+# host tools of plan 02.8 (nbmake, nbconfig, nbmakefs, the host parts of nbgcc and the rest) with
+# rucc as HOST_CC. HOST_CXX stays the container's g++, and the cross compiler that builds NetBSD
+# stays G. scripts/netbsd/host-cc.sh logs each host compile and runs rucc. The compare job then
+# compares the sets of the G-host build with those of the R-host build, which must be the same.
+# The rucc input names the branch or commit of tamnd/rucc.
+#
 # The work is under /mnt/nb, the runner's larger disk, as in netbsd-g.
 
 name: netbsd-host
@@ -27,6 +34,14 @@ on:
         description: Run G through the rb-cc shims and write compile.jsonl
         type: boolean
         default: true
+      host:
+        description: g builds the host tools of both builds with the container's gcc, r those of the second build with rucc
+        type: choice
+        options: [g, r]
+        default: g
+      rucc:
+        description: The branch or commit of tamnd/rucc for host=r
+        default: main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
@@ -102,6 +117,22 @@ jobs:
             target/release/rb
             target/release/rb-cc
           retention-days: 7
+      - name: rucc ${{ inputs.rucc }} from source
+        if: inputs.host == 'r'
+        env:
+          REF: ${{ inputs.rucc }}
+        run: |
+          git clone -q https://github.com/tamnd/rucc "$RUNNER_TEMP/rucc-src"
+          git -C "$RUNNER_TEMP/rucc-src" checkout -q "$REF"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/rucc-tgt" cargo build --release \
+            --manifest-path "$RUNNER_TEMP/rucc-src/Cargo.toml" -p rucc
+          echo "rucc built from tamnd/rucc $(git -C "$RUNNER_TEMP/rucc-src" rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.1
+        if: inputs.host == 'r'
+        with:
+          name: rucc-linux-x86_64
+          path: ${{ runner.temp }}/rucc-tgt/release/rucc
+          retention-days: 7
 
   build:
     name: build ${{ matrix.build }}
@@ -115,6 +146,7 @@ jobs:
     env:
       BUILD: ${{ matrix.build }}
       SHIMS: ${{ inputs.shims }}
+      R_HOST: ${{ inputs.host == 'r' && matrix.build == 2 }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: work directory on /mnt
@@ -142,8 +174,33 @@ jobs:
           echo "MKREPRO_TIMESTAMP=$(git -C "$NB_ROOT/src" log -1 --format=%ct)" >> "$GITHUB_ENV"
         env:
           GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        if: env.R_HOST == 'true'
+        with:
+          name: rucc-linux-x86_64
+          path: /mnt/nb/rucc
+      # In the R-host build, HOST_CC is host-cc.sh, which logs each call to NB_HOST_CC_LOG and runs
+      # rucc. build.sh takes HOST_CC from the environment.
       - name: build.sh tools
-        run: provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh tools -P tools
+        run: |
+          if [ "$R_HOST" = true ]; then
+            chmod +x "$NB_ROOT/rucc/rucc"
+            provision/builders/netbsd-host/run.sh "$NB_ROOT/rucc/rucc" --version | head -1 > "$NB_ROOT/out/host-cc.txt"
+            # The gnuhost tools (isl, gmp and the rest) build under env -i, which drops the
+            # NB_HOST_CC_ variables. Thus HOST_CC is a wrapper that has the paths in it.
+            printf '#!/bin/sh\nNB_HOST_CC_LOG=%s NB_HOST_CC_RUCC=%s exec %s "$@"\n' \
+              "$NB_ROOT/out/host-cc.log" "$NB_ROOT/rucc/rucc" "$PWD/scripts/netbsd/host-cc.sh" \
+              > "$NB_ROOT/rucc/host-cc"
+            chmod +x "$NB_ROOT/rucc/host-cc"
+            provision/builders/netbsd-host/run.sh env HOST_CC="$NB_ROOT/rucc/host-cc" \
+              scripts/netbsd/phase.sh tools -P tools
+            {
+              echo "R-host: build.sh tools with HOST_CC=rucc ($(cat "$NB_ROOT/out/host-cc.txt"))."
+              echo "rucc ran $(wc -l < "$NB_ROOT/out/host-cc.log") times as HOST_CC."
+            } | tee -a "$NB_ROOT/out/host-cc.txt"
+          else
+            provision/builders/netbsd-host/run.sh scripts/netbsd/phase.sh tools -P tools
+          fi
       - name: G's TOOLDIR with the rb-cc shims
         if: env.SHIMS == 'true'
         run: |
@@ -196,7 +253,7 @@ jobs:
             echo "MKREPRO_TIMESTAMP=$MKREPRO_TIMESTAMP. Times are wall clock on one ubuntu-24.04 runner ($(nproc) vCPUs)."
             echo
             scripts/netbsd/summary.sh "$NB_ROOT/logs/phases.tsv"
-            for f in toolchain compile-jsonl census demands; do
+            for f in host-cc toolchain compile-jsonl census demands; do
               [ -f "$NB_ROOT/out/$f.txt" ] || continue
               echo
               echo "#### $f"
@@ -250,8 +307,15 @@ jobs:
           status=0
           python3 -I provision/builders/netbsd-host/sets-compare.py builds/netbsd-host-build-1/out/sets.manifest \
             builds/netbsd-host-build-2/out/sets.manifest --out compare > /dev/null || status=$?
+          if [ "$HOST" = r ]; then
+            echo "Build 1 is the G-host build and build 2 the R-host build." >> "$GITHUB_STEP_SUMMARY"
+          fi
           cat compare/compare.md >> "$GITHUB_STEP_SUMMARY"
           echo "sets-compare.py exited with $status." >> "$GITHUB_STEP_SUMMARY"
+          # An R-host build that does not give the sets of the G-host build fails the run.
+          [ "$HOST" != r ] || exit "$status"
+        env:
+          HOST: ${{ inputs.host }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
