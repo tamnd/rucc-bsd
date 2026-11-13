@@ -1,3 +1,4 @@
 # The cases rb test does not grade, for R and G alike, because their result does not show whether the compiler is right. freebsd-r.yml gives this file to rb test as --ungraded.
 # A line is the suite, the case and the reason, separated by tabs. Remove a line when the pin has the fix.
 tests	lib/libc/gen/glob2_test:glob_pathological_test	reads mul before it writes it, an upstream bug (rucc-bsd#193)
+tests	sys/kern/timerfd:timerfd__argument_checks	reads itimerspec after timerfd_gettime failed to write it, an upstream bug (rucc-bsd#214)
