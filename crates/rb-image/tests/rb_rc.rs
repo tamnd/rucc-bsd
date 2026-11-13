@@ -278,8 +278,8 @@ fn login_installs_rb_rc_on_netbsd_at_securelevel_1() {
     std::fs::write(root.join("etc/sysctl.conf"), "ddb.onpanic=0\n").unwrap();
     assert_eq!(
         run("NetBSD", "1", &root),
-        "RB-NOTE login kern.heartbeat.max_period=60: QEMU under TCG can stop a vCPU for more than \
-         15 s (tamnd/rucc-bsd#206)\nRB-LOGIN-REBOOT 1\nREBOOT\n"
+        "RB-NOTE login kern.heartbeat.max_period=0: QEMU under TCG can stop a vCPU for more than \
+         60 s (tamnd/rucc-bsd#206)\nRB-LOGIN-REBOOT 1\nREBOOT\n"
     );
     assert_eq!(
         std::fs::read_to_string(root.join("etc/rc.conf")).unwrap(),
@@ -287,7 +287,7 @@ fn login_installs_rb_rc_on_netbsd_at_securelevel_1() {
     );
     assert_eq!(
         std::fs::read_to_string(root.join("etc/sysctl.conf")).unwrap(),
-        "ddb.onpanic=0\nkern.heartbeat.max_period=60\n"
+        "ddb.onpanic=0\nkern.heartbeat.max_period=0\n"
     );
     assert_eq!(
         std::fs::read_to_string(root.join("etc/rc.d/rb")).unwrap(),
