@@ -9,7 +9,8 @@
 #   2. Read the results disk. If it holds a tar archive with an rb.conf, that file overrides the
 #      rb.conf of the image. rb boot uses this to choose the suites at boot time. The archive is
 #      unpacked to $work/in, and the rb.conf of rb boot --scripts sets libexec to $work/in/rb,
-#      so the suites run with the scripts on the disk.
+#      so the suites run with the scripts on the disk. When this script does not know a suite
+#      of rb_suites, that rb.conf runs the run script of the disk in its place (rb_rc_suites).
 #   3. Save uname and dmesg.
 #   4. Run each suite of rb_suites. Print "RB-SUITE <name>" before it and "RB-SUITE-END <name>
 #      <counts>" after it.
@@ -43,6 +44,9 @@ conf=${RB_CONF:-/etc/rb.conf}
 work=${RB_WORK:-/var/rb}
 libexec=${RB_LIBEXEC:-/usr/libexec/rb}
 out=$work/out
+# The suites that this script knows. The rb.conf of rb boot --scripts reads it. The rb-rc of an
+# older image does not set it, so that rb.conf runs the newer run script of the disk.
+rb_rc_suites="boot smoke tests modules bench foreign"
 
 # NetBSD's results disk: the raw partition of the ld disk after the root's disk. The root is
 # often a wedge, such as dk1 at ld0. evbarm and riscv wire ld0 to ld3 to sdmmc, so their virtio

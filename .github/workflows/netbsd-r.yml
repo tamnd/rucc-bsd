@@ -835,13 +835,16 @@ jobs:
           "$rb" foreign --conf conf/netbsd/foreign.toml --out "$RUNNER_TEMP/pkgs" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           g=()
+          # The G image of g_run can be older than the foreign suite, and its rb-rc then gives
+          # the suite the result unknown. With --scripts, the results disk has the rb-rc of
+          # this rb, and the older rb-rc runs it in its place.
           for side in r g; do
             img="$RUNNER_TEMP/$side/netbsd-amd64-serial.img"
             [ -f "$img.gz" ] || continue
             gzip -d "$img.gz"
             truncate -s 12G "$img"
             "$rb" boot --image "$img" --out "$RUNNER_TEMP/boot/$side" --suite foreign \
-              --pkgs "$RUNNER_TEMP/pkgs" | tee -a "$GITHUB_STEP_SUMMARY" || true
+              --pkgs "$RUNNER_TEMP/pkgs" --scripts | tee -a "$GITHUB_STEP_SUMMARY" || true
             rm -f "$img"
           done
           if [ -f "$RUNNER_TEMP/boot/g/results/foreign/foreign.tsv" ]; then

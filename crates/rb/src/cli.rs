@@ -490,6 +490,7 @@ usage:
       image, rb logs in as root at the login prompt and starts rb-rc from the results disk,
       which then also holds rb-rc's scripts, and it waits for RB-READY. With --scripts, the
       results disk holds the suite scripts of this rb, and rb-rc runs them and not the image's.
+      When the image's rb-rc does not know a suite, it runs the rb-rc of the disk in its place.
       On NetBSD a directory of --tests-only can be under the top, such as net/carp, and
       --tests-repeat N runs the directories of --tests-only N times. The modules suite, on
       NetBSD, loads and unloads each kernel module of the image, or of DIR of --modules, a tree

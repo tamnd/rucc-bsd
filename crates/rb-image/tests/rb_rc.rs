@@ -158,6 +158,66 @@ fn scripts_from_the_disk() {
     );
 }
 
+/// An image's rb-rc from before a suite: the run.sh of rb with no `rb_rc_suites` and with no
+/// foreign suite, as in the G images of the netbsd-g runs before tamnd/rucc-bsd#154.
+fn old_run() -> String {
+    let old = guest::RUN
+        .lines()
+        .filter(|l| !l.starts_with("rb_rc_suites="))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let old = old.replace("smoke | tests | modules | bench | foreign)", "smoke | tests | modules | bench)");
+    assert!(!old.contains("foreign)"), "{old}");
+    old
+}
+
+#[test]
+fn an_older_rb_rc_runs_the_run_script_of_the_disk() {
+    let foreign =
+        "#!/bin/sh\nmkdir -p \"$1\"\necho RB-CASE foreign/from-the-disk\necho 1/1 > \"$1/counts\"\n";
+    for (tag, old) in [("older-rc", true), ("newer-rc", false)] {
+        let mut conf = RbConf {
+            poweroff: false,
+            ..RbConf::default()
+        };
+        let rig = Rig::new(tag, &conf);
+        if old {
+            std::fs::write(rig.root.join("usr/libexec/rb/run"), old_run()).unwrap();
+        }
+        conf.disk = Some(rig.disk().display().to_string());
+        std::fs::write(rig.root.join("etc/rb.conf"), conf.render()).unwrap();
+        let mut boot = conf.clone();
+        boot.suites = vec!["boot".into(), "foreign".into()];
+        boot.scripts_on_disk = true;
+        let mut disk = ustar::write(&[
+            Entry::file("rb.conf", 0o644, boot.render()),
+            Entry::dir("rb"),
+            Entry::file("rb/run", 0o555, guest::RUN.to_string()),
+            Entry::file("rb/foreign", 0o555, foreign.to_string()),
+        ])
+        .unwrap();
+        disk.resize(1 << 20, 0);
+        std::fs::write(rig.disk(), &disk).unwrap();
+
+        let console = rig.run();
+        let note = "RB-NOTE the rb-rc of the image does not know the suite foreign, so the run \
+                    script of the disk runs\n";
+        // The old rb-rc gives way to the disk's, which knows the suite. The new one runs it.
+        assert_eq!(console.contains(note), old, "{console}");
+        assert!(
+            console.contains("RB-CASE foreign/from-the-disk\n"),
+            "{console}"
+        );
+        assert!(
+            console.ends_with("RB-DONE boot=pass foreign=1/1 archive=disk\n"),
+            "{console}"
+        );
+        let got = read_disk(&rig.disk());
+        assert_eq!(find(&got, "suites"), "boot pass\nforeign 1/1\n");
+    }
+}
+
 #[test]
 fn an_empty_disk_keeps_the_image_conf() {
     let mut conf = RbConf {

@@ -47,7 +47,10 @@ pub struct RbConf {
     pub bench_only: Vec<String>,
     /// Run the suites with the scripts on the results disk, under `rb/`, and not with the
     /// image's. rb-rc unpacks the disk to `$work/in`, so the line `libexec="$work/in/rb"` does
-    /// it, also with the rb-rc of an older image.
+    /// it, also with the rb-rc of an older image. An older rb-rc can also not know a suite,
+    /// such as the rb-rc of an image from before the foreign suite. Its `rb_rc_suites` then
+    /// does not have that suite, or it does not set `rb_rc_suites`, and the file runs the
+    /// disk's run script in its place.
     pub scripts_on_disk: bool,
 }
 
@@ -72,6 +75,22 @@ impl Default for RbConf {
         }
     }
 }
+
+/// The end of an rb.conf with [`RbConf::scripts_on_disk`]. rb-rc reads the file with `.` after
+/// it unpacked the disk to `$work/in`, and also in `run save`, where it must not start again.
+const DISK_SCRIPTS: &str = r#"libexec="$work/in/rb"
+for rb_suite in $rb_suites; do
+	case " $rb_rc_suites " in
+	*" $rb_suite "*) ;;
+	*)
+		if [ "$1" != save ] && [ -r "$work/in/rb/run" ]; then
+			echo "RB-NOTE the rb-rc of the image does not know the suite $rb_suite, so the run script of the disk runs"
+			exec sh "$work/in/rb/run"
+		fi
+		;;
+	esac
+done
+"#;
 
 /// Read a comma-separated list of suites, such as `boot,smoke,tests`.
 pub fn parse_suites(list: &str) -> Result<Vec<String>, String> {
@@ -138,7 +157,7 @@ impl RbConf {
             set("bench_scale", v);
         }
         if self.scripts_on_disk {
-            s.push_str("libexec=\"$work/in/rb\"\n");
+            s.push_str(DISK_SCRIPTS);
         }
         s
     }
@@ -194,6 +213,15 @@ mod tests {
             scripts_on_disk: true,
             ..RbConf::default()
         };
-        assert!(conf.render().ends_with("\nlibexec=\"$work/in/rb\"\n"));
+        let text = conf.render();
+        assert!(text.contains("\nlibexec=\"$work/in/rb\"\n"), "{text}");
+        assert!(text.ends_with(DISK_SCRIPTS), "{text}");
+        // run.sh lists in rb_rc_suites the suites it knows, which are those of rb.
+        let known = crate::guest::RUN
+            .lines()
+            .find_map(|l| l.strip_prefix("rb_rc_suites="))
+            .expect("run.sh sets rb_rc_suites");
+        let known: Vec<&str> = known.trim_matches('"').split(' ').collect();
+        assert_eq!(known, SUITES);
     }
 }
