@@ -29,8 +29,10 @@
 # With a release pin, such as 11.1, the image, boot and atf jobs also make and test the official
 # image: the official binary sets of the release (conf/netbsd/PIN.binary, scripts/netbsd/official.sh)
 # with kern-GENERIC made from the rucc GENERIC kernel. This is the official userland, which the
-# project built with GCC, on R's kernel, part 1 of rb foreign (plan 12.8). The report job compares
-# its ATF shards with the GG shards of g_run with rb test, so a case counts only when GG passes it.
+# project built with GCC, on R's kernel, part 1 of rb foreign (plan 12.8). The image and atf jobs
+# also make and test the official-G image, the official sets with G's kern-GENERIC of g_run. The
+# report job compares the official shards with the official-G shards with rb test, so a case
+# counts only when the official sets pass it on G's kernel.
 #
 # With modules, the rucc kernel job also builds the kernel modules (build.sh modules), and the
 # image job also makes an image with G's kernel, the G image, from the same sets with the same rb.
@@ -1527,7 +1529,7 @@ jobs:
   # G's sets with the rucc kernel in kern-GENERIC, made into the live image as in netbsd-g.yml.
   # The RB-TEST leg puts the rucc RB-TEST kernel in kern-GENERIC.
   image:
-    name: ${{ matrix.kernel == 'G' && 'rb image with the G kernel' || format('rb image with the rucc {0} kernel{1}', matrix.kernel, matrix.suffix == '-official' && ' and the official sets' || '') }}
+    name: ${{ matrix.kernel == 'G' && format('rb image with the G kernel{0}', matrix.suffix == '-official-G' && ' and the official sets' || '') || format('rb image with the rucc {0} kernel{1}', matrix.kernel, matrix.suffix == '-official' && ' and the official sets' || '') }}
     needs: [rb, kernel]
     # The kernel job fails when any step of build.sh fails, also after the link. The kernel
     # artifact is there when a kernel linked, and the download below fails when it is not.
@@ -1537,9 +1539,11 @@ jobs:
     strategy:
       fail-fast: false
       # With modules, a third image keeps G's kernel, for the GG and GR cells of rb cross-modules.
-      # With a release pin, the official image has the official sets and the rucc GENERIC kernel.
+      # With a release pin, the official image has the official sets and the rucc GENERIC kernel,
+      # and the official-G image has the official sets and G's GENERIC kernel. The second is the
+      # baseline of the first (part 1 of rb foreign, plan 12.8).
       matrix:
-        include: ${{ fromJSON(format('[{0}{1}{2}]', '{"kernel":"GENERIC","suffix":"","file":"netbsd"},{"kernel":"RB-TEST","suffix":"-RB-TEST","file":"netbsd-RB-TEST"}', inputs.modules && ',{"kernel":"G","suffix":"-G","file":""}' || '', (inputs.pin || 'trunk') != 'trunk' && ',{"kernel":"GENERIC","suffix":"-official","file":"netbsd"}' || '')) }}
+        include: ${{ fromJSON(format('[{0}{1}{2}]', '{"kernel":"GENERIC","suffix":"","file":"netbsd"},{"kernel":"RB-TEST","suffix":"-RB-TEST","file":"netbsd-RB-TEST"}', inputs.modules && ',{"kernel":"G","suffix":"-G","file":""}' || '', (inputs.pin || 'trunk') != 'trunk' && ',{"kernel":"GENERIC","suffix":"-official","file":"netbsd"},{"kernel":"G","suffix":"-official-G","file":""}' || '')) }}
     env:
       KERNEL: ${{ matrix.kernel }}
       KERNEL_FILE: ${{ matrix.file }}
@@ -1562,10 +1566,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@v8.0.1
-        if: matrix.suffix != '-official'
+        if: matrix.suffix != '-official' && matrix.suffix != '-official-G'
         with:
           name: netbsd-amd64-sets${{ env.NB_PIN_TAG }}
           path: /mnt/nb/release
+          run-id: ${{ inputs.g_run }}
+          github-token: ${{ github.token }}
+      # The official-G image takes only kern-GENERIC from G's sets.
+      - uses: actions/download-artifact@v8.0.1
+        if: matrix.suffix == '-official-G'
+        with:
+          name: netbsd-amd64-sets${{ env.NB_PIN_TAG }}
+          path: ${{ runner.temp }}/g-sets
           run-id: ${{ inputs.g_run }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v8.0.1
@@ -1580,18 +1592,27 @@ jobs:
       - name: put the sets, the rucc kernel and DESTDIR's metadata in place
         run: |
           mkdir -p "$NB_ROOT/release/amd64" "$NB_ROOT/destdir"
-          if [ "$SUFFIX" = -official ]; then
-            # The official sets of the release, with kern-GENERIC made from the rucc kernel. The
-            # live image takes the spec and the boot code from the sets, so DESTDIR stays empty.
-            # SETS names the fetched sets, so that the live image looks for no other set.
+          if [ "$SUFFIX" = -official ] || [ "$SUFFIX" = -official-G ]; then
+            # The official sets of the release, with kern-GENERIC made from the rucc kernel, or
+            # with G's kern-GENERIC for official-G. The live image takes the spec and the boot
+            # code from the sets, so DESTDIR stays empty. SETS names the fetched sets, so that
+            # the live image looks for no other set.
             sets=$(scripts/netbsd/official.sh)
             echo "SETS=$sets" >> "$GITHUB_ENV"
             binary="$NB_ROOT/release/amd64/binary"
-            scripts/netbsd/kern-into-sets.sh "$binary" "$RUNNER_TEMP/r-kernel/kern-GENERIC.tar.xz"
+            if [ "$SUFFIX" = -official ]; then
+              kern="$RUNNER_TEMP/r-kernel/kern-GENERIC.tar.xz"
+              which="the rucc GENERIC kernel"
+            else
+              kern=$(find "$RUNNER_TEMP/g-sets" -name kern-GENERIC.tar.xz | head -n 1)
+              which="G's GENERIC kernel of G run $G_RUN"
+              rm -rf "$RUNNER_TEMP/g-sets/"*/
+            fi
+            scripts/netbsd/kern-into-sets.sh "$binary" "$kern"
             {
               echo "### The sets"
               echo
-              echo "The official sets of $RB_PIN ($sets), with kern-GENERIC made from the rucc GENERIC kernel."
+              echo "The official sets of $RB_PIN ($sets), with kern-GENERIC made from $which."
               echo
               echo '```'
               ls -l "$binary/sets"
@@ -1749,7 +1770,7 @@ jobs:
           retention-days: 14
 
   atf:
-    name: ATF ${{ matrix.shard }} with the rucc kernel${{ matrix.sets == 'official' && ' and the official sets' || '' }}
+    name: ATF ${{ matrix.shard }} with the ${{ matrix.sets == 'official-g' && 'G' || 'rucc' }} kernel${{ matrix.sets != 'g' && ' and the official sets' || '' }}
     needs: [rb, image]
     # The shards boot the GENERIC image only, so a failed RB-TEST image does not skip them.
     if: ${{ !cancelled() && inputs.build == 'kernel' && inputs.g_run != '' && inputs.atf && needs.rb.result == 'success' }}
@@ -1757,9 +1778,10 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      # sets is g for G's sets, and official for the official sets of a release pin.
+      # sets is g for G's sets, official for the official sets of a release pin, and official-g
+      # for the official sets on G's kernel.
       matrix:
-        sets: ${{ fromJSON((inputs.pin || 'trunk') != 'trunk' && '["g","official"]' || '["g"]') }}
+        sets: ${{ fromJSON((inputs.pin || 'trunk') != 'trunk' && '["g","official","official-g"]' || '["g"]') }}
         shard: ["only:net", "only:lib", "except:net,lib"]
         include:
           - shard: "only:net"
@@ -1781,7 +1803,7 @@ jobs:
           scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
       - uses: actions/download-artifact@v8.0.1
         with:
-          name: netbsd-r-amd64-serial-image${{ matrix.sets == 'official' && '-official' || '' }}${{ env.NB_PIN_TAG }}
+          name: netbsd-r-amd64-serial-image${{ matrix.sets == 'official' && '-official' || matrix.sets == 'official-g' && '-official-G' || '' }}${{ env.NB_PIN_TAG }}
           path: ${{ runner.temp }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -1839,7 +1861,7 @@ jobs:
               --cases "$out/shard.cases.tsv" --set "shard=$SHARD" "${tps[@]}"
           fi
           {
-            echo "### ATF $SHARD with the rucc kernel and the $SETS sets"
+            echo "### ATF $SHARD with the $KERNEL kernel and the $SETS sets"
             echo
             echo '```'
             cat "$out/results/tests/atf/status" "$out/shard.counts" 2>/dev/null
@@ -1848,11 +1870,12 @@ jobs:
           rm -f "$RUNNER_TEMP"/netbsd-amd64-serial.img
         env:
           SHARD: ${{ matrix.shard }}
-          SETS: ${{ matrix.sets }}
+          SETS: ${{ matrix.sets == 'g' && 'G' || 'official' }}
+          KERNEL: ${{ matrix.sets == 'official-g' && 'G' || 'rucc' }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: netbsd-r${{ matrix.sets == 'official' && '-official' || '' }}-atf-${{ env.SHARD_NAME }}
+          name: netbsd-r${{ matrix.sets != 'g' && format('-{0}', matrix.sets) || '' }}-atf-${{ env.SHARD_NAME }}
           path: ${{ runner.temp }}/atf-${{ env.SHARD_NAME }}
           retention-days: 30
 
@@ -2178,24 +2201,32 @@ jobs:
         with:
           pattern: netbsd-r-official-atf-*
           path: official-atf
+      - uses: actions/download-artifact@v8.0.1
+        if: (inputs.pin || 'trunk') != 'trunk'
+        with:
+          pattern: netbsd-r-official-g-atf-*
+          path: official-g-atf
       # Part 1 of rb foreign (plan 12.8): the official userland of the release on the rucc kernel.
-      # It is RG with the official sets for G's world, so a case counts only when GG passes it.
-      - name: rb test, the official sets on the rucc kernel against GG
+      # The baseline is the official userland on G's kernel, so a case counts only when the
+      # official sets pass it on G's kernel. With GG as the baseline, a difference between the
+      # official sets and G's sets got the verdict kernel: lib/csu/t_ifunc_static fails with the
+      # official sets on each kernel, because MKDEBUG=yes makes h_ifunc_static a static PIE.
+      - name: rb test, the official sets on the rucc kernel against the official sets on G's kernel
         if: (inputs.pin || 'trunk') != 'trunk'
         run: |
           chmod +x "$RUNNER_TEMP/rb/rb"
           shopt -s nullglob
-          gg=(g-atf/*/)
+          og=(official-g-atf/*/)
           off=(official-atf/*/)
           {
-            echo "### rb test: the official sets of $RB_PIN on the rucc kernel against GG"
+            echo "### rb test: the official sets of $RB_PIN on the rucc kernel against the official sets on G's kernel"
             echo
-            if [ ${#gg[@]} -eq 0 ] || [ ${#off[@]} -eq 0 ]; then
-              echo "There are no ATF shards for GG (${#gg[@]}) or the official sets (${#off[@]})."
+            if [ ${#og[@]} -eq 0 ] || [ ${#off[@]} -eq 0 ]; then
+              echo "There are no ATF shards for the official sets on G's kernel (${#og[@]}) or on the rucc kernel (${#off[@]})."
               exit 0
             fi
             join() { local IFS=+; echo "$*"; }
-            "$RUNNER_TEMP/rb/rb" test --gg "$(join "${gg[@]%/}")" --rg "$(join "${off[@]%/}")" \
+            "$RUNNER_TEMP/rb/rb" test --gg "$(join "${og[@]%/}")" --rg "$(join "${off[@]%/}")" \
               --out out/official-test || true
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7.0.1
