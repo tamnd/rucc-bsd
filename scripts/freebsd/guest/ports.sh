@@ -53,6 +53,25 @@ fi
 # devel/json-c makes its input with xxd -r -p, and the image has no xxd. The log goes to tools.log.
 env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y xxd > "$out/tools.log" 2>&1 ||
 	echo "ports.sh: pkg install of xxd failed, see tools.log" >&2
+# FreeBSD 15 refuses connect(2) to INADDR_ANY by default. connect_unspecified and udp_connect of
+# devel/libuv connect to 0.0.0.0 and expect the old behavior, and they failed with ENETUNREACH with
+# rucc and with gcc15 in run 43453821594. These sysctls give the old behavior back.
+sysctl net.inet.ip.connect_inaddr_wild=1 net.inet6.ip6.connect_in6addr_wild=1 >> "$out/tools.log" 2>&1 ||
+	echo "ports.sh: sysctl connect_inaddr_wild failed, see tools.log" >&2
+# poll_nested_kqueue of devel/libuv gives a kqueue descriptor to uv_poll_init, which sets it
+# nonblocking with ioctl FIONBIO. On FreeBSD 15.1 that ioctl fails with ENOTTY on a kqueue, and
+# the test failed in the same way with rucc and with gcc15 in run 43453821594 (test-poll.c:719,
+# error -25). The test runner of libuv has no way to skip one case, so this patch takes the case
+# out of test/test-list.h.
+cat > /build/ports-wrk/libuv-poll-nested-kqueue.patch << 'EOF_PATCH'
+--- test/test-list.h.orig
++++ test/test-list.h
+@@ -1004,3 +1004,3 @@
+ #ifdef UV_HAVE_KQUEUE
+-  TEST_ENTRY  (poll_nested_kqueue)
++  /* poll_nested_kqueue is left out by ports.sh of rucc-bsd. */
+ #endif
+EOF_PATCH
 # The cc of FreeBSD 15.1 is clang 19, and its default C is gnu17. gcc15 and rucc default to C23,
 # where "void g()" takes no arguments. The long long test in the configure script of math/gmp
 # 6.3.0 calls such a g with six, so with C23 the configure script finds no working compiler. This
@@ -61,6 +80,10 @@ conf=/build/ports-wrk/make.conf
 cat > "$conf" << 'EOF_CONF'
 .if ${.CURDIR:M*/math/gmp}
 CFLAGS+=	-std=gnu17
+.endif
+# devel/libuv gets the patch that takes out poll_nested_kqueue. ports.sh writes it.
+.if ${.CURDIR:M*/devel/libuv}
+EXTRA_PATCHES+=	/build/ports-wrk/libuv-poll-nested-kqueue.patch
 .endif
 # dns/getaddrinfo_cancel_stress of devel/libevent starts 1000 requests to a DNS server on the
 # loopback, and each request has a random cancel timer. It expects that a timer cancels at least
@@ -146,7 +169,7 @@ for origin in $(sed -e 's/#.*//' "$list"); do
 	find /tmp -maxdepth 1 -type d -name '*_test.*' -newer "$tmpmark" > /build/ports-wrk/tmp-dirs
 	if [ -s /build/ports-wrk/tmp-dirs ]; then
 		# shellcheck disable=SC2046
-		find $(cat /build/ports-wrk/tmp-dirs) -type f -name '*.log' -size -1m |
+		find $(cat /build/ports-wrk/tmp-dirs) -type f -name '*.log' -size -1024k |
 			tar -cJf "$out/$(echo "$origin" | tr / -)-tmp.tar.xz" -T - 2>/dev/null || true
 		xargs rm -rf < /build/ports-wrk/tmp-dirs
 	fi
