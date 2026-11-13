@@ -127,7 +127,11 @@ jobs:
           # job, so there net/ipsec, about half of net, is a fourth shard. FreeBSD leaves out
           # sys/geom/class/raid3, since the 15.1 kernel panics there under TCG
           # (tamnd/rucc-bsd#209). NetBSD riscv64 leaves out kernel/t_setjmp, since the 11.1 kernel
-          # panics there under TCG (tamnd/rucc-bsd#221).
+          # panics there under TCG (tamnd/rucc-bsd#221). It also leaves out modules/t_modctl,
+          # since the 11.1 kernel panics in cmd_load under TCG (weekly run 43405973096). NetBSD
+          # aarch64 leaves out lib/libc/gen/t_syslog. In weekly run 43405973096,
+          # syslog_invalid_priority started a loop of syslogd messages on the serial console. The
+          # console log became 6.9 GB, and the shard used all of its time.
           def shard(how, dirs):
               return [f"{how}-{dirs.replace(',', '-')}", f"--tests-{how} {dirs}"]
           shards = {
@@ -136,12 +140,16 @@ jobs:
                   shard("only", "lib"),
                   shard("except", "sys,lib"),
               ],
-              "netbsd": [shard("only", "net"), shard("only", "lib"), shard("except", "net,lib")],
+              "netbsd": [
+                  shard("only", "net"),
+                  ["only-lib", "--tests-only lib --tests-except lib/libc/gen/t_syslog"],
+                  shard("except", "net,lib"),
+              ],
               "netbsd-riscv64": [
                   ["only-net-ipsec", "--tests-only net/ipsec"],
                   ["only-net-but-ipsec", "--tests-only net --tests-except net/ipsec"],
                   shard("only", "lib"),
-                  ["except-net-lib", "--tests-except net,lib,kernel/t_setjmp"],
+                  ["except-net-lib", "--tests-except net,lib,kernel/t_setjmp,modules/t_modctl"],
               ],
           }
           # The GENERIC kernel of each NetBSD machine, and the FreeBSD pin of each series: the pin
