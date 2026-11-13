@@ -51,6 +51,9 @@ jobs:
             h=$(( (now - $(date -u -d "$at" +%s)) / 3600 ))
             [ "$h" -lt 144 ] || continue
             [ "$(gh api "repos/$GH_REPO/contents/conf/netbsd/trunk.pin?ref=$sha" -q .sha)" = "$pin" ] || continue
+            # A run of another pin (for example 11.1) has netbsd-amd64-sets-TAG and not the trunk sets.
+            [ "$(gh api "repos/$GH_REPO/actions/runs/$id/artifacts?name=netbsd-amd64-sets" \
+              -q '[.artifacts[] | select(.expired | not)] | length')" -gt 0 ] || continue
             g=$id
             hours=$h
             break
