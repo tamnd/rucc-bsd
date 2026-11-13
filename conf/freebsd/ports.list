@@ -1,0 +1,24 @@
+# The ports row of B10 (plan 16.11): C ports with a test suite of their own, built by the rucc of
+# the package in the RR image (scripts/freebsd/guest/ports.sh). One origin per line.
+archivers/libarchive	# make check
+archivers/zstd		# make check
+devel/jansson		# cmake testing
+devel/json-c		# cmake testing
+devel/libevent		# make check
+devel/libffi		# make check, with dejagnu
+devel/libuv		# make check
+devel/pcre		# make check
+devel/pcre2		# cmake testing
+dns/libidn2		# make check
+graphics/png		# cmake testing
+lang/gawk		# make check
+math/gmp		# make check
+math/mpc		# make check
+math/mpfr		# make check
+security/libgpg-error	# make check
+security/libsodium	# make check
+security/nettle		# make check
+textproc/expat2		# make check
+textproc/gsed		# make check
+textproc/jq		# make check
+textproc/libxml2	# make check
