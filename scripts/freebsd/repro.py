@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare the records of two G builds of one pin (plan 16.1).
 
-    repro.py FIRST SECOND --out DIR
+    repro.py FIRST SECOND --out DIR [--title TITLE]
 
 FIRST and SECOND are build records of freebsd-g: image.txt, install.manifest and staging.manifest
 from image.sh. The script compares the hashes of image.txt, and each manifest line by line. A
@@ -83,6 +83,7 @@ def main():
     ap.add_argument("first")
     ap.add_argument("second")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--title", default="Two G builds of one pin")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     ia, ib = image_txt(a.first), image_txt(a.second)
@@ -93,7 +94,7 @@ def main():
     with open(os.path.join(a.out, "repro.json"), "w", encoding="utf-8") as f:
         json.dump(rec, f, indent=1)
         f.write("\n")
-    md = ["### Two G builds of one pin", ""]
+    md = [f"### {a.title}", ""]
     md.append(f"The two raw images are {'the same' if same else 'not the same'}.")
     md.append("")
     md.append("| Hash | First | Second | Same |")

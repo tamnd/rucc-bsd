@@ -1,8 +1,8 @@
 # rucc as the system compiler of FreeBSD amd64 (milestone B10, plan 16.11).
 #
-# The package job boots the builder VM, builds rb, rb-cc and rucc (scripts/freebsd/rb-tools.sh), and
-# makes the FreeBSD package of rucc (scripts/freebsd/rucc-pkg.sh). The package is of the commit of
-# the rucc input, or of the [rucc] pin of toolchains.toml when the input is empty. It goes to the
+# The package job boots the builder VM, builds rb and rb-cc (scripts/freebsd/rb-tools.sh), and makes
+# the FreeBSD package of rucc (scripts/freebsd/rucc-pkg.sh). The package is of the commit of the
+# rucc input, or of the [rucc] pin of toolchains.toml when the input is empty. It goes to the
 # artifact freebsd-rucc-pkg with rucc-pkg.txt, which gives the commit and the SHA-256 of the binary
 # and of the package.
 #
@@ -12,6 +12,16 @@
 # running system, not into the base system of the image, and the job runs scripts/freebsd/guest/cc.sh:
 # small programs that cc compiles and runs, and the kyua test programs that compile at run time.
 # GG and RR skip those for want of cc, so the results are reported and not graded.
+#
+# With fixed, the fixed-point job boots the same RR image with the package and builds the graded
+# world and kernel in it, with the shims of rb toolchain and the rucc of the package as the compiler
+# of R (scripts/freebsd/self-tools.sh). The source, the SRCCONF and the bring-up units are those of
+# the freebsd-r run. Then image.sh installs the build, and scripts/freebsd/repro.py compares its
+# install.manifest and staging.manifest with those of the record of the freebsd-r run. The fixed
+# point holds when install.manifest is the same: each file of the world and the kernel that RR
+# builds is the same as in the R build of the builder VM. The staging manifest has the test packages
+# of the day of each run, so it can differ for that reason alone. With fixed and no rucc input, the
+# package is of the commit of rucc that the freebsd-r run built with.
 
 name: freebsd-self
 
@@ -24,6 +34,15 @@ on:
         default: ""
       r_run:
         description: The freebsd-r run (target rr) whose RR image to boot; empty for the newest on main
+        required: false
+        default: ""
+      fixed:
+        description: Also build the world and the kernel in RR and compare them with the R build of r_run
+        required: false
+        type: boolean
+        default: false
+      bringup_units:
+        description: "fixed only: the bringup_units of the freebsd-r run, such as stand/=tamnd/rucc#4097; empty for none"
         required: false
         default: ""
 
@@ -42,14 +61,71 @@ env:
     RB_COMPILE_JSONL=/build/out/compile.jsonl
 
 jobs:
+  select:
+    name: the freebsd-r run and the commit of rucc
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.rrun.outputs.run }}
+      commit: ${{ steps.commit.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: the freebsd-r run of the RR image
+        id: rrun
+        run: |
+          id=$R_RUN
+          if [ -z "$id" ]; then
+            for run in $(gh run list -R "$GITHUB_REPOSITORY" -w freebsd-r.yml -b main -L 40 --json databaseId -q '.[].databaseId'); do
+              names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" -q '.artifacts[] | select(.expired | not) | .name')
+              if echo "$names" | grep -qx freebsd-r-rr && echo "$names" | grep -qx freebsd-r-image; then
+                id=$run
+                break
+              fi
+            done
+          fi
+          if [ -z "$id" ]; then
+            echo "No freebsd-r run on main has the artifacts freebsd-r-rr and freebsd-r-image." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "run=$id" >> "$GITHUB_OUTPUT"
+          echo "The RR image is the one of freebsd-r run $id." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          R_RUN: ${{ inputs.r_run }}
+      - name: the commit of tamnd/rucc
+        id: commit
+        run: |
+          if [ -n "$REF" ]; then
+            sha=$(gh api "repos/tamnd/rucc/commits/$REF" -q .sha)
+            how="the rucc input $REF"
+          elif [ "$FIXED" = true ]; then
+            gh run download "$RUN" -R "$GITHUB_REPOSITORY" -n freebsd-r-rr -D r
+            sha=$(sed -n 's/^# rucc, tamnd\/rucc \([0-9a-f]\{40\}\)$/\1/p' r/record/rb-tools.txt)
+            how="the rucc of freebsd-r run $RUN"
+          else
+            sha=$(python3 -I -c 'import tomllib; print(tomllib.load(open("toolchains.toml", "rb"))["rucc"]["commit"])')
+            how="the [rucc] pin of toolchains.toml"
+          fi
+          if [ -z "$sha" ]; then
+            echo "No commit of tamnd/rucc from $how." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "commit=$sha" >> "$GITHUB_OUTPUT"
+          echo "The rucc package is built from tamnd/rucc $sha, $how." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.rucc }}
+          FIXED: ${{ inputs.fixed }}
+          RUN: ${{ steps.rrun.outputs.run }}
+
   package:
     name: the rucc package
+    needs: select
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    outputs:
-      commit: ${{ steps.commit.outputs.commit }}
     env:
       RB_VM_DIR: /mnt/rb-builder
+      RUCC_COMMIT: ${{ needs.select.outputs.commit }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
@@ -70,22 +146,6 @@ jobs:
         with:
           path: /mnt/rb-cache/FreeBSD-*.raw.xz
           key: freebsd-builder-${{ hashFiles('conf/freebsd/builder.conf') }}
-      - name: the commit of tamnd/rucc
-        id: commit
-        run: |
-          if [ -n "$REF" ]; then
-            sha=$(gh api "repos/tamnd/rucc/commits/$REF" -q .sha)
-            how="the rucc input $REF"
-          else
-            sha=$(python3 -I -c 'import tomllib; print(tomllib.load(open("toolchains.toml", "rb"))["rucc"]["commit"])')
-            how="the [rucc] pin of toolchains.toml"
-          fi
-          echo "commit=$sha" >> "$GITHUB_OUTPUT"
-          echo "RUCC_COMMIT=$sha" >> "$GITHUB_ENV"
-          echo "The rucc package is built from tamnd/rucc $sha, $how." >> "$GITHUB_STEP_SUMMARY"
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REF: ${{ inputs.rucc }}
       - name: boot the builder VM
         run: |
           scripts/freebsd/builder.sh up
@@ -93,8 +153,9 @@ jobs:
             | scripts/freebsd/builder.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
       - name: provision
         run: scripts/freebsd/builder.sh ssh "sh /root/harness/scripts/freebsd/provision.sh /root/out"
-      - name: rb, rb-cc and rucc
-        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out rucc $RUCC_COMMIT"
+      - name: rb and rb-cc
+        # The ref side builds rb and rb-cc and no rucc. rucc-pkg.sh builds rucc.
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rb-tools.sh /root/out ref"
       - name: the package
         run: |
           scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rucc-pkg.sh /root/out $RUCC_COMMIT"
@@ -118,7 +179,7 @@ jobs:
 
   cc:
     name: the run-time compile tests in RR
-    needs: package
+    needs: [select, package]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -137,33 +198,11 @@ jobs:
           sudo udevadm trigger --name-match=kvm || true
       - name: install QEMU
         run: scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf zstd
-      - name: the freebsd-r run of the RR image
-        id: rrun
-        run: |
-          id=$R_RUN
-          if [ -z "$id" ]; then
-            for run in $(gh run list -R "$GITHUB_REPOSITORY" -w freebsd-r.yml -b main -L 40 --json databaseId -q '.[].databaseId'); do
-              names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" -q '.artifacts[] | select(.expired | not) | .name')
-              if echo "$names" | grep -qx freebsd-r-rr && echo "$names" | grep -qx freebsd-r-image; then
-                id=$run
-                break
-              fi
-            done
-          fi
-          if [ -z "$id" ]; then
-            echo "No freebsd-r run on main has the artifacts freebsd-r-rr and freebsd-r-image." | tee -a "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "run=$id" >> "$GITHUB_OUTPUT"
-          echo "The RR image is the one of freebsd-r run $id." >> "$GITHUB_STEP_SUMMARY"
-        env:
-          GH_TOKEN: ${{ github.token }}
-          R_RUN: ${{ inputs.r_run }}
       - uses: actions/download-artifact@v8.0.1
         with:
           name: freebsd-r-image
           path: image
-          run-id: ${{ steps.rrun.outputs.run }}
+          run-id: ${{ needs.select.outputs.run }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v8.0.1
         with:
@@ -232,11 +271,222 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
         env:
-          R_RUN: ${{ steps.rrun.outputs.run }}
-          COMMIT: ${{ needs.package.outputs.commit }}
+          R_RUN: ${{ needs.select.outputs.run }}
+          COMMIT: ${{ needs.select.outputs.commit }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: freebsd-self-cc
           path: cc
+          retention-days: 30
+
+  fixed:
+    name: the fixed point, the world and the kernel built in RR
+    needs: [select, package]
+    if: inputs.fixed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    env:
+      RB_VM_DIR: /mnt/rb-rr
+      RB_PIN: 15.1-release
+      R_RUN: ${{ needs.select.outputs.run }}
+      RB_BRINGUP_UNITS_IN: ${{ inputs.bringup_units }}
+      SELF_ENV: >-
+        RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
+        RB_SRCCONF=/root/out/src.conf RB_HARNESS=/root/harness RB_KERNCONF=GENERIC
+        RB_PIN_NAME=freebsd-15.1 RB_COMPILE_JSONL=/build/out/compile-rr.jsonl
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo mkdir -p "$RB_CACHE" /mnt/rb "$RB_VM_DIR"
+          sudo chown "$USER" "$RB_CACHE" /mnt/rb "$RB_VM_DIR"
+          df -h / /mnt
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: install QEMU
+        run: scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf zstd
+      - name: cache the source
+        uses: actions/cache@v6.1.0
+        with:
+          path: /mnt/rb-cache/freebsd-src-*
+          key: freebsd-src-${{ env.RB_PIN }}-${{ hashFiles('conf/freebsd/pins.conf') }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: freebsd-r-image
+          path: image
+          run-id: ${{ needs.select.outputs.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: freebsd-r-rr
+          path: r
+          run-id: ${{ needs.select.outputs.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: freebsd-rucc-pkg
+          path: pkg
+      - name: the same rucc in R and in the package
+        run: |
+          r=$(sed -n 's/^# rucc, tamnd\/rucc \([0-9a-f]\{40\}\)$/\1/p' r/record/rb-tools.txt)
+          p=$(awk '$1 == "commit" { print $2 }' pkg/rucc-pkg.txt)
+          echo "R of freebsd-r run $R_RUN: rucc $r. The package: rucc $p." | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$r" != "$p" ]; then
+            echo "The fixed point needs the same rucc on both sides." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          rm -rf r/compile
+      - name: boot the RR image
+        run: |
+          zstd -d -q image/freebsd.img.zst -o /mnt/rb/freebsd.img
+          rm -rf image
+          scripts/freebsd/rr-vm.sh up /mnt/rb/freebsd.img
+          tar --exclude=./.git --exclude=./target --exclude=./r --exclude=./pkg -cf - . \
+            | scripts/freebsd/rr-vm.sh ssh 'mkdir -p /root/harness && tar -xf - -C /root/harness'
+      - name: provision, on the third disk
+        run: scripts/freebsd/rr-vm.sh ssh "RB_GCC=15 RB_BUILD_DEV=/dev/vtbd2 sh /root/harness/scripts/freebsd/provision.sh /root/out"
+      - name: pkg add the rucc package
+        run: |
+          name=$(cd pkg && ls rucc-*.pkg)
+          scripts/freebsd/rr-vm.sh put "pkg/$name" "/build/$name"
+          scripts/freebsd/rr-vm.sh put pkg/rb-bin.tar.xz /build/rb-bin.tar.xz
+          scripts/freebsd/rr-vm.sh ssh "pkg info -e binutils || env ASSUME_ALWAYS_YES=yes IGNORE_OSVERSION=yes pkg install -y binutils;
+            pkg add /build/$name && pkg info rucc"
+      - name: the source, the SRCCONF of R, and the shims
+        run: |
+          mkdir -p rr
+          read -r archive strip < <(RB_OUT=rr scripts/freebsd/fetch.sh "$RB_PIN")
+          scripts/freebsd/rr-vm.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
+          scripts/freebsd/rr-vm.sh put r/record/src.conf /root/out/src.conf
+          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV sh /root/harness/scripts/freebsd/self-tools.sh /root/out /build/rb-bin.tar.xz"
+      - name: the bring-up units
+        run: |
+          case $RB_BRINGUP_UNITS_IN in
+          *[!A-Za-z0-9_./=#,+-]*)
+            echo "bringup_units has a character that is not in a path or an issue: $RB_BRINGUP_UNITS_IN"
+            exit 1
+            ;;
+          esac
+          bringup=
+          if [ -n "$RB_BRINGUP_UNITS_IN" ]; then
+            bringup="RB_BRINGUP=cxx-c RB_BRINGUP_UNITS='$RB_BRINGUP_UNITS_IN'"
+            echo "Ungraded: cxx-c bring-up for $RB_BRINGUP_UNITS_IN, as in R." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "RB_BRINGUP_ENV=$bringup" >> "$GITHUB_ENV"
+      - name: the host compilers
+        # The src Makefile sets PATH to /sbin:/bin:/usr/sbin:/usr/bin, and the RR image has no cc,
+        # c++ or cpp there. The host CC is the rucc of the package. It finds ld in /usr/local/bin
+        # by -B. The image has no C++ compiler and no cpp, so the host CXX and CPP are of gcc15,
+        # which provision.sh installed. dtrace -C runs cpp from PATH, so DTRACE gives it that cpp by
+        # -x cpppath. dtrace -h writes the same header with any cpp. dtrace gives cpp only the base
+        # name as argv[0], and gcc finds cc1 from the place of argv[0] in PATH, so DTRACE also puts
+        # /usr/local/bin in PATH. The step runs dtrace -h once with the PATH of the src Makefile.
+        run: |
+          cpp=/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15
+          host="CC='/usr/local/bin/rucc -B/usr/local/bin/' CXX=/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
+          host="$host CPP=$cpp DTRACE='env PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin dtrace -x cpppath=$cpp'"
+          scripts/freebsd/rr-vm.sh ssh "env $host sh -c '\$CC -v 2>&1 | head -1; \$CXX --version | head -1; \$CPP --version | head -1'"
+          scripts/freebsd/rr-vm.sh ssh "printf 'provider p { probe q(int); };\n' > /tmp/p.d"
+          scripts/freebsd/rr-vm.sh ssh "env PATH=/sbin:/bin:/usr/sbin:/usr/bin $host sh -c '\$DTRACE -C -x nolibs -h -s /tmp/p.d -o /tmp/p.h && grep -c P_Q /tmp/p.h'"
+          echo "RB_HOST_ENV=$host" >> "$GITHUB_ENV"
+      - name: make buildworld in RR
+        run: |
+          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_BRINGUP_ENV $RB_HOST_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+            RB_PHASE=world-rr sh /root/harness/scripts/freebsd/build.sh world"
+      - name: make buildkernel in RR
+        run: |
+          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_BRINGUP_ENV $RB_HOST_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk \
+            RB_PHASE=kernel-rr sh /root/harness/scripts/freebsd/build.sh kernel"
+      - name: install, as image.sh does
+        run: |
+          scripts/freebsd/rr-vm.sh ssh "$SELF_ENV $RB_HOST_ENV RB_TOOLCHAIN=/build/toolchain/rucc.mk RB_DESTDIR=/build/destdir \
+            RB_IMAGE=/build/image/freebsd.img sh /root/harness/scripts/freebsd/image.sh"
+      - name: copy the record out
+        if: always()
+        run: |
+          mkdir -p rr
+          scripts/freebsd/rr-vm.sh ssh 'xz -T0 -f /build/out/*.jsonl /root/out/*.log; tar -cf - -C /root/out .' \
+            | tar -xf - -C rr || true
+          scripts/freebsd/rr-vm.sh ssh 'tar -cf - -C /build/out .' | tar -xf - -C rr || true
+          # The VM runs the image of R, so / has the files of R and /build/destdir has the files of
+          # RR. For each file of install.manifest that differs, except the big kernel debug files,
+          # differ.tar.xz keeps both copies: r.tar from / and rr.tar from /build/destdir.
+          python3 -I scripts/freebsd/repro.py r/record rr --out differ > /dev/null 2>&1 || true
+          python3 -I - differ/repro.json > rr/differ.txt <<'PY' || true
+          import json, sys
+          rec = json.load(open(sys.argv[1]))
+          m = next(m for m in rec["manifests"] if m["name"] == "install.manifest")
+          for path in m.get("content", []):
+              if not path.startswith("./usr/lib/debug/boot/"):
+                  print(path)
+          PY
+          if [ -s rr/differ.txt ]; then
+            list=$(tr '\n' ' ' < rr/differ.txt)
+            scripts/freebsd/rr-vm.sh ssh "rm -rf /build/differ && mkdir /build/differ && \
+              tar -cf /build/differ/r.tar -C / $list && tar -cf /build/differ/rr.tar -C /build/destdir $list && \
+              tar -cf - -C /build/differ r.tar rr.tar | xz -T0" > rr/differ.tar.xz || true
+          fi
+          rm -rf differ
+          scripts/freebsd/rr-vm.sh down || true
+          cp "$RB_VM_DIR/console.log" rr/ 2>/dev/null || true
+          ls -l rr
+      - name: compare RR with R
+        id: compare
+        if: always()
+        run: |
+          python3 -I scripts/freebsd/repro.py r/record rr --out fixed \
+            --title "The fixed point: R of the builder VM, then RR of the RR image" > /dev/null || true
+          python3 -I - fixed/repro.json <<'PY' | tee fixed/verdict.txt
+          import json, sys
+          rec = json.load(open(sys.argv[1]))
+          m = next(m for m in rec["manifests"] if m["name"] == "install.manifest")
+          if m.get("missing"):
+              print("install.manifest: not in both records")
+              sys.exit(0)
+          n = len(m["content"]) + len(m["metadata"]) + len(m["only_first"]) + len(m["only_second"])
+          print(f"install.manifest: {m['entries']} entries, {n} differ. The fixed point {'holds' if n == 0 else 'does not hold'}.")
+          PY
+      - name: summary
+        if: always()
+        run: |
+          {
+            echo "### The fixed point: the world and the kernel built in RR"
+            echo
+            echo "R: freebsd-r run $R_RUN, in the builder VM. RR: its RR image, with the rucc package of tamnd/rucc $COMMIT."
+            echo
+            cat fixed/verdict.txt 2>/dev/null || echo "No comparison."
+            echo
+            echo '```'
+            cat r/record/phases.tsv 2>/dev/null || true
+            echo '---'
+            cat rr/phases.tsv 2>/dev/null || true
+            echo '```'
+            sed -n '/^# rb toolchain/,$p' rr/rb-tools.txt 2>/dev/null | grep -E '^(graded|ungraded)' || true
+            for f in rr/*-error.txt; do
+              [ -f "$f" ] || continue
+              echo
+              echo "#### $(basename "$f")"
+              echo
+              echo '```'
+              head -60 "$f"
+              echo '```'
+            done
+            echo
+            sed -n '3,$p' fixed/repro.md 2>/dev/null | head -150 || true
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          COMMIT: ${{ needs.select.outputs.commit }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: freebsd-self-fixed
+          path: |
+            rr
+            fixed
           retention-days: 30
