@@ -85,6 +85,14 @@ CFLAGS+=	-std=gnu17
 .if ${.CURDIR:M*/devel/libuv}
 EXTRA_PATCHES+=	/build/ports-wrk/libuv-poll-nested-kqueue.patch
 .endif
+# The restore_atime part of test_read_disk_directory_traversals of archivers/libarchive reads two
+# files and expects a new atime on them. On FreeBSD the atime stays old. The test failed in the
+# same way with rucc and with gcc15 in run 43461292808 (test_read_disk_directory_traversals.c:1127
+# and 1129). FreeBSD marks this test as broken in lib/libarchive/tests/Makefile for the same atime
+# failure. SKIP_TEST_RESTORE_ATIME skips only that part, and the rest of the test runs.
+.if ${.CURDIR:M*/archivers/libarchive}
+TEST_ENV=	${MAKE_ENV} SKIP_TEST_RESTORE_ATIME=yes
+.endif
 # dns/getaddrinfo_cancel_stress of devel/libevent starts 1000 requests to a DNS server on the
 # loopback, and each request has a random cancel timer. It expects that a timer cancels at least
 # one request before the answer comes. In this VM all 1000 answers come first. The test failed
