@@ -36,8 +36,18 @@ done
 mkdir -p "$out" /build/ports-wrk /build/distfiles /build/ports-pkg
 out=$(cd "$out" && pwd)
 : > "$out/ports.tsv"
+# The cc of FreeBSD 15.1 is clang 19, and its default C is gnu17. gcc15 and rucc default to C23,
+# where "void g()" takes no arguments. The long long test in the configure script of math/gmp
+# 6.3.0 calls such a g with six, so with C23 the configure script finds no working compiler. This
+# make.conf gives that port the C of the stock cc, on both sides.
+conf=/build/ports-wrk/make.conf
+cat > "$conf" << 'EOF_CONF'
+.if ${.CURDIR:M*/math/gmp}
+CFLAGS+=	-std=gnu17
+.endif
+EOF_CONF
 # The flags of a batch build. CPP is the preprocessor of the same compiler.
-set -- BATCH=yes DISABLE_VULNERABILITIES=yes NO_IGNORE=yes \
+set -- __MAKE_CONF="$conf" BATCH=yes DISABLE_VULNERABILITIES=yes NO_IGNORE=yes \
 	WRKDIRPREFIX=/build/ports-wrk DISTDIR=/build/distfiles PACKAGES=/build/ports-pkg \
 	MAKE_JOBS_NUMBER="$RB_JOBS" CC="$CC_REF" CPP="$CC_REF -E" \
 	CXX="$CXX_REF" CXXCPP="$CXX_REF -E" PORTSDIR="$PORTSDIR"
