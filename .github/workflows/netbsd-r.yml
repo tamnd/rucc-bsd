@@ -1604,9 +1604,11 @@ jobs:
               kern="$RUNNER_TEMP/r-kernel/kern-GENERIC.tar.xz"
               which="the rucc GENERIC kernel"
             else
-              kern=$(find "$RUNNER_TEMP/g-sets" -name kern-GENERIC.tar.xz | head -n 1)
+              # Move G's kern-GENERIC out before the other G sets are removed.
+              kern="$RUNNER_TEMP/kern-GENERIC.tar.xz"
+              mv "$(find "$RUNNER_TEMP/g-sets" -name kern-GENERIC.tar.xz | head -n 1)" "$kern"
               which="G's GENERIC kernel of G run $G_RUN"
-              rm -rf "$RUNNER_TEMP/g-sets/"*/
+              rm -rf "$RUNNER_TEMP/g-sets"
             fi
             scripts/netbsd/kern-into-sets.sh "$binary" "$kern"
             {
