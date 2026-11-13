@@ -390,8 +390,20 @@ jobs:
         # 2. dtrace -G links /usr/lib/dtrace/drti.o with the ld on PATH. R has the stock drti.o
         #    and lld. stock-ld.sh gives dtrace those, and the host compilers step gives dtrace
         #    stock-ld.sh by -x ldpath. lld runs with the stock libraries that it needs.
+        # 3. dtrace -G writes the utsname of the host into the DOF of the program. The VM gets the
+        #    host name of R, and stock-dtrace.sh gives dtrace the kernel version of R by UNAME_v. Both
+        #    come from the uname -a line of R in r/record/toolchain.txt.
         run: |
           mkdir -p stock/x stock/out/lib stock/out/lld
+          line=$(sed -n '/^# host$/{n;p;q;}' r/record/toolchain.txt)
+          read -r _ node _ <<< "$line"
+          version=${line#* * * }
+          version=${version% *}
+          echo "uname of R: $line"
+          echo "host name: $node, version: $version"
+          case $node in '' | *[!A-Za-z0-9.-]*) echo "not a host name: $node"; exit 1 ;; esac
+          [ -n "$version" ] && [ "$version" != "$line" ]
+          echo "$version" > stock/out/uname-v
           curl -sfL --retry 3 -o stock/base.txz "$RB_STOCK_BASE_URL"
           echo "$RB_STOCK_BASE_SHA256  stock/base.txz" | sha256sum -c -
           libs="./lib/libc++.so.1 ./lib/libc.so.7 ./lib/libcxxrt.so.1 ./lib/libm.so.5 ./lib/libthr.so.3
@@ -405,6 +417,7 @@ jobs:
           for lib in $libs; do cp "stock/x/$lib" stock/out/lld/; done
           tar -cf - -C stock/out . | scripts/freebsd/rr-vm.sh ssh 'mkdir -p /build/stock && tar -xf - -C /build/stock'
           rm -rf stock
+          scripts/freebsd/rr-vm.sh ssh "hostname $node && uname -a"
           scripts/freebsd/rr-vm.sh ssh 'LD_LIBRARY_PATH=/build/stock/lld /build/stock/lld/ld.lld --version; ls -lR /build/stock'
       - name: the bring-up units
         run: |
@@ -426,14 +439,14 @@ jobs:
         # by -B. The image has no C++ compiler and no cpp, so the host CXX and CPP are of gcc15,
         # which provision.sh installed. dtrace -C runs cpp from PATH, so DTRACE gives it that cpp by
         # -x cpppath. dtrace -h writes the same header with any cpp. dtrace gives cpp only the base
-        # name as argv[0], and gcc finds cc1 from the place of argv[0] in PATH, so DTRACE also puts
-        # /usr/local/bin in PATH. -L/build/stock/lib and -x ldpath give the stock host files of the
+        # name as argv[0], and gcc finds cc1 from the place of argv[0] in PATH, so stock-dtrace.sh
+        # also puts /usr/local/bin in PATH. -L/build/stock/lib and -x ldpath give the stock host files of the
         # step before. The step runs dtrace -h and dtrace -G once with the PATH of the src Makefile.
         run: |
           cpp=/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15
           ld=/root/harness/scripts/freebsd/guest/stock-ld.sh
           host="CC='/usr/local/bin/rucc -B/usr/local/bin/ -L/build/stock/lib' CXX=/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
-          host="$host CPP=$cpp DTRACE='env PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin dtrace -x cpppath=$cpp -x ldpath=$ld'"
+          host="$host CPP=$cpp DTRACE='/root/harness/scripts/freebsd/guest/stock-dtrace.sh -x cpppath=$cpp -x ldpath=$ld'"
           scripts/freebsd/rr-vm.sh ssh "env $host sh -c '\$CC -v 2>&1 | head -1; \$CXX --version | head -1; \$CPP --version | head -1'"
           scripts/freebsd/rr-vm.sh ssh "printf 'provider p { probe q(int); };\n' > /tmp/p.d"
           scripts/freebsd/rr-vm.sh ssh "env PATH=/sbin:/bin:/usr/sbin:/usr/bin $host sh -c '\$DTRACE -C -x nolibs -h -s /tmp/p.d -o /tmp/p.h && grep -c P_Q /tmp/p.h'"
@@ -495,8 +508,23 @@ jobs:
           if m.get("missing"):
               print("install.manifest: not in both records")
               sys.exit(0)
-          n = len(m["content"]) + len(m["metadata"]) + len(m["only_first"]) + len(m["only_second"])
+          # The size of a directory on UFS comes from the names that were made and removed in it
+          # during the install, not from the build, so a directory that differs only in its size is
+          # listed and not counted.
+          def stats(path):
+              out = {}
+              for line in open(path, encoding="utf-8"):
+                  parts = line.rstrip("\n").split(" ", 4)
+                  if len(parts) == 5 and parts[0].startswith("d"):
+                      out[parts[4]] = parts[:3]
+              return out
+          a, b = stats("r/record/install.manifest"), stats("rr/install.manifest")
+          sized = [p for p in m["metadata"] if p in a and a.get(p) == b.get(p)]
+          meta = [p for p in m["metadata"] if p not in sized]
+          n = len(m["content"]) + len(meta) + len(m["only_first"]) + len(m["only_second"])
           print(f"install.manifest: {m['entries']} entries, {n} differ. The fixed point {'holds' if n == 0 else 'does not hold'}.")
+          for p in sized:
+              print(f"not counted: {p} differs only in the size of the directory")
           PY
       - name: summary
         if: always()
