@@ -306,6 +306,9 @@ jobs:
         RB_SRC=/build/src RB_OBJ=/build/obj RB_OUT=/root/out RB_JOBS=4
         RB_SRCCONF=/root/out/src.conf RB_HARNESS=/root/harness RB_KERNCONF=GENERIC
         RB_PIN_NAME=freebsd-15.1 RB_COMPILE_JSONL=/build/out/compile-rr.jsonl
+      # base.txz of the release that the builder image of R is. The SHA-256 is the one in MANIFEST.
+      RB_STOCK_BASE_URL: https://download.freebsd.org/releases/amd64/15.1-RELEASE/base.txz
+      RB_STOCK_BASE_SHA256: 3768988b151c20f965679062b065c63a977d6bbb9f47fd83695ec2c40790c18f
     steps:
       - uses: actions/checkout@v7.0.1
       - name: free disk
@@ -376,6 +379,33 @@ jobs:
           scripts/freebsd/rr-vm.sh ssh "mkdir -p /build/src && tar -xf - -C /build/src --strip-components $strip" < "$archive"
           scripts/freebsd/rr-vm.sh put r/record/src.conf /root/out/src.conf
           scripts/freebsd/rr-vm.sh ssh "$SELF_ENV sh /root/harness/scripts/freebsd/self-tools.sh /root/out /build/rb-bin.tar.xz"
+      - name: the stock host files that R had
+        # R builds in the stock image, and RR builds in the image of R. Two host inputs of R are
+        # stock files, and in RR they are files that rucc built, so they change what the build writes.
+        # 1. The bootstrap ctfconvert and ctfmerge link the host /usr/lib/libdwarf.a statically.
+        #    _dwarf_decode_sleb128 in contrib/elftoolchain/libdwarf/libdwarf_rw.c shifts an int
+        #    past its width. The stock libdwarf.a (clang -O2) decodes the enumerator 0x80000000 as
+        #    -2147483648, and the libdwarf.a of R (rucc) decodes it as -8. The host CC finds the
+        #    stock libdwarf.a first by -L/build/stock/lib.
+        # 2. dtrace -G links /usr/lib/dtrace/drti.o with the ld on PATH. R has the stock drti.o
+        #    and lld. stock-ld.sh gives dtrace those, and the host compilers step gives dtrace
+        #    stock-ld.sh by -x ldpath. lld runs with the stock libraries that it needs.
+        run: |
+          mkdir -p stock/x stock/out/lib stock/out/lld
+          curl -sfL --retry 3 -o stock/base.txz "$RB_STOCK_BASE_URL"
+          echo "$RB_STOCK_BASE_SHA256  stock/base.txz" | sha256sum -c -
+          libs="./lib/libc++.so.1 ./lib/libc.so.7 ./lib/libcxxrt.so.1 ./lib/libm.so.5 ./lib/libthr.so.3
+            ./lib/libtinfow.so.9 ./lib/libz.so.6 ./usr/lib/libexecinfo.so.1 ./usr/lib/libprivatellvm.so.19
+            ./usr/lib/libprivatezstd.so.5"
+          # shellcheck disable=SC2086
+          tar -xJf stock/base.txz -C stock/x ./usr/lib/libdwarf.a ./usr/lib/dtrace/drti.o ./usr/bin/ld.lld $libs
+          cp stock/x/usr/lib/libdwarf.a stock/out/lib/
+          cp stock/x/usr/lib/dtrace/drti.o stock/out/
+          cp stock/x/usr/bin/ld.lld stock/out/lld/
+          for lib in $libs; do cp "stock/x/$lib" stock/out/lld/; done
+          tar -cf - -C stock/out . | scripts/freebsd/rr-vm.sh ssh 'mkdir -p /build/stock && tar -xf - -C /build/stock'
+          rm -rf stock
+          scripts/freebsd/rr-vm.sh ssh 'LD_LIBRARY_PATH=/build/stock/lld /build/stock/lld/ld.lld --version; ls -lR /build/stock'
       - name: the bring-up units
         run: |
           case $RB_BRINGUP_UNITS_IN in
@@ -397,14 +427,19 @@ jobs:
         # which provision.sh installed. dtrace -C runs cpp from PATH, so DTRACE gives it that cpp by
         # -x cpppath. dtrace -h writes the same header with any cpp. dtrace gives cpp only the base
         # name as argv[0], and gcc finds cc1 from the place of argv[0] in PATH, so DTRACE also puts
-        # /usr/local/bin in PATH. The step runs dtrace -h once with the PATH of the src Makefile.
+        # /usr/local/bin in PATH. -L/build/stock/lib and -x ldpath give the stock host files of the
+        # step before. The step runs dtrace -h and dtrace -G once with the PATH of the src Makefile.
         run: |
           cpp=/usr/local/bin/x86_64-unknown-freebsd15.1-cpp15
-          host="CC='/usr/local/bin/rucc -B/usr/local/bin/' CXX=/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
-          host="$host CPP=$cpp DTRACE='env PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin dtrace -x cpppath=$cpp'"
+          ld=/root/harness/scripts/freebsd/guest/stock-ld.sh
+          host="CC='/usr/local/bin/rucc -B/usr/local/bin/ -L/build/stock/lib' CXX=/usr/local/bin/x86_64-unknown-freebsd15.1-g++15"
+          host="$host CPP=$cpp DTRACE='env PATH=/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin dtrace -x cpppath=$cpp -x ldpath=$ld'"
           scripts/freebsd/rr-vm.sh ssh "env $host sh -c '\$CC -v 2>&1 | head -1; \$CXX --version | head -1; \$CPP --version | head -1'"
           scripts/freebsd/rr-vm.sh ssh "printf 'provider p { probe q(int); };\n' > /tmp/p.d"
           scripts/freebsd/rr-vm.sh ssh "env PATH=/sbin:/bin:/usr/sbin:/usr/bin $host sh -c '\$DTRACE -C -x nolibs -h -s /tmp/p.d -o /tmp/p.h && grep -c P_Q /tmp/p.h'"
+          scripts/freebsd/rr-vm.sh ssh "printf '#include \"p.h\"\nvoid f(int x) { P_Q(x); }\n' > /tmp/p.c"
+          scripts/freebsd/rr-vm.sh ssh "env PATH=/sbin:/bin:/usr/sbin:/usr/bin $host sh -c '\$CC -I/tmp -c /tmp/p.c -o /tmp/p.o &&
+            \$DTRACE -x nolibs -G -s /tmp/p.d /tmp/p.o -o /tmp/pd.o && readelf -p .comment /tmp/pd.o'"
           echo "RB_HOST_ENV=$host" >> "$GITHUB_ENV"
       - name: make buildworld in RR
         run: |
