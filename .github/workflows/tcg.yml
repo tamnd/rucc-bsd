@@ -126,7 +126,8 @@ jobs:
           # the third. NetBSD riscv64 runs net in about 6.5 h under TCG, more than the 6 h of a
           # job, so there net/ipsec, about half of net, is a fourth shard. FreeBSD leaves out
           # sys/geom/class/raid3, since the 15.1 kernel panics there under TCG
-          # (tamnd/rucc-bsd#209).
+          # (tamnd/rucc-bsd#209). NetBSD riscv64 leaves out kernel/t_setjmp, since the 11.1 kernel
+          # panics there under TCG (tamnd/rucc-bsd#221).
           def shard(how, dirs):
               return [f"{how}-{dirs.replace(',', '-')}", f"--tests-{how} {dirs}"]
           shards = {
@@ -140,7 +141,7 @@ jobs:
                   ["only-net-ipsec", "--tests-only net/ipsec"],
                   ["only-net-but-ipsec", "--tests-only net --tests-except net/ipsec"],
                   shard("only", "lib"),
-                  shard("except", "net,lib"),
+                  ["except-net-lib", "--tests-except net,lib,kernel/t_setjmp"],
               ],
           }
           # The GENERIC kernel of each NetBSD machine, and the FreeBSD pin of each series: the pin
