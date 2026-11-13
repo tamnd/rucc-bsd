@@ -70,10 +70,15 @@
 # the RR image with the pkgsrc packages of conf/netbsd/foreign.toml and checks each one. With
 # g_run, the G image of that run does the same, and a package counts only when it passes on G.
 # The G image must come from a netbsd-g run whose rb-rc has the foreign suite. The rucc and
-# target inputs apply as for the kernel, and atf, modules and mixed do not apply.
+# target inputs apply as for the kernel, and modules and mixed do not apply.
 # With c_only, the c-only job builds the same world again with MKCXX=no (plan 10.5). That turns
 # off ATF and kyua too, so the c-only-image job borrows the tests set, ATF and kyua from the RR
 # sets (scripts/netbsd/borrow.sh), lists each borrowed path, and boots the image as rr-boot does.
+#
+# With atf, the rr-atf job runs the ATF shards of the atf job on the RR image, and with c_only
+# also on the c-only image. The rr-report job grades them with rb test: RR against GG, the c-only
+# image against GG, and the c-only image against RR. GG is the shards of g_run, or of the newest
+# netbsd-g run whose counts results/netbsd keeps for the pin. The counts go beside the G counts.
 #
 # The ref leg of the kernel and the ref build of the world also run rb syntax: every C unit of
 # that build, which is G, through the front end of rucc (scripts/netbsd/syntax.sh). shim-ref.sh
@@ -115,7 +120,7 @@ on:
         required: false
         default: ""
       atf:
-        description: Run the ATF shards after the smoke boot, when g_run is given
+        description: Run the ATF shards after the smoke boot, when g_run is given or build=rr
         type: boolean
         default: true
       modules:
@@ -1053,8 +1058,17 @@ jobs:
             --out "$NB_ROOT/netbsd-amd64-serial.img" --work "$NB_ROOT/image-work"
           cp "$NB_ROOT"/image-work/logs/* "$NB_ROOT/logs/" 2>/dev/null || true
           rm -rf "$NB_ROOT/image-work" "$NB_ROOT/rr"
+          # The boot below writes to the image, so the ATF shards of rr-atf get a copy of it from
+          # before the boot.
+          gzip -1 -k "$NB_ROOT/netbsd-amd64-serial.img"
         env:
           SETS: ${{ steps.borrow.outputs.sets }}
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: netbsd-r-amd64-serial-image-c-only${{ env.NB_PIN_TAG }}
+          path: /mnt/nb/netbsd-amd64-serial.img.gz
+          compression-level: 0
+          retention-days: 7
       - name: rb boot
         run: |
           set -o pipefail
@@ -1086,6 +1100,276 @@ jobs:
             /mnt/nb/boot/*/boot.json
             /mnt/nb/boot/*/results
           retention-days: 14
+
+  # ATF on the RR image and, with c_only, on the c-only image (plans 12.6 and 10.5), in the three
+  # shards of the atf job. Each shard boots a fresh copy of the image with OVMF, as in the atf
+  # job, and a boot that panics in a known NetBSD race is made again. The rr-report job grades
+  # the shards.
+  rr-atf:
+    name: ATF ${{ matrix.shard }} on the ${{ matrix.image }} image
+    needs: [rb, rr, c-only-image]
+    if: ${{ !cancelled() && inputs.build == 'rr' && inputs.atf && needs.rb.result == 'success' && needs.rr.outputs.image == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(inputs.c_only && '["rr","c-only"]' || '["rr"]') }}
+        shard: ["only:net", "only:lib", "except:net,lib"]
+        include:
+          - shard: "only:net"
+            tests: --tests-only net
+          - shard: "only:lib"
+            tests: --tests-only lib
+          - shard: "except:net,lib"
+            tests: --tests-except net,lib
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: let the runner user open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+      - name: QEMU and OVMF
+        run: |
+          scripts/ci/apt-install.sh qemu-system-x86 qemu-utils ovmf
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: netbsd-r-amd64-serial-image-${{ matrix.image }}${{ env.NB_PIN_TAG }}
+          path: ${{ runner.temp }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - name: shard name
+        run: echo "SHARD_NAME=$(echo "$SHARD" | tr ':,' '--')" >> "$GITHUB_ENV"
+        env:
+          SHARD: ${{ matrix.shard }}
+      - name: rb boot with the tests suite
+        run: |
+          set -o pipefail
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          gzip -d "$RUNNER_TEMP/netbsd-amd64-serial.img.gz"
+          truncate -s 12G "$RUNNER_TEMP/netbsd-amd64-serial.img"
+          out="$RUNNER_TEMP/atf-$SHARD_NAME"
+          boot() {
+            # shellcheck disable=SC2086
+            "$RUNNER_TEMP/rb/rb" boot --image "$RUNNER_TEMP/netbsd-amd64-serial.img" \
+              --out "$out" --suite boot,smoke,tests $TESTS --timeout 18000 \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          status=0
+          boot || status=$?
+          # The races of the atf job (#65 and #170). A boot that panics in one of these ways is made
+          # again, at most two more times. Each boot that panicked goes to panic-N in the shard's
+          # directory.
+          tries=0
+          kept=()
+          while [ "$status" -ne 0 ] && [ "$tries" -lt 2 ] &&
+            issue=$(python3 scripts/netbsd/known-panic.py "$out"); do
+            tries=$((tries + 1))
+            echo "The boot panicked as in #$issue. It is made again." | tee -a "$GITHUB_STEP_SUMMARY"
+            mv "$out" "$out.panic-$tries"
+            kept+=("$tries")
+            status=0
+            boot || status=$?
+          done
+          for n in "${kept[@]}"; do
+            mkdir -p "$out"
+            mv "$out.panic-$n" "$out/panic-$n"
+          done
+          exit "$status"
+        env:
+          TESTS: ${{ matrix.tests }}
+      - name: counts
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/atf-$SHARD_NAME"
+          shopt -s nullglob
+          tps=("$out"/results/tests/atf/*.tps)
+          if [ ${#tps[@]} -gt 0 ]; then
+            python3 scripts/netbsd/atf-counts.py count --out "$out/shard.counts" \
+              --cases "$out/shard.cases.tsv" --set "shard=$SHARD" "${tps[@]}"
+          fi
+          {
+            echo "### ATF $SHARD on the $IMAGE image"
+            echo
+            echo '```'
+            cat "$out/results/tests/atf/status" "$out/shard.counts" 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP"/netbsd-amd64-serial.img
+        env:
+          SHARD: ${{ matrix.shard }}
+          IMAGE: ${{ matrix.image }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-${{ matrix.image }}-atf-${{ env.SHARD_NAME }}${{ env.NB_PIN_TAG }}
+          path: ${{ runner.temp }}/atf-${{ env.SHARD_NAME }}
+          retention-days: 30
+
+  # The shards of rr-atf, graded with rb test (plan 12.6). GG is the shards of g_run when it has
+  # them, else of the newest netbsd-g run whose counts results/netbsd keeps for the pin. RR is
+  # graded against GG. The c-only image is graded against GG, and also against RR: a case that RR
+  # passes and the c-only image does not is a difference in a c-only file, because the two images
+  # have the same test programs (plan 10.5). The counts of each image go beside the G counts.
+  rr-report:
+    name: report of the RR and c-only ATF shards
+    needs: [rb, rr-atf]
+    if: ${{ !cancelled() && inputs.build == 'rr' && inputs.atf && needs.rb.result == 'success' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: the G run of GG and the G counts
+        id: gg
+        run: |
+          # shellcheck source=conf/netbsd/trunk.pin
+          . "conf/netbsd/$NB_PIN_FILE"
+          results="results/netbsd/$NB_PIN_NAME-$NB_PIN_SHORT/amd64"
+          shards() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$1/artifacts?per_page=100" \
+              --jq '[.artifacts[] | select((.name | startswith("netbsd-atf-")) and (.expired | not))] | length'
+          }
+          newest=$(find "$results" -name 'g-*.counts' 2>/dev/null | sed 's|.*/g-||; s|\.counts$||' | sort -n | tail -n 1)
+          run=
+          for r in "$G_RUN" "$newest"; do
+            if [ -n "$r" ] && [ "$(shards "$r")" -gt 0 ]; then
+              run=$r
+              break
+            fi
+          done
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          if [ -n "$newest" ]; then
+            echo "counts=$results/g-$newest.counts" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          G_RUN: ${{ inputs.g_run }}
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: rb-linux-x86_64
+          path: ${{ runner.temp }}/rb
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: netbsd-r-rr-atf-*${{ env.NB_PIN_TAG }}
+          path: rr-atf
+      - uses: actions/download-artifact@v8.0.1
+        if: inputs.c_only
+        with:
+          pattern: netbsd-r-c-only-atf-*${{ env.NB_PIN_TAG }}
+          path: c-only-atf
+      - uses: actions/download-artifact@v8.0.1
+        if: steps.gg.outputs.run != ''
+        with:
+          pattern: netbsd-atf-*
+          path: gg-atf
+          run-id: ${{ steps.gg.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: ATF counts against G
+        run: |
+          # shellcheck source=conf/netbsd/trunk.pin
+          . "conf/netbsd/$NB_PIN_FILE"
+          mkdir -p out
+          shopt -s nullglob
+          {
+            echo "### ATF of the RR and c-only images"
+            echo
+            counts=()
+            for image in rr c-only; do
+              tps=("$image"-atf/*/results/tests/atf/*.tps)
+              if [ ${#tps[@]} -eq 0 ]; then
+                echo "There are no ATF results for the $image image."
+                echo
+                continue
+              fi
+              name="$NB_PIN_NAME-$NB_PIN_SHORT-amd64-$image-$GITHUB_RUN_ID"
+              python3 scripts/netbsd/atf-counts.py count --out "out/$name.counts" \
+                --cases "out/$name.cases.tsv" --set "label=$image" --set system=netbsd \
+                --set "pin=$NB_PIN_NAME" --set "commit=$NB_PIN_COMMIT" --set row=amd64 --set cc=rucc \
+                --set "rucc=$(scripts/netbsd/rucc.sh name)" --set kernel=GENERIC --set "world=$image" \
+                --set image=live-image --set host=github-ubuntu-24.04-kvm --set vm=2-vcpu-8g \
+                --set "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+                --set "date=$(date -u +%Y-%m-%d)" "${tps[@]}" > /dev/null
+              awk -F '\t' '$3 == "failed" { print $1 "\t" $2 }' "out/$name.cases.tsv" > "out/$name.failed"
+              counts+=("out/$name.counts")
+            done
+            if [ ${#counts[@]} -eq 0 ]; then
+              exit 0
+            fi
+            if [ -z "$BASE" ]; then
+              echo "There are no G counts for $RB_PIN in results/netbsd. The counts:"
+              echo
+              echo '```'
+              cat "${counts[@]}"
+              echo '```'
+              exit 0
+            fi
+            echo "G: \`$BASE\`"
+            echo
+            python3 scripts/netbsd/atf-counts.py compare "$BASE" "${counts[@]}"
+            for c in "${counts[@]}"; do
+              echo
+              echo "Failed on the $(sed -n 's/^label=//p' "$c") image and not in G:"
+              echo
+              echo '```'
+              sort "${c%.counts}.failed" | comm -23 - <(sort "${BASE%.counts}.failed")
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          BASE: ${{ steps.gg.outputs.counts }}
+          REF: ${{ inputs.rucc }}
+      - name: rb test, RR and c-only against GG, and c-only against RR
+        run: |
+          chmod +x "$RUNNER_TEMP/rb/rb"
+          shopt -s nullglob
+          gg=(gg-atf/*/)
+          rr=(rr-atf/*/)
+          c=(c-only-atf/*/)
+          join() { local IFS=+; echo "$*"; }
+          # grade TITLE OUT REFERENCE... -- CLAIM...
+          grade() {
+            local title=$1 out=$2 ref=() claim=()
+            shift 2
+            while [ "$1" != -- ]; do
+              ref+=("$1")
+              shift
+            done
+            shift
+            claim=("$@")
+            echo "### rb test: $title"
+            echo
+            if [ ${#ref[@]} -eq 0 ] || [ ${#claim[@]} -eq 0 ]; then
+              echo "There are no ATF shards for one of the two (${#ref[@]} and ${#claim[@]})."
+              echo
+              return
+            fi
+            "$RUNNER_TEMP/rb/rb" test --gg "$(join "${ref[@]%/}")" --rr "$(join "${claim[@]%/}")" \
+              --out "$out" || true
+            echo
+          }
+          {
+            echo "GG: the shards of netbsd-g run ${GG_RUN:-(none)}."
+            echo
+            grade "RR against GG" out/rr-test "${gg[@]}" -- "${rr[@]}"
+            if [ "$C_ONLY" = true ]; then
+              grade "the c-only image against GG" out/c-only-test "${gg[@]}" -- "${c[@]}"
+              grade "the c-only image against RR. A case here is a difference in a c-only file." \
+                out/c-only-rr-test "${rr[@]}" -- "${c[@]}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GG_RUN: ${{ steps.gg.outputs.run }}
+          C_ONLY: ${{ inputs.c_only }}
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: netbsd-r-rr-results${{ env.NB_PIN_TAG }}
+          path: out
+          if-no-files-found: ignore
+          retention-days: 90
 
   # The B3 gate: rb build makes the rucc kernel by itself, with its own shim TOOLDIR and checks,
   # and with no RB_BRINGUP. The kernel job above makes the kernel that the other jobs use.
