@@ -31,6 +31,18 @@
 # UEFI boot runs only the boot and smoke suites, which is enough to say that a pin is G-good: G built
 # it, and it booted (plan 04.6).
 #
+# With rucc-host, the run is the R-host build of milestone B12. rucc-host is a branch or commit of
+# tamnd/rucc. The run builds the pin twice, and the second build has that rucc as the host CC: the C
+# compiler of make's host stages (the bmake that runs the build, legacy, bootstrap-tools,
+# build-tools, cross-tools and kernel-tools). The cross compiler of the world and the kernel stays
+# G. Both builds set ALWAYS_BOOTSTRAP_MAKE, BOOTSTRAP_ALL_TOOLS and WITH_DISK_IMAGE_TOOLS_BOOTSTRAP,
+# so the tree builds more of the host tools of plan 02.8: bmake, config, makefs, mkimg and the rest.
+# image.sh then makes the image with the makefs and mkimg of the build. The host C++ compiler stays
+# the clang++ of the VM, and so does the host cpp. rucc-pkg.sh makes the FreeBSD package of rucc,
+# and pkg add installs it in the VM of the second build. scripts/freebsd/host-cc.sh logs each call
+# and runs rucc. The repro job fails the run when the install manifests differ, or when the images
+# differ and the staging manifests do not. An R-host run with stop=image does not boot.
+#
 # A manual run can stop after a stage, and can boot the image of an earlier run instead of building.
 # On a pull request, the image and the build record are cached by the hash of what goes into them,
 # so a change to the boot, the suites or the summary does not build FreeBSD again. A scheduled or
@@ -81,6 +93,10 @@ on:
         type: choice
         options: ["15", "14"]
         default: "15"
+      rucc-host:
+        description: A branch or commit of tamnd/rucc, such as main, to build the pin twice and the host tools of the second build with that rucc; empty for none
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
@@ -105,6 +121,8 @@ env:
     RB_CONF=${{ inputs.conf || 'graded' }} RB_COMPILE_JSONL=/build/out/compile.jsonl
     RB_PIN_NAME=${{ startsWith(inputs.pin, 'freebsd-') && inputs.pin || (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
     RB_GCC=${{ inputs.gcc || '15' }}
+    ${{ inputs.rucc-host && 'RB_MAKEVARS=''ALWAYS_BOOTSTRAP_MAKE=yes BOOTSTRAP_ALL_TOOLS=yes WITH_DISK_IMAGE_TOOLS_BOOTSTRAP=yes''
+    RB_IMAGE_TOOLS=/build/obj/build/src/amd64.amd64/tmp/legacy' || '' }}
 
 jobs:
   rb:
@@ -124,17 +142,20 @@ jobs:
           retention-days: 7
 
   build:
-    name: build ${{ inputs.pin || '15.1-release' }} ${{ inputs.conf || 'graded' }}${{ inputs.gcc == '14' && ' gcc14' || '' }}${{ matrix.build == 2 && ' again' || '' }}
+    name: build ${{ inputs.pin || '15.1-release' }} ${{ inputs.conf || 'graded' }}${{ inputs.gcc == '14' && ' gcc14' || '' }}${{ matrix.build == 2 && (inputs.rucc-host && ' R-host' || ' again') || '' }}
     if: ${{ !inputs.image-run }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     strategy:
       fail-fast: false
       matrix:
-        build: ${{ fromJSON(inputs.rebuild && '[1, 2]' || '[1]') }}
+        build: ${{ fromJSON((inputs.rebuild || inputs.rucc-host) && '[1, 2]' || '[1]') }}
     env:
       # The second build's artifacts have names that the boot job does not download.
       RB_AGAIN: ${{ matrix.build == 2 && '-rebuild' || '' }}
+      R_HOST: ${{ matrix.build == 2 && inputs.rucc-host && 'true' || 'false' }}
+      # The host CC of the R-host build, which the rucc step writes.
+      HOST_ENV: ${{ matrix.build == 2 && inputs.rucc-host && 'CC=/build/rucc/host-cc' || '' }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: look for a cached image
@@ -212,16 +233,38 @@ jobs:
             echo "The pin $RB_PIN adds to the SRCCONF: $(paste -sd' ' record/pin.conf)" >> "$GITHUB_STEP_SUMMARY"
           fi
           scripts/freebsd/builder.sh ssh 'du -sh /build/src; df -h /build'
+      # The package of rucc, as freebsd-self makes it, for the host CC of the R-host build. rucc links
+      # with the ld on PATH. The src Makefile sets PATH to /sbin:/bin:/usr/sbin:/usr/bin, so that is
+      # /usr/bin/ld, the lld that the clang of the VM links with too. The package depends on binutils.
+      - name: rucc ${{ inputs.rucc-host }} as the host CC
+        if: env.RB_HIT != 'true' && env.RB_STOP != 'provision' && env.R_HOST == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.rucc-host }}
+        run: |
+          commit=$(gh api "repos/tamnd/rucc/commits/$REF" -q .sha)
+          scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/rucc-pkg.sh /root/out $commit"
+          scripts/freebsd/builder.sh ssh 'env ASSUME_ALWAYS_YES=yes pkg install -q -y binutils && pkg add /build/pkg/rucc-*.pkg && pkg info rucc'
+          mkdir -p pkg
+          name=$(scripts/freebsd/builder.sh ssh 'cd /build/pkg && ls rucc-*.pkg')
+          scripts/freebsd/builder.sh get "/build/pkg/$name" "pkg/$name"
+          # host-cc.sh logs each call and runs rucc. make does not clear the environment in the
+          # host stages, but the wrapper has the two paths in it, as in netbsd-host.
+          printf '#!/bin/sh\nRB_HOST_CC_LOG=%s RB_HOST_CC_RUCC=%s exec /bin/sh %s "$@"\n' \
+            /root/out/host-cc.log /usr/local/bin/rucc /root/harness/scripts/freebsd/host-cc.sh \
+            | scripts/freebsd/builder.sh ssh 'mkdir -p /build/rucc && cat > /build/rucc/host-cc && chmod 555 /build/rucc/host-cc'
+          scripts/freebsd/builder.sh ssh '/build/rucc/host-cc --version | head -1; : > /root/out/host-cc.log' | tee host-cc.txt
+          echo "The host CC of build 2 is rucc of tamnd/rucc $commit ($REF): $(head -1 host-cc.txt)." >> "$GITHUB_STEP_SUMMARY"
       - name: buildworld
         if: env.RB_HIT != 'true' && env.RB_STOP != 'provision'
-        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/build.sh world"
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV $HOST_ENV sh /root/harness/scripts/freebsd/build.sh world"
       - name: buildkernel
         if: env.RB_HIT != 'true' && env.RB_STOP != 'provision'
-        run: scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/build.sh kernel"
+        run: scripts/freebsd/builder.sh ssh "$VM_ENV $HOST_ENV sh /root/harness/scripts/freebsd/build.sh kernel"
       - name: image
         if: env.RB_HIT != 'true' && env.RB_STOP != 'provision' && env.RB_STOP != 'build'
         run: |
-          scripts/freebsd/builder.sh ssh "$VM_ENV sh /root/harness/scripts/freebsd/image.sh"
+          scripts/freebsd/builder.sh ssh "$VM_ENV $HOST_ENV sh /root/harness/scripts/freebsd/image.sh"
           mkdir -p image
           scripts/freebsd/builder.sh get /build/image/freebsd.img.zst image/freebsd.img.zst
           ls -l image
@@ -245,6 +288,26 @@ jobs:
           du -sh "$RB_VM_DIR"/* >> record/host-df.txt || true
           cat record/host-df.txt
           ls -l record
+      - name: count the host CC calls
+        if: always() && env.R_HOST == 'true' && env.RB_HIT != 'true'
+        run: |
+          log=record/host-cc.log
+          if [ ! -f "$log" ]; then
+            echo "No host-cc.log: rucc did not run as the host CC." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # A compile has -c. The other calls are links and the --version, -v and -E probes of
+          # bsd.compiler.mk.
+          calls=$(wc -l < "$log")
+          compiles=$(awk -F'\t' '$2 ~ /(^| )-c( |$)/' "$log" | wc -l)
+          dirs=$(cut -f1 "$log" | sort -u | wc -l)
+          {
+            echo "R-host: rucc ran $((calls)) times as the host CC, $((compiles)) of them compiles with -c, in $((dirs)) directories."
+            echo "The 20 directories with the most calls:"
+            cut -f1 "$log" | sed 's|^/build/obj||' | sort | uniq -c | sort -rn | head -20
+          } | tee record/host-cc-count.txt
+          { echo '```'; cat record/host-cc-count.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          xz -T0 "$log"
       - name: keep the image for the next push
         if: >-
           steps.cached.outcome == 'success' && env.RB_HIT != 'true' && matrix.build == 1
@@ -278,6 +341,13 @@ jobs:
         with:
           name: freebsd-build-${{ env.RB_PIN }}-${{ env.RB_CONF }}${{ env.RB_AGAIN }}
           path: record
+          if-no-files-found: ignore
+      - name: upload the rucc package
+        if: always() && env.R_HOST == 'true'
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: freebsd-rucc-pkg
+          path: pkg
           if-no-files-found: ignore
       - name: upload compile.jsonl
         if: always()
@@ -452,7 +522,7 @@ jobs:
   repro:
     name: compare the two builds
     needs: build
-    if: always() && inputs.rebuild
+    if: always() && (inputs.rebuild || inputs.rucc-host)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -466,8 +536,41 @@ jobs:
           status=0
           python3 -I scripts/freebsd/repro.py builds/freebsd-build-"$RB_PIN-$RB_CONF" \
             builds/freebsd-build-"$RB_PIN-$RB_CONF"-rebuild --out repro > /dev/null || status=$?
+          if [ "$HOST" = r ]; then
+            echo "Build 1 is the G-host build and build 2 the R-host build." >> "$GITHUB_STEP_SUMMARY"
+          fi
           cat repro/repro.md >> "$GITHUB_STEP_SUMMARY"
           echo "repro.py exited with $status." >> "$GITHUB_STEP_SUMMARY"
+          [ "$HOST" = r ] || exit 0
+          # An R-host build fails the run when its install manifest is not the one of the G-host
+          # build. The staging tree has the test packages of the time of each build, so its manifest
+          # and the image can differ for that reason alone. When the staging manifests are the same,
+          # the images must be the same, as the image comes from the makefs and mkimg of the build.
+          verdict=0
+          python3 -I - repro/repro.json <<'PY' | tee repro/verdict.txt || verdict=$?
+          import json, sys
+          rec = json.load(open(sys.argv[1]))
+          m = {x["name"]: x for x in rec["manifests"]}
+          def n(x):
+              if x.get("missing"):
+                  return None
+              return len(x["content"]) + len(x["metadata"]) + len(x["only_first"]) + len(x["only_second"])
+          inst, stag = n(m["install.manifest"]), n(m["staging.manifest"])
+          if inst is None:
+              print("R-host: install.manifest is not in both records.")
+              sys.exit(1)
+          print(f"R-host: install.manifest has {m['install.manifest']['entries']} entries, and {inst} differ.")
+          if stag is not None:
+              print(f"R-host: staging.manifest has {m['staging.manifest']['entries']} entries, and {stag} differ.")
+          print(f"R-host: the two raw images are {'the same' if rec['same_image'] else 'not the same'}.")
+          bad = inst != 0 or (stag == 0 and not rec["same_image"])
+          print("R-host: " + ("the R-host build differs from the G-host build." if bad else "the R-host build gives the output of the G-host build."))
+          sys.exit(1 if bad else 0)
+          PY
+          { echo; cat repro/verdict.txt; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$verdict"
+        env:
+          HOST: ${{ inputs.rucc-host && 'r' || 'g' }}
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:

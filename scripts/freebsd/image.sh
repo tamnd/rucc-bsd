@@ -12,6 +12,10 @@
 #                file of its /boot that the staging tree does not have, but not the kernel, the
 #                modules, loader.conf and entropy. A world built WITHOUT_BOOT=yes gets the boot code
 #                and the loader of that image this way.
+#   RB_IMAGE_TOOLS a directory with usr/sbin/makefs and usr/bin/mkimg, such as the legacy tree of a
+#                build with WITH_DISK_IMAGE_TOOLS_BOOTSTRAP. Step 3 then runs these two, and not the
+#                makefs and mkimg of the VM. The R-host run of freebsd-g sets it, so that the image
+#                of its second build comes from the makefs and mkimg that rucc compiled.
 #
 # The steps:
 # 1. installworld, installkernel and distribution into RB_DESTDIR, from the objects of build.sh.
@@ -170,18 +174,25 @@ phase_done overlay "$start" "$d"
 
 # 3. The image.
 start=$(now)
+makefs=makefs
+mkimg=mkimg
+if [ -n "${RB_IMAGE_TOOLS:-}" ]; then
+	makefs=$RB_IMAGE_TOOLS/usr/sbin/makefs
+	mkimg=$RB_IMAGE_TOOLS/usr/bin/mkimg
+fi
+echo "makefs $makefs, mkimg $mkimg" | tee "$RB_OUT/image-tools.txt"
 rm -rf "$work/esp" "$work/esp.img" "$work/root.ufs" "$RB_IMAGE"
 mkdir -p "$work/esp/EFI/BOOT"
 cp "$d/boot/loader.efi" "$work/esp/EFI/BOOT/bootx64.efi"
-makefs -T "$epoch" -t msdos -o volume_id=0x52420001 -o fat_type=32 -o sectors_per_cluster=1 \
+"$makefs" -T "$epoch" -t msdos -o volume_id=0x52420001 -o fat_type=32 -o sectors_per_cluster=1 \
 	-o volume_label=EFISYS -s 64m \
 	"$work/esp.img" "$work/esp" > /dev/null
-makefs -T "$epoch" -B little -t ffs -Z -s "$RB_IMAGE_SIZE" -f 200000 \
+"$makefs" -T "$epoch" -B little -t ffs -Z -s "$RB_IMAGE_SIZE" -f 200000 \
 	-o label=rootfs,version=2,softupdates=1,bsize=32768,fsize=4096 \
 	"$work/root.ufs" "$d" > "$RB_OUT/makefs.log"
 esp_sha256=$(sha256 -q "$work/esp.img")
 root_sha256=$(sha256 -q "$work/root.ufs")
-mkimg -t "$epoch" -s gpt -f raw \
+"$mkimg" -t "$epoch" -s gpt -f raw \
 	-b "$d/boot/pmbr" \
 	-p freebsd-boot/bootfs:="$d/boot/gptboot" \
 	-p efi/efiboot0:="$work/esp.img" \
