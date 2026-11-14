@@ -374,10 +374,15 @@ fn free_size(section: &Section) -> Option<&'static str> {
 }
 
 /// Why a symbol may be in one build only, or `None` when it may not.
+///
+/// A retpoline thunk such as `__x86_indirect_thunk_rdx` is a COMDAT group of its own, one for each
+/// register that an indirect call goes through. The register follows the register allocation, so
+/// G and R can use different thunks, as they can use different `__x86.get_pc_thunk` names on i386.
 #[must_use]
 pub fn free_symbol(name: &str) -> Option<&'static str> {
     let made = name.starts_with(".L")
         || name.starts_with("__x86.get_pc_thunk")
+        || name.starts_with("__x86_indirect_thunk_")
         || name == "_GLOBAL_OFFSET_TABLE_"
         || [".cold", ".isra.", ".constprop.", ".part.", ".lto_priv."]
             .iter()
@@ -1330,6 +1335,8 @@ mod tests {
     fn compiler_made_names_and_debug_sections_are_allowed() {
         assert!(free_symbol("f.cold").is_some() && free_symbol("g.isra.0").is_some());
         assert!(free_symbol("table").is_none());
+        assert!(free_symbol("__x86_indirect_thunk_r13").is_some());
+        assert!(free_symbol("__x86_indirect_thunk").is_none());
         let s = |name: &str, kind: u32, flags: u64| Section {
             name: name.into(),
             kind,
