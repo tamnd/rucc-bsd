@@ -81,6 +81,8 @@
 # also on the c-only image. The rr-report job grades them with rb test: RR against GG, the c-only
 # image against GG, and the c-only image against RR. GG is the shards of g_run, or of the newest
 # netbsd-g run whose counts results/netbsd keeps for the pin. The counts go beside the G counts.
+# The two grades of the c-only image do not grade the cases of conf/netbsd/c-only-ungraded.tsv,
+# because they need cc, c++, cpp or gdb, and the c-only row does not install them.
 #
 # The ref leg of the kernel and the ref build of the world also run rb syntax: every C unit of
 # that build, which is G, through the front end of rucc (scripts/netbsd/syntax.sh). shim-ref.sh
@@ -1331,10 +1333,14 @@ jobs:
           rr=(rr-atf/*/)
           c=(c-only-atf/*/)
           join() { local IFS=+; echo "$*"; }
-          # grade TITLE OUT REFERENCE... -- CLAIM...
+          # grade TITLE OUT UNGRADED REFERENCE... -- CLAIM...
+          # UNGRADED is a list for rb test --ungraded, or empty for none.
           grade() {
-            local title=$1 out=$2 ref=() claim=()
-            shift 2
+            local title=$1 out=$2 ref=() claim=() list=()
+            if [ -n "$3" ]; then
+              list=(--ungraded "$3")
+            fi
+            shift 3
             while [ "$1" != -- ]; do
               ref+=("$1")
               shift
@@ -1349,17 +1355,19 @@ jobs:
               return
             fi
             "$RUNNER_TEMP/rb/rb" test --gg "$(join "${ref[@]%/}")" --rr "$(join "${claim[@]%/}")" \
-              --out "$out" || true
+              "${list[@]}" --out "$out" || true
             echo
           }
           {
             echo "GG: the shards of netbsd-g run ${GG_RUN:-(none)}."
             echo
-            grade "RR against GG" out/rr-test "${gg[@]}" -- "${rr[@]}"
+            grade "RR against GG" out/rr-test "" "${gg[@]}" -- "${rr[@]}"
             if [ "$C_ONLY" = true ]; then
-              grade "the c-only image against GG" out/c-only-test "${gg[@]}" -- "${c[@]}"
+              # The c-only image has no cc, c++, cpp or gdb, so the cases that need one are not graded.
+              co=conf/netbsd/c-only-ungraded.tsv
+              grade "the c-only image against GG" out/c-only-test "$co" "${gg[@]}" -- "${c[@]}"
               grade "the c-only image against RR. A case here is a difference in a c-only file." \
-                out/c-only-rr-test "${rr[@]}" -- "${c[@]}"
+                out/c-only-rr-test "$co" "${rr[@]}" -- "${c[@]}"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
         env:

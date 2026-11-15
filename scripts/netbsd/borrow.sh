@@ -7,8 +7,11 @@
 # c-only build has no tests set, and no ATF or kyua to run the tests. RSETS is the sets directory
 # of the graded R build, and CSETS that of the c-only build. The script adds two sets to CSETS:
 #   tests     the tests set of RSETS, as it is;
-#   borrowed  each path of the base set of RSETS that the base set of CSETS does not have. These
-#             are ATF, kyua, lutok and the C++ libraries that they need.
+#   borrowed  each path of the base and etc sets of RSETS that the same set of CSETS does not
+#             have. In base, these are ATF, kyua, lutok and the C++ libraries that they need. In
+#             etc, these are the ATF configuration files, such as etc/atf/common.conf. That file
+#             sets unprivileged-user, and without it atf-run skips each test that must run as an
+#             unprivileged user.
 # The borrowed set also has etc/mtree/set.borrowed. It has a line for each borrowed path that no
 # mtree file of the sets of CSETS has, from the mtree files of the sets of RSETS. The directories
 # are in NetBSD.dist and the files in set.base and set.tests. Each set has its own
@@ -59,6 +62,8 @@ paths() {
 
 rbase=$(set_file "$r" base)
 cbase=$(set_file "$c" base)
+retc=$(set_file "$r" etc)
+cetc=$(set_file "$c" etc)
 case $cbase in
 *.tgz) suffix=tgz z=-z ;;
 *) suffix=tar.xz z=-J ;;
@@ -80,6 +85,9 @@ trap 'rm -rf "$tmp"' EXIT
 paths "$rbase" > "$tmp/r-base"
 paths "$cbase" > "$tmp/c-base"
 LC_ALL=C comm -23 "$tmp/r-base" "$tmp/c-base" > "$tmp/base"
+paths "$retc" > "$tmp/r-etcset"
+paths "$cetc" > "$tmp/c-etcset"
+LC_ALL=C comm -23 "$tmp/r-etcset" "$tmp/c-etcset" > "$tmp/etc"
 paths "$rtests" > "$tmp/tests"
 
 mkdir "$tmp/r-etc" "$tmp/c-etc" "$tmp/root"
@@ -93,11 +101,14 @@ for f in NetBSD.dist set.base set.tests; do
 done
 # The paths that the spec of the c-only image has already.
 awk '$1 ~ /^\.\// { print $1 }' "$tmp/c-etc"/etc/mtree/* | LC_ALL=C sort -u > "$tmp/c-spec"
-LC_ALL=C sort -u "$tmp/base" "$tmp/tests" > "$tmp/want"
+LC_ALL=C sort -u "$tmp/base" "$tmp/etc" "$tmp/tests" > "$tmp/want"
 LC_ALL=C comm -23 "$tmp/want" "$tmp/c-spec" > "$tmp/new"
 
 if [ -s "$tmp/base" ]; then
 	tar -xf "$rbase" -C "$tmp/root" --no-recursion -T "$tmp/base"
+fi
+if [ -s "$tmp/etc" ]; then
+	tar -xf "$retc" -C "$tmp/root" --no-recursion -T "$tmp/etc"
 fi
 mkdir -p "$tmp/root/etc/mtree"
 spec=$tmp/root/etc/mtree/set.borrowed
@@ -136,8 +147,9 @@ cp "$rtests" "$c/tests.$suffix"
 {
 	sed 's/^/tests	/' "$tmp/tests"
 	sed 's/^/base	/' "$tmp/base"
+	sed 's/^/etc	/' "$tmp/etc"
 } > "$list"
-echo "borrow.sh: $(awk 'END { print NR }' "$tmp/tests") paths of the tests set and $(awk 'END { print NR }' "$tmp/base") of the base set" >&2
+echo "borrow.sh: $(awk 'END { print NR }' "$tmp/tests") paths of the tests set, $(awk 'END { print NR }' "$tmp/base") of the base set and $(awk 'END { print NR }' "$tmp/etc") of the etc set" >&2
 
 sets=
 for s in modules base etc comp games gpufw man misc rescue text base32 base64 manhtml \

@@ -57,6 +57,7 @@ fn names(archive: &Path) -> Vec<String> {
 const R_DIST: &str = "\
 /set type=dir uname=root gname=wheel mode=0755
 ./etc
+./etc/atf
 ./etc/mtree
 ./usr
 ./usr/bin
@@ -70,6 +71,7 @@ const R_DIST: &str = "\
 const C_DIST: &str = "\
 /set type=dir uname=root gname=wheel mode=0755
 ./etc
+./etc/atf
 ./etc/mtree
 ./usr
 ./usr/bin
@@ -79,8 +81,9 @@ const C_DIST: &str = "\
 ";
 
 /// The sets of the graded R build and of the c-only build. The R base set has ATF, its hooks
-/// and libstdc++, which the c-only base set does not have. As in NetBSD, each set has its own
-/// etc/mtree/set.NAME, and the etc set has `NetBSD.dist`.
+/// and libstdc++, which the c-only base set does not have. The R etc set has etc/atf/common.conf,
+/// which the c-only etc set does not have. As in NetBSD, each set has its own etc/mtree/set.NAME,
+/// and the etc set has `NetBSD.dist`.
 fn fake_sets(rsets: &Path, csets: &Path) {
     std::fs::create_dir_all(rsets).unwrap();
     std::fs::create_dir_all(csets).unwrap();
@@ -115,7 +118,16 @@ fn fake_sets(rsets: &Path, csets: &Path) {
             ("etc/mtree/set.tests", r_tests_spec),
         ],
     );
-    set(rsets, "etc", &[("etc/mtree/NetBSD.dist", R_DIST)]);
+    let conf = "./etc/atf/common.conf type=file uname=root gname=wheel mode=0444\n";
+    set(
+        rsets,
+        "etc",
+        &[
+            ("etc/mtree/NetBSD.dist", R_DIST),
+            ("etc/atf/common.conf", "unprivileged-user = \"_tests\"\n"),
+            ("etc/mtree/set.etc", conf),
+        ],
+    );
     let c_base_spec =
         format!("./usr/bin/ls {file}\n./usr/lib/libc.so.12 {file}\n./usr/share/misc/x {file}\n");
     let c_base = [
@@ -127,7 +139,11 @@ fn fake_sets(rsets: &Path, csets: &Path) {
     set(csets, "base", &c_base);
     set(csets, "comp", &[("usr/lib/libc.a", "libc")]);
     set(csets, "kern-GENERIC", &[("netbsd", "kernel")]);
-    set(csets, "etc", &[("etc/mtree/NetBSD.dist", C_DIST)]);
+    set(
+        csets,
+        "etc",
+        &[("etc/mtree/NetBSD.dist", C_DIST), ("etc/mtree/set.etc", "")],
+    );
 }
 
 fn borrow(rsets: &Path, csets: &Path, list: &Path) -> std::process::Output {
@@ -138,13 +154,14 @@ fn borrow(rsets: &Path, csets: &Path, list: &Path) -> std::process::Output {
         .unwrap()
 }
 
-/// The borrowed set has what the c-only base set does not have, and the spec lines for it.
+/// The borrowed set has what the c-only base and etc sets do not have, and the spec lines for it.
 fn check_borrowed(csets: &Path, work: &Path) {
     let borrowed = names(&csets.join("borrowed.tgz"));
     for want in [
         "./usr/bin/atf-run",
         "./usr/lib/libstdc++.so.9",
         "./usr/share/atf/atf-run.hooks",
+        "./etc/atf/common.conf",
         "./etc/mtree/set.borrowed",
     ] {
         assert!(
@@ -176,6 +193,7 @@ fn check_borrowed(csets: &Path, work: &Path) {
             "./usr/bin/atf-run type=file uname=root gname=wheel mode=0555",
             "./usr/lib/libstdc++.so.9 type=file uname=root gname=wheel mode=0555",
             "./usr/share/atf/atf-run.hooks type=file uname=root gname=wheel mode=0555",
+            "./etc/atf/common.conf type=file uname=root gname=wheel mode=0444",
             "./usr/tests/Atffile type=file uname=root gname=wheel mode=0444",
             "./etc/mtree/set.borrowed type=file uname=root gname=wheel mode=0444",
         ]
@@ -197,7 +215,7 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
         "base etc comp tests borrowed\n"
     );
     assert!(
-        stderr.contains("6 paths of the tests set and 4 of the base set"),
+        stderr.contains("6 paths of the tests set, 4 of the base set and 2 of the etc set"),
         "{stderr}"
     );
 
@@ -212,7 +230,8 @@ fn the_c_only_sets_get_the_tests_set_and_what_runs_it() {
         list,
         "tests\t./etc\ntests\t./etc/mtree\ntests\t./etc/mtree/set.tests\ntests\t./usr\n\
          tests\t./usr/tests\ntests\t./usr/tests/Atffile\nbase\t./usr/bin/atf-run\n\
-         base\t./usr/lib/libstdc++.so.9\nbase\t./usr/share/atf\nbase\t./usr/share/atf/atf-run.hooks\n"
+         base\t./usr/lib/libstdc++.so.9\nbase\t./usr/share/atf\nbase\t./usr/share/atf/atf-run.hooks\n\
+         etc\t./etc/atf\netc\t./etc/atf/common.conf\n"
     );
 
     // A second run refuses, so the sets are not borrowed twice.
