@@ -2,9 +2,9 @@
 #
 # The job boots the FreeBSD 15.1 images of bench.yml, R and then G, RUNS times each, with the
 # suite guest/rb-rc/profile.sh in place of the bench suite. It runs each benchmark of the input
-# benchmarks once under the DTrace probe profile-997 and keeps the kernel samples by function and
-# the hottest kernel stacks. scripts/bench/profile-table.py then compares R and G function by
-# function in the step summary. The artifact bench-profile-freebsd has the profiles and the
+# benchmarks once under the DTrace probe profile-997 and keeps the kernel samples by function, the
+# hottest kernel stacks and the hottest kernel instructions. scripts/bench/profile-table.py then
+# compares R and G function by function in the step summary. The artifact bench-profile-freebsd has the profiles and the
 # /boot/kernel/kernel of each image, so that the hot functions can be disassembled on a host.
 #
 # The images are the newest of runs on main (scripts/bench/artifact.sh), or the freebsd-r-image of
