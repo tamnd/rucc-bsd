@@ -15,6 +15,7 @@
 #   N CLASS COUNT        CLASS is kernel, idle or user
 #   F COUNT MODULE`FUNC  the kernel samples outside the idle thread, by function
 #   S COUNT              the 40 hottest kernel stacks follow, one frame on each line
+#   P COUNT MODULE`FUNC+OFF  the 2000 hottest kernel instructions, by address
 # OUT/bench.tsv gets the line of the benchmark, as in bench.sh. OUT/kernel.gz is /boot/kernel/kernel
 # of the image, so that the host can disassemble the hot functions. OUT/hwpmc.txt says if hwpmc
 # works in the VM. OUT/pmap.txt has the superpage counters and the page sizes of the kernel map
@@ -55,14 +56,16 @@ fi
 # script does not need the CTF of the kernel.
 script='
 BEGIN { printf("RB-PROFILE-READY\n"); }
-profile-997 /arg0 != 0 && execname != "idle"/ { @f[func(arg0)] = count(); @s[stack(12)] = count(); @n["kernel"] = count(); }
+profile-997 /arg0 != 0 && execname != "idle"/ { @f[func(arg0)] = count(); @s[stack(12)] = count(); @p[arg0] = count(); @n["kernel"] = count(); }
 profile-997 /arg0 != 0 && execname == "idle"/ { @n["idle"] = count(); }
 profile-997 /arg1 != 0/ { @n["user"] = count(); }
 END {
 	trunc(@s, 40);
+	trunc(@p, 2000);
 	printa("N %s %@u\n", @n);
 	printa("F %@u %a\n", @f);
 	printa("S %@u%k\n", @s);
+	printa("P %@u %a\n", @p);
 }'
 
 total=0
