@@ -15,9 +15,10 @@
 //! program resolves through `IRELATIVE`. A link must point to the same place, and a file that is
 //! not ELF must have the same bytes.
 //!
-//! Some differences are allowed: the size of a function, and a symbol that a library uses but does
-//! not define. They are listed but not counted. A file on one side only counts. The gate is zero
-//! counted differences.
+//! Some differences are allowed: the size of a function, a symbol that a library uses but does
+//! not define, and a need on `libgcc_s.so.1` that only G has when R needs no version of it. They
+//! are listed but not counted. A file on one side only counts. The gate is zero counted
+//! differences.
 
 use crate::objdiff::{self, Finding};
 use object::elf;
@@ -315,6 +316,26 @@ fn is_function(kind: u8) -> bool {
     kind == elf::STT_FUNC.0 || kind == elf::STT_GNU_IFUNC.0
 }
 
+/// The file of gcc's support library.
+const LIBGCC_S: &str = "libgcc_s.so.1";
+
+/// The start of a version need on `LIBGCC_S`.
+const LIBGCC_S_NEED: &str = "libgcc_s.so.1 ";
+
+/// Why a need on `LIBGCC_S` that only G has is allowed.
+const LIBGCC_S_WHY: &str = "gcc calls libgcc_s where rucc puts the code inline";
+
+/// Whether the only difference of the `DT_NEEDED` lists is a `LIBGCC_S` that only G has, and R
+/// needs no version of `LIBGCC_S`. gcc calls `__popcountdi2` of `libgcc_s` for a population
+/// count on x86, and rucc puts the code inline, so the library of R does not use `libgcc_s`. This
+/// is a difference in what the library uses, not in what it exports.
+fn support_only_in_g(g: &Library, r: &Library) -> bool {
+    let rest: Vec<&String> = g.needed.iter().filter(|n| *n != LIBGCC_S).collect();
+    rest.len() < g.needed.len()
+        && rest.iter().copied().eq(r.needed.iter())
+        && !r.verneeds.iter().any(|v| v.starts_with(LIBGCC_S_NEED))
+}
+
 /// The differences between two shared objects, G first.
 #[must_use]
 pub fn libraries(g: &Library, r: &Library) -> Vec<Finding> {
@@ -326,10 +347,12 @@ pub fn libraries(g: &Library, r: &Library) -> Vec<Finding> {
             format!("G {:?}, R {:?}", g.soname, r.soname),
         ));
     }
+    let support = support_only_in_g(g, r);
+    let why = support.then_some(LIBGCC_S_WHY);
     if g.needed != r.needed {
         found.push(finding(
             "DT_NEEDED",
-            None,
+            why,
             format!("G {}, R {}", g.needed.join(" "), r.needed.join(" ")),
         ));
     }
@@ -359,7 +382,12 @@ pub fn libraries(g: &Library, r: &Library) -> Vec<Finding> {
         ("version needs", &g.verneeds, &r.verneeds),
     ] {
         for v in a.difference(b) {
-            found.push(finding(kind, None, format!("only in G: {v}")));
+            let why = if support && v.starts_with(LIBGCC_S_NEED) {
+                why
+            } else {
+                None
+            };
+            found.push(finding(kind, why, format!("only in G: {v}")));
         }
         for v in b.difference(a) {
             found.push(finding(kind, None, format!("only in R: {v}")));
@@ -1012,6 +1040,39 @@ mod tests {
         let r = read(&library(&[sym("f", elf::STT_FUNC, 8), used], 0)).unwrap();
         assert_eq!(kinds(&libraries(&g, &r)), [("symbol only in R", false)]);
         assert!(libraries(&g, &g).is_empty());
+    }
+
+    #[test]
+    fn a_libgcc_s_need_only_in_g_is_allowed() {
+        let lib = read(&library(&[sym("f", elf::STT_FUNC, 8)], 0)).unwrap();
+        let mut g = lib.clone();
+        g.needed.push(LIBGCC_S.into());
+        g.verneeds.insert(format!("{LIBGCC_S_NEED}GCC_3.4"));
+        assert_eq!(
+            kinds(&libraries(&g, &lib)),
+            [("DT_NEEDED", false), ("version needs", false)]
+        );
+        // The need counts when R needs libgcc_s too, or when the lists differ in other ways.
+        let mut r = lib.clone();
+        r.verneeds.insert(format!("{LIBGCC_S_NEED}GCC_3.0"));
+        assert_eq!(
+            kinds(&libraries(&g, &r)),
+            [
+                ("DT_NEEDED", true),
+                ("version needs", true),
+                ("version needs", true)
+            ]
+        );
+        let mut r = lib.clone();
+        r.needed.push("libm.so.5".into());
+        assert_eq!(
+            kinds(&libraries(&g, &r)),
+            [("DT_NEEDED", true), ("version needs", true)]
+        );
+        assert_eq!(
+            kinds(&libraries(&lib, &g)),
+            [("DT_NEEDED", true), ("version needs", true)]
+        );
     }
 
     #[test]
