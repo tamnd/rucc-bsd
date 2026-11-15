@@ -16,8 +16,9 @@
 //! not ELF must have the same bytes.
 //!
 //! Some differences are allowed: the size of a function, a symbol that a library uses but does
-//! not define, and a need on `libgcc_s.so.1` that only G has when R needs no version of it. They
-//! are listed but not counted. A file on one side only counts. The gate is zero counted
+//! not define, a need on `libgcc_s.so.1` that only G has when R needs no version of it, and a
+//! version need on `libgcc_s.so.1` that only G has when R uses none of the symbols G uses at that
+//! version. They are listed but not counted. A file on one side only counts. The gate is zero counted
 //! differences.
 
 use crate::objdiff::{self, Finding};
@@ -336,6 +337,29 @@ fn support_only_in_g(g: &Library, r: &Library) -> bool {
         && !r.verneeds.iter().any(|v| v.starts_with(LIBGCC_S_NEED))
 }
 
+/// Whether a version need on `LIBGCC_S` that only G has is for symbols that R does not use. G
+/// must use at least one symbol at that version, and R must use none of them at any version. The
+/// i386 `libdns` of the NetBSD compat libraries uses `libgcc_s` on both sides for the 64-bit
+/// division, but only G calls `__popcountdi2`, which is the one symbol at `GCC_3.4`.
+fn inline_need(g: &Library, r: &Library, need: &str) -> bool {
+    let Some(version) = need.strip_prefix(LIBGCC_S_NEED) else {
+        return false;
+    };
+    let suffix = format!("@{version}");
+    let in_g: Vec<&str> = g
+        .symbols
+        .iter()
+        .filter(|(key, sym)| !sym.defined && key.ends_with(&suffix))
+        .filter_map(|(key, _)| key.strip_suffix(&suffix))
+        .collect();
+    let in_r = |name: &str| {
+        r.symbols
+            .iter()
+            .any(|(key, sym)| !sym.defined && key.split('@').next() == Some(name))
+    };
+    !in_g.is_empty() && !in_g.iter().any(|name| in_r(name))
+}
+
 /// The differences between two shared objects, G first.
 #[must_use]
 pub fn libraries(g: &Library, r: &Library) -> Vec<Finding> {
@@ -384,6 +408,8 @@ pub fn libraries(g: &Library, r: &Library) -> Vec<Finding> {
         for v in a.difference(b) {
             let why = if support && v.starts_with(LIBGCC_S_NEED) {
                 why
+            } else if kind == "version needs" && inline_need(g, r, v) {
+                Some(LIBGCC_S_WHY)
             } else {
                 None
             };
@@ -1073,6 +1099,48 @@ mod tests {
             kinds(&libraries(&lib, &g)),
             [("DT_NEEDED", true), ("version needs", true)]
         );
+    }
+
+    #[test]
+    fn a_libgcc_s_version_for_symbols_r_does_not_use_is_allowed() {
+        let used = DynSymbol {
+            binding: elf::STB_GLOBAL.0,
+            kind: elf::STT_FUNC.0,
+            visibility: elf::STV_DEFAULT.0,
+            size: 0,
+            defined: false,
+        };
+        let lib = |symbols: &[&str], versions: &[&str]| Library {
+            needed: vec![LIBGCC_S.into(), "libc.so.12".into()],
+            symbols: symbols
+                .iter()
+                .map(|key| ((*key).to_owned(), used.clone()))
+                .collect(),
+            verneeds: versions
+                .iter()
+                .map(|v| format!("{LIBGCC_S_NEED}{v}"))
+                .collect(),
+            ..Library::default()
+        };
+        let g = lib(
+            &["__udivdi3@GCC_3.0", "__popcountdi2@GCC_3.4"],
+            &["GCC_3.0", "GCC_3.4"],
+        );
+        let r = lib(&["__udivdi3@GCC_3.0"], &["GCC_3.0"]);
+        assert_eq!(
+            kinds(&libraries(&g, &r)),
+            [("version needs", false), ("symbol only in G", false)]
+        );
+        // The need counts when R uses the same symbol at another version.
+        let r = lib(
+            &["__udivdi3@GCC_3.0", "__popcountdi2@GCC_3.0"],
+            &["GCC_3.0"],
+        );
+        assert!(kinds(&libraries(&g, &r)).contains(&("version needs", true)));
+        // And when G uses nothing at that version.
+        let g = lib(&["__udivdi3@GCC_3.0"], &["GCC_3.0", "GCC_3.4"]);
+        let r = lib(&["__udivdi3@GCC_3.0"], &["GCC_3.0"]);
+        assert_eq!(kinds(&libraries(&g, &r)), [("version needs", true)]);
     }
 
     #[test]
