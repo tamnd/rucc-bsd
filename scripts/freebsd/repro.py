@@ -6,7 +6,10 @@
 FIRST and SECOND are build records of freebsd-g: image.txt, install.manifest and staging.manifest
 from image.sh. The script compares the hashes of image.txt, and each manifest line by line. A
 manifest has one stat line per file ("MODE OWNER GROUP SIZE PATH" or "... PATH -> TARGET") and one
-hash line per regular file ("SHA256 PATH"). DIR gets repro.json, repro.md and one .diff file per
+hash line per regular file ("SHA256 PATH"). A directory that differs only in its size is put in
+dir_size, not in metadata: the size of a UFS directory depends on the order in which its entries
+were made, and that order changes with the timing of make -j, so two builds of one tree can give
+it a different size. DIR gets repro.json, repro.md and one .diff file per
 manifest with the lines that differ. The exit status is 0 when the images are the same.
 """
 
@@ -60,11 +63,16 @@ def compare(name, a, b, out):
     only_a = sorted(set(ea) - set(eb))
     only_b = sorted(set(eb) - set(ea))
     content = sorted(p for p in set(ea) & set(eb) if ea[p].get("sha256") != eb[p].get("sha256"))
-    meta = sorted(
-        p
-        for p in set(ea) & set(eb)
-        if ea[p].get("stat") != eb[p].get("stat") and ea[p].get("sha256") == eb[p].get("sha256")
-    )
+    meta, dir_size = [], []
+    for p in sorted(set(ea) & set(eb)):
+        sa, sb = ea[p].get("stat"), eb[p].get("stat")
+        if sa == sb or ea[p].get("sha256") != eb[p].get("sha256"):
+            continue
+        fa, fb = sa.split(" ", 4), sb.split(" ", 4)
+        if fa[0].startswith("d") and fa[:3] == fb[:3] and fa[4] == fb[4]:
+            dir_size.append(p)
+        else:
+            meta.append(p)
     diff = difflib.unified_diff(ta.splitlines(), tb.splitlines(), "first/" + name, "second/" + name, lineterm="", n=0)
     with open(os.path.join(out, name + ".diff"), "w", encoding="utf-8") as f:
         f.writelines(line + "\n" for line in diff)
@@ -75,6 +83,7 @@ def compare(name, a, b, out):
         "only_second": only_b,
         "content": content,
         "metadata": meta,
+        "dir_size": dir_size,
     }
 
 
@@ -109,10 +118,11 @@ def main():
         md.append(
             f"{m['name']}: {m['entries']} entries. {len(m['content'])} differ in content, "
             f"{len(m['metadata'])} only in mode, owner, size or link target, {len(m['only_first'])} only in the first "
-            f"and {len(m['only_second'])} only in the second."
+            f"and {len(m['only_second'])} only in the second. {len(m['dir_size'])} directories differ only in size."
         )
         listed = [("content", p) for p in m["content"]] + [("metadata", p) for p in m["metadata"]]
         listed += [("first only", p) for p in m["only_first"]] + [("second only", p) for p in m["only_second"]]
+        listed += [("dir size", p) for p in m["dir_size"]]
         if listed:
             md.append("")
             md.append("```")
