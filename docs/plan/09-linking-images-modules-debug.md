@@ -67,6 +67,7 @@ The rules:
 - The symbol and version sets must be **identical**. One extra symbol is a finding. A missing one is a bug, because a program built against the project's own release (12.8) can need it.
 - A size difference on a data symbol is a layout bug.
 - A size difference on a function symbol is expected and ignored.
+- A `DT_NEEDED` and version needs on `libgcc_s.so.1` that only G has are expected and ignored, if R needs no version of `libgcc_s.so.1`. GCC calls `__popcountdi2` of libgcc_s for a population count on x86, and rucc puts the code inline.
 
 FreeBSD's `Symbol.map` files make version mismatches loud at link time. NetBSD has no versions, so its exported set is whatever is global. One wrong `static` decision, or a `.hidden` from the reader, changes the export list silently, which is why this comparison exists.
 
