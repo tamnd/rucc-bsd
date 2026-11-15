@@ -37,6 +37,8 @@
 # build-tools, cross-tools and kernel-tools). The cross compiler of the world and the kernel stays
 # G. Both builds set ALWAYS_BOOTSTRAP_MAKE, BOOTSTRAP_ALL_TOOLS and WITH_DISK_IMAGE_TOOLS_BOOTSTRAP,
 # so the tree builds more of the host tools of plan 02.8: bmake, config, makefs, mkimg and the rest.
+# The main pin does not set BOOTSTRAP_ALL_TOOLS. With it, bootstrap-tools builds bin/chflags, which
+# on main calls fts_openat, and the libc of the 15.1 VM does not have it (#235).
 # image.sh then makes the image with the makefs and mkimg of the build. The host C++ compiler stays
 # the clang++ of the VM, and so does the host cpp. rucc-pkg.sh makes the FreeBSD package of rucc,
 # and pkg add installs it in the VM of the second build. scripts/freebsd/host-cc.sh logs each call
@@ -124,8 +126,8 @@ env:
     RB_CONF=${{ inputs.conf || 'graded' }} RB_COMPILE_JSONL=/build/out/compile.jsonl
     RB_PIN_NAME=${{ startsWith(inputs.pin, 'freebsd-') && inputs.pin || (inputs.pin || '15.1-release') == '15.1-release' && 'freebsd-15.1' || format('freebsd-{0}', inputs.pin) }}
     RB_GCC=${{ inputs.gcc || '15' }}
-    ${{ inputs.rucc-host && 'RB_MAKEVARS=''ALWAYS_BOOTSTRAP_MAKE=yes BOOTSTRAP_ALL_TOOLS=yes WITH_DISK_IMAGE_TOOLS_BOOTSTRAP=yes''
-    RB_IMAGE_TOOLS=/build/obj/build/src/amd64.amd64/tmp/legacy' || '' }}
+    ${{ inputs.rucc-host && format('RB_MAKEVARS=''ALWAYS_BOOTSTRAP_MAKE=yes {0}WITH_DISK_IMAGE_TOOLS_BOOTSTRAP=yes''
+    RB_IMAGE_TOOLS=/build/obj/build/src/amd64.amd64/tmp/legacy', (inputs.pin != 'main' && inputs.pin != 'freebsd-main') && 'BOOTSTRAP_ALL_TOOLS=yes ' || '') || '' }}
 
 jobs:
   rb:
