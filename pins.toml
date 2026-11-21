@@ -3,7 +3,7 @@
 # under baselines/. Under pin_policy.head = "last-g-good" it keeps that commit until the
 # reference builds and boots a newer one (04.6).
 
-as_of = "2026-11-20T22:40:41Z"
+as_of = "2026-11-21T22:41:02Z"
 
 [[pin]]
 name = "freebsd-main"
@@ -15,10 +15,10 @@ version = "16.0-CURRENT"
 cadence = "nightly"
 repo = "https://github.com/freebsd/freebsd-src"
 branch = "main"
-commit = "84090d7b56484b7c6061c641cbc1d38421dd8ec6"
-date = "2026-11-20T20:58:53Z"
-head = "84090d7b56484b7c6061c641cbc1d38421dd8ec6"
-head_date = "2026-11-20T20:58:53Z"
+commit = "6a83ecfe812ea97f06b3d3640edb41c7dfa8702e"
+date = "2026-11-21T17:39:43Z"
+head = "6a83ecfe812ea97f06b3d3640edb41c7dfa8702e"
+head_date = "2026-11-21T17:39:43Z"
 reference = "untried"
 
 [[pin]]
@@ -123,8 +123,8 @@ repo = "https://github.com/NetBSD/src"
 branch = "trunk"
 commit = "3c50f59789893ab1f71051686347e79c7b2e8327"
 date = "2026-11-08T21:31:26Z"
-head = "893d209c157907aeaaa5e60a4325de213696ead8"
-head_date = "2026-11-20T08:51:21Z"
+head = "4b21b381d369d5dca29343c5d6a4dfbf83f91e72"
+head_date = "2026-11-21T15:26:31Z"
 reference = "good"
 gcc = "14.4.0"
 
